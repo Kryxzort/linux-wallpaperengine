@@ -22,14 +22,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(EXTERNAL_DEPS_DIR ${CMAKE_SOURCE_DIR}/src/External)
 
-# obtain last version tag
-execute_process(
-    COMMAND git describe --tags --dirty --always
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_TAG
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
+# a source tree without its own .git (a tarball, a vendored copy, a Nix fetch) has no tag
+# to describe: let the builder state the version explicitly instead
+set(WPBUILD_VERSION_OVERRIDE "" CACHE STRING "Version (X.Y.Z) to use instead of `git describe --tags`")
 
-message(NOTICE "Repository version ${GIT_TAG}")
+if(WPBUILD_VERSION_OVERRIDE)
+    set(GIT_TAG "${WPBUILD_VERSION_OVERRIDE}")
+    message(NOTICE "Repository version ${GIT_TAG} (WPBUILD_VERSION_OVERRIDE)")
+else()
+    # obtain last version tag
+    execute_process(
+        COMMAND git describe --tags --dirty --always
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+    message(NOTICE "Repository version ${GIT_TAG}")
+endif()
 
 # get version off the tag
 string(REGEX MATCH "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ ${GIT_TAG})
@@ -42,7 +51,7 @@ if(CMAKE_MATCH_0)
     set(PROJECT_VERSION_PATCH "${CMAKE_MATCH_3}")
     set(PROJECT_SOVERSION "${PROJECT_VERSION_MAJOR}")
 else()
-    message(FATAL_ERROR "Cannot determine version")
+    message(FATAL_ERROR "Cannot determine version from '${GIT_TAG}' (pass -DWPBUILD_VERSION_OVERRIDE=X.Y.Z)")
 endif()
 
 # if you're developing you might find this debug option useful for shader output, although RenderDoc is encouraged
