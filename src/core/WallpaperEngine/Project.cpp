@@ -227,6 +227,12 @@ void WallpaperEngine::Project::render () {
 	this->renderContext->albumArtUrlChange (this->mediaInfo.url);
     }
 
+    // the renderer failed to build on an earlier call (CWallpaper::fromWallpaper threw after the
+    // render context was created): there is nothing to render, ever — and wallpaper is null
+    if (this->wallpaper == nullptr) {
+	return;
+    }
+
     this->wallpaper->render ();
 }
 
