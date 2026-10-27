@@ -47,6 +47,8 @@ public:
     wp_mute_check* mute_check;
     int volume;
     bool enableAudio;
+    /** set: contexts hand their audio to the host (wp_config_set_audio_output) instead of SDL */
+    std::optional<wp_audio_output> audioOutput;
     bool disableParticles;
     bool disableParallax;
     int web_fps;

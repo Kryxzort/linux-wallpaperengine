@@ -3,6 +3,8 @@
 
 #define WP_AUDIO_INPUT_FRAME_SIZE 1024
 
+#include <stddef.h>
+
 #include "configuration.h"
 #include "export.h"
 
@@ -116,6 +118,39 @@ WPENGINE_API void wp_context_set_time_counter (wp_context* context, wp_time_coun
  * @param mix The new mix to use in this context
  */
 WPENGINE_API void wp_context_set_audio_input_mix (wp_context* context, wp_audio_input_mix* mix);
+
+/**
+ * Pulls the next frames of the context's audio: the unity-gain mix of every playing stream, as F32
+ * interleaved samples in the format given to wp_config_set_audio_output. Never waits for decoding:
+ * whatever is not decoded yet is silence. Call it from the host's audio output (any one thread), and
+ * stop pulling before wp_context_destroy.
+ *
+ * The host controls the rate: frames pulled per second of its own clock = playback speed (pull
+ * faster or slower and time-stretch the result to change speed without changing pitch); not pulling
+ * pauses the sound where it is.
+ *
+ * @param context A context created from a configuration with a host audio output
+ * @param interleaved Room for frames * channels floats
+ * @param frames The number of frames to fill
+ *
+ * @return The frames written (always frames), 0 when the context has no host audio output
+ */
+WPENGINE_API size_t wp_context_audio_pull (wp_context* context, float* interleaved, size_t frames);
+
+/**
+ * @param context
+ *
+ * @return The number of audio streams the context's backgrounds currently play (0 until a scene's
+ * renderer is built by its first wp_render_frame)
+ */
+WPENGINE_API int wp_context_audio_stream_count (wp_context* context);
+
+/**
+ * @param context
+ *
+ * @return "host" when the host pulls the audio (wp_config_set_audio_output), "sdl" otherwise
+ */
+WPENGINE_API const char* wp_context_audio_driver_name (wp_context* context);
 
 #ifdef __cplusplus
 }
