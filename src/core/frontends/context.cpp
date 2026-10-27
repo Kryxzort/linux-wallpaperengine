@@ -1,5 +1,7 @@
 #include "linux-wallpaperengine/context.h"
 
+#include "WallpaperEngine/Audio/Drivers/HostAudioDriver.h"
+#include "WallpaperEngine/Audio/Drivers/SDLAudioDriver.h"
 #include "WallpaperEngine/Context.h"
 #include <SDL.h>
 
@@ -62,3 +64,37 @@ WPENGINE_API void wp_project_notify_playback_state_change (wp_context* context, 
 WPENGINE_API void wp_project_notify_playback_position_change (wp_context* context, double position) { }
 
 WPENGINE_API void wp_project_notify_playback_duration_change (wp_context* context, double duration) { }
+
+static WallpaperEngine::Audio::Drivers::HostAudioDriver* host_audio_driver (wp_context* context) {
+    return dynamic_cast<WallpaperEngine::Audio::Drivers::HostAudioDriver*> (
+	&static_cast<WallpaperEngine::Context*> (context)->audio->getDriver ()
+    );
+}
+
+WPENGINE_API size_t wp_context_audio_pull (wp_context* context, float* interleaved, size_t frames) {
+    WPENGINE_CONTEXT_API_BEGIN
+    auto* driver = host_audio_driver (context);
+
+    return driver == nullptr ? 0 : driver->pull (interleaved, frames);
+    WPENGINE_CONTEXT_API_END (0)
+}
+
+WPENGINE_API int wp_context_audio_stream_count (wp_context* context) {
+    WPENGINE_CONTEXT_API_BEGIN
+    if (auto* driver = host_audio_driver (context)) {
+	return driver->streamCount ();
+    }
+
+    auto* sdl = dynamic_cast<WallpaperEngine::Audio::Drivers::SDLAudioDriver*> (
+	&static_cast<WallpaperEngine::Context*> (context)->audio->getDriver ()
+    );
+
+    return sdl == nullptr ? 0 : static_cast<int> (sdl->getStreams ().size ());
+    WPENGINE_CONTEXT_API_END (0)
+}
+
+WPENGINE_API const char* wp_context_audio_driver_name (wp_context* context) {
+    WPENGINE_CONTEXT_API_BEGIN
+    return host_audio_driver (context) != nullptr ? "host" : "sdl";
+    WPENGINE_CONTEXT_API_END (nullptr)
+}

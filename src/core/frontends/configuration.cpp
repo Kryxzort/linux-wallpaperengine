@@ -69,6 +69,18 @@ WPENGINE_API void wp_config_enable_audio (wp_configuration* config, const bool e
     WPENGINE_CONFIG_API_END ();
 }
 
+WPENGINE_API void wp_config_set_audio_output (wp_configuration* config, const wp_audio_output* output) {
+    WPENGINE_CONFIG_API_BEGIN
+    auto* configuration = static_cast<WallpaperEngine::Configuration*> (config);
+
+    if (output == nullptr) {
+	configuration->audioOutput.reset ();
+    } else {
+	configuration->audioOutput = *output;
+    }
+    WPENGINE_CONFIG_API_END ();
+}
+
 WPENGINE_API void wp_config_set_audio_volume (wp_configuration* config, const int volume) {
     WPENGINE_CONFIG_API_BEGIN
     static_cast<WallpaperEngine::Configuration*> (config)->volume = std::max (0, std::min (volume, 128));

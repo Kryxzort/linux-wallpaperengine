@@ -1,5 +1,6 @@
 #include "Context.h"
 
+#include "Audio/Drivers/HostAudioDriver.h"
 #include "Audio/Drivers/SDLAudioDriver.h"
 #include "WallpaperEngine/Audio/AudioPlayingDetector.h"
 #include "WallpaperEngine/Audio/Drivers/AudioDriver.h"
@@ -12,8 +13,19 @@ WallpaperEngine::Context::Context (
     texture_cache (std::make_unique<TextureCache> ()), config (config), gl_proc_address (gl_proc_addresses),
     time_counter (time_counter), audio_input_mix (audio_input_mix), isRunning (true), renderTime (0.0f),
     renderTimeLast (0.0f), daytime (0.0f) {
+    // a host audio output replaces SDL entirely: no SDL audio subsystem, no device
+    std::unique_ptr<Audio::Drivers::AudioDriver> driver;
+
+    if (config.audioOutput.has_value ()) {
+	driver = std::make_unique<Audio::Drivers::HostAudioDriver> (
+	    *this, config.audioOutput->sample_rate, config.audioOutput->channels
+	);
+    } else {
+	driver = std::make_unique<Audio::Drivers::SDLAudioDriver> (*this);
+    }
+
     this->audio = std::make_unique<Audio::AudioContext> (
-	std::make_unique<Audio::Drivers::SDLAudioDriver> (*this), std::make_unique<Audio::PlaybackRecorder> (*this),
+	std::move (driver), std::make_unique<Audio::PlaybackRecorder> (*this),
 	std::make_unique<Audio::AudioPlayingDetector> (*this)
     );
 }

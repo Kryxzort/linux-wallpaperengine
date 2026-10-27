@@ -20,6 +20,7 @@ set(TARGET_SOURCE_FILES
 
     WallpaperEngine/Audio/Drivers/AudioDriver.cpp
     WallpaperEngine/Audio/Drivers/SDLAudioDriver.cpp
+    WallpaperEngine/Audio/Drivers/HostAudioDriver.cpp
 
     WallpaperEngine/Audio/PlaybackRecorder.cpp
     WallpaperEngine/Audio/AudioPlayingDetector.cpp

@@ -42,6 +42,17 @@ struct wp_rendering_pause_check {
 };
 
 /**
+ * Audio output owned by the host (see wp_config_set_audio_output). The host pulls F32 interleaved
+ * samples at this rate and channel count with wp_context_audio_pull.
+ */
+typedef struct wp_audio_output {
+    /** samples per second per channel (8000..192000) */
+    int sample_rate;
+    /** 1 (mono) or 2 (stereo, interleaved L R) */
+    int channels;
+} wp_audio_output;
+
+/**
  * Allocates and sets up some sensible defaults for the renderer
  *
  * @return
@@ -105,6 +116,17 @@ WPENGINE_API bool wp_config_detect_steam_dir (wp_configuration* config);
  * @param enable
  */
 WPENGINE_API void wp_config_enable_audio (wp_configuration* config, bool enable);
+
+/**
+ * Makes contexts created from this configuration hand their audio to the host instead of opening
+ * an SDL audio device: no device, no SDL audio subsystem; the host pulls the unity-gain mix of every
+ * stream with wp_context_audio_pull and applies volume, mute and pause itself
+ * (wp_config_set_audio_volume does not apply to it). Takes effect for contexts created afterwards.
+ *
+ * @param config
+ * @param output The output format the host pulls, NULL to go back to the SDL output (the default)
+ */
+WPENGINE_API void wp_config_set_audio_output (wp_configuration* config, const wp_audio_output* output);
 
 /**
  * Sets the desired background's volume (value ranges from 0 to 128)
