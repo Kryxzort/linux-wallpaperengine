@@ -1,7 +1,6 @@
 #pragma once
 #include "quickjs.h"
 
-#include <chrono>
 #include <map>
 
 namespace WallpaperEngine::Render::Wallpapers {
@@ -26,11 +25,18 @@ public:
     void tick ();
 
 protected:
+    /**
+     * Timers run on the scene's clock (the host's wp_time_counter, in seconds), not the wall clock:
+     * a host that pauses or steps time pauses or steps them too
+     */
     struct Timeout {
 	JSValue callback;
-	std::chrono::milliseconds duration;
-	std::chrono::steady_clock::time_point next;
+	double duration;
+	double next;
     };
+
+    /** @return The scene's current time in seconds (what engine.runtime reports) */
+    [[nodiscard]] double now () const;
 
     uint32_t m_nextTimeoutId = 0;
     uint32_t m_nextIntervalId = 0;
