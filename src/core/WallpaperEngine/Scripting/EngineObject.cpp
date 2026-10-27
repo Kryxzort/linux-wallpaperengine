@@ -237,23 +237,22 @@ EngineObject::~EngineObject () {
     JS_FreeValue (this->m_engine.getContext (), this->m_instance);
 }
 
+double EngineObject::now () const { return this->m_scene.getContext ().getContext ().renderTime; }
+
 uint32_t EngineObject::reserveNextTimeoutId (JSValue function, uint64_t duration) {
     const auto id = ++this->m_nextTimeoutId;
+    const double seconds = static_cast<double> (duration) / 1000.0;
 
-    this->m_timeouts[id] = Timeout { .callback = function,
-				     .duration = std::chrono::milliseconds (duration),
-				     .next = std::chrono::steady_clock::now () + std::chrono::milliseconds (duration) };
+    this->m_timeouts[id] = Timeout { .callback = function, .duration = seconds, .next = this->now () + seconds };
 
     return id;
 }
 
 uint32_t EngineObject::reserveNextIntervalId (JSValue function, uint64_t duration) {
     const auto id = ++this->m_nextIntervalId;
+    const double seconds = static_cast<double> (duration) / 1000.0;
 
-    this->m_intervals[id]
-	= Timeout { .callback = function,
-		    .duration = std::chrono::milliseconds (duration),
-		    .next = std::chrono::steady_clock::now () + std::chrono::milliseconds (duration) };
+    this->m_intervals[id] = Timeout { .callback = function, .duration = seconds, .next = this->now () + seconds };
 
     return id;
 }
@@ -283,10 +282,15 @@ void EngineObject::clearTimeout (uint32_t id) {
 }
 
 void EngineObject::tick () {
-    const auto now = std::chrono::steady_clock::now ();
+    const double now = this->now ();
 
     // check any interval and run them if needed
     for (auto& timeout : this->m_intervals | std::views::values) {
+	// the host's clock went back (a seek): restart the interval from here instead of stalling
+	if (timeout.next - now > timeout.duration) {
+	    timeout.next = now + timeout.duration;
+	}
+
 	if (timeout.next > now) {
 	    continue;
 	}
@@ -300,6 +304,10 @@ void EngineObject::tick () {
 
     // check any timeout and run them if needed
     for (auto& [id, timeout] : this->m_timeouts) {
+	if (timeout.next - now > timeout.duration) {
+	    timeout.next = now + timeout.duration;
+	}
+
 	if (timeout.next > now) {
 	    continue;
 	}
