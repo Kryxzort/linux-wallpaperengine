@@ -491,7 +491,20 @@ int AudioStream::resampleAudio (uint8_t* out_buf, const int out_size) {
 
     out_nb_channels = av_get_channel_layout_nb_channels (out_channel_layout);
 #else
-    out_nb_channels = this->getContext ()->ch_layout.nb_channels;
+    // the OUTPUT's channel count (the layout the resampler was set up with in the constructor), not
+    // the input's: a mono sound resampled for a stereo output writes two channels, and a buffer
+    // sized for one overflows the heap
+    switch (this->m_audioContext.getChannels ()) {
+	case 1:
+	    out_nb_channels = 1;
+	    break;
+	case 2:
+	    out_nb_channels = 2;
+	    break;
+	default:
+	    out_nb_channels = 3; // AV_CH_LAYOUT_SURROUND
+	    break;
+    }
 #endif
     ret = av_samples_alloc_array_and_samples (
 	&resampled_data, &out_linesize, out_nb_channels, out_nb_samples, this->m_audioContext.getFormat (), 0
