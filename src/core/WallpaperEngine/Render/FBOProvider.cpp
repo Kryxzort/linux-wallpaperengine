@@ -1,5 +1,4 @@
 #include "FBOProvider.h"
-#include <gmpxx.h>
 
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::Data::Model;
