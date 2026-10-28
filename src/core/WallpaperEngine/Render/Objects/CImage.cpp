@@ -647,7 +647,12 @@ void CImage::setup () {
 	    auto endEffect = cur->effect->passes.end ();
 	    auto curOverride = cur->passOverrides.begin ();
 	    auto endOverride = cur->passOverrides.end ();
+	    // an effect whose pass can't be built (a packaged shader that doesn't compile, a missing material) is
+	    // left out on its own: the image still renders, without it — not dropped with the whole object
+	    // (except a passthrough/fullscreen layer, below)
+	    const auto passesBefore = this->m_passes.size ();
 
+	    try {
 	    for (; curEffect != endEffect; ++curEffect) {
 		if (!(*curEffect)->material.has_value ()) {
 		    if (!(*curEffect)->command.has_value ()) {
@@ -703,6 +708,20 @@ void CImage::setup () {
 		    if (curOverride != endOverride) {
 			++curOverride;
 		    }
+		}
+	    }
+	    } catch (const std::exception& e) {
+		// a passthrough/fullscreen layer exists only to post-process what's below it: part of its effect
+		// chain is an arbitrary picture (measured: a black screen over 3432999904), so it still goes whole
+		if (this->m_image.model->passthrough || this->m_image.model->fullscreen) {
+		    throw;
+		}
+
+		sLog.error ("Leaving out effect ", cur->id, " (", cur->name, ") of object ", this->m_image.id, ": ", e.what ());
+
+		while (this->m_passes.size () > passesBefore) {
+		    delete this->m_passes.back ();
+		    this->m_passes.pop_back ();
 		}
 	    }
 	}
