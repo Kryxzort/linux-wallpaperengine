@@ -44,6 +44,18 @@ bool PackageAdapter::exists (const std::filesystem::path& path) const {
     return false;
 }
 
+std::optional<std::filesystem::path> PackageAdapter::findIgnoringCase (const std::filesystem::path& path) const {
+    const auto wanted = path.string ();
+
+    for (const auto& file : this->package->files) {
+	if (equalsIgnoringCase (file->filename, wanted)) {
+	    return file->filename;
+	}
+    }
+
+    return std::nullopt;
+}
+
 std::filesystem::path PackageAdapter::physicalPath (const std::filesystem::path& path) const {
     throw std::filesystem::filesystem_error ("Package adapter does not support realpath", path, std::error_code ());
 }
