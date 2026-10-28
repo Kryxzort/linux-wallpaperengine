@@ -88,25 +88,42 @@ public:
 
 	return result;
     }
+    /**
+     * An optional value whose JSON doesn't convert to T (a wrong type, a malformed vector string) is treated as
+     * absent, with a log line: these are noexcept, so a conversion error escaping them would terminate the
+     * process instead of failing (or loading) the project
+     */
     template <typename T> [[nodiscard]] std::optional<T> optional (const std::string& key) const noexcept {
-	auto base = this->base ();
+	const auto& base = this->base ();
 	const auto it = base.find (key);
 
 	if (it == base.end () || it->is_null ()) {
 	    return std::nullopt;
 	}
 
-	return *it;
+	try {
+	    std::optional<T> value = *it;
+	    return value;
+	} catch (const std::exception& e) {
+	    sLog.error ("Ignoring \"", key, "\": ", it->dump (), " (", e.what (), ")");
+	    return std::nullopt;
+	}
     }
     template <typename T> [[nodiscard]] T optional (const std::string& key, T defaultValue) const noexcept {
-	auto base = this->base ();
+	const auto& base = this->base ();
 	const auto it = base.find (key);
 
 	if (it == base.end () || it->is_null ()) {
 	    return defaultValue;
 	}
 
-	return (*it);
+	try {
+	    T value = *it;
+	    return value;
+	} catch (const std::exception& e) {
+	    sLog.error ("Ignoring \"", key, "\": ", it->dump (), " (", e.what (), "), using the default");
+	    return defaultValue;
+	}
     }
     [[nodiscard]] UserSettingUniquePtr user (const std::string& key, const Properties& properties) const;
     template <typename T>
