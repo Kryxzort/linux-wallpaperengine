@@ -81,6 +81,11 @@ void audio_callback (void* userdata, uint8_t* streamData, int length) {
 SDLAudioDriver::SDLAudioDriver (Context& applicationContext) : AudioDriver (applicationContext), m_audioSpec () {
     this->m_streamListMutex = SDL_CreateMutex ();
 
+    if (!applicationContext.config.enableAudio) {
+	sLog.out ("Audio is disabled, not opening any audio device");
+	return;
+    }
+
     if (SDL_InitSubSystem (SDL_INIT_AUDIO) < 0) {
 	sLog.error ("Cannot initialize SDL audio system, SDL_GetError: ", SDL_GetError ());
 	sLog.error ("Continuing without audio support");
