@@ -13,6 +13,22 @@
 using namespace WallpaperEngine::FileSystem;
 using namespace WallpaperEngine::FileSystem::Adapters;
 
+bool WallpaperEngine::FileSystem::Adapters::equalsIgnoringCase (std::string_view a, std::string_view b) {
+    if (a.size () != b.size ()) {
+	return false;
+    }
+
+    for (size_t i = 0; i < a.size (); i++) {
+	const auto lower = [] (char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char> (c - 'A' + 'a') : c; };
+
+	if (lower (a [i]) != lower (b [i])) {
+	    return false;
+	}
+    }
+
+    return true;
+}
+
 /**
  * Normalizes a file path to get rid of relative stuff as most as possible
  * This is not a security measure but helps keep adapters that do not really have an actual filesystem
@@ -34,12 +50,12 @@ Container::Container () {
 }
 
 ReadStreamSharedPtr Container::read (const std::filesystem::path& path) const {
-    const auto normalized = normalize_path (path);
+    const auto [adapter, found] = this->resolve (path);
 
-    ReadStreamSharedPtr result = this->resolveAdapterForFile (path).open (normalized);
+    ReadStreamSharedPtr result = adapter.open (found);
 
     if (result->fail ()) {
-	throw std::runtime_error ("Failed to open file: " + normalized.string ());
+	throw std::runtime_error ("Failed to open file: " + found.string ());
     }
 
     return result;
@@ -53,9 +69,9 @@ std::string Container::readString (const std::filesystem::path& path) const {
 }
 
 std::filesystem::path Container::physicalPath (const std::filesystem::path& path) const {
-    const auto normalized = normalize_path (path);
+    const auto [adapter, found] = this->resolve (path);
 
-    return this->resolveAdapterForFile (path).physicalPath (normalized);
+    return adapter.physicalPath (found);
 }
 
 AdapterSharedPtr Container::mount (const std::filesystem::path& path, const std::filesystem::path& mountPoint) {
@@ -75,25 +91,66 @@ AdapterSharedPtr Container::mount (const std::filesystem::path& path, const std:
 
 VirtualAdapter& Container::getVFS () const { return *this->m_vfs; }
 
-Adapter& Container::resolveAdapterForFile (const std::filesystem::path& path) const {
-    const auto normalized = normalize_path (path);
+Adapter& Container::resolveAdapterForFile (const std::filesystem::path& path) const { return this->resolve (path).first; }
 
+Adapter* Container::findAdapter (const std::string& normalized, bool ignoreCase, std::filesystem::path& found) const {
     for (const auto& [root, adapter] : this->m_mountpoints) {
-	if (normalized.string ().starts_with (root.string ()) == false) {
+	if (normalized.starts_with (root.string ()) == false) {
 	    continue;
 	}
 
-	if (const auto relative = normalized.string ().substr (root.string ().length ());
-	    adapter->exists (relative) == false) {
-	    continue;
+	const auto relative = normalized.substr (root.string ().length ());
+
+	if (ignoreCase == false) {
+	    if (adapter->exists (relative) == false) {
+		continue;
+	    }
+
+	    found = normalized;
+	    return adapter.get ();
 	}
 
-	return *adapter;
+	if (const auto match = adapter->findIgnoringCase (relative); match.has_value ()) {
+	    // the same shape the exact lookup hands the adapter: the mountpoint's prefix + its own path
+	    found = root.string () + match->string ();
+	    return adapter.get ();
+	}
     }
 
-    if (normalized.string ().starts_with ("/") == false) {
-	// try resolving as absolute, just in case it's relative to the root
-	return this->resolveAdapterForFile ("/" + normalized.string ());
+    return nullptr;
+}
+
+std::pair<Adapter&, std::filesystem::path> Container::resolve (const std::filesystem::path& path) const {
+    const auto normalized = normalize_path (path).string ();
+    const bool rooted = normalized.starts_with ("/");
+    std::filesystem::path found;
+
+    // every mountpoint exactly before any of them ignoring case, so an exact file always wins
+    for (const bool ignoreCase : { false, true }) {
+	// as given, then relative to the root
+	for (const bool addRoot : { false, true }) {
+	    if (addRoot && rooted) {
+		continue;
+	    }
+
+	    auto* adapter = this->findAdapter (addRoot ? "/" + normalized : normalized, ignoreCase, found);
+
+	    if (adapter == nullptr) {
+		continue;
+	    }
+
+	    if (ignoreCase == false) {
+		// the path as requested, like before
+		return { *adapter, normalized };
+	    }
+
+	    // requested without the leading "/": keep it that way
+	    const auto corrected = addRoot ? found.string ().substr (1) : found.string ();
+
+	    sLog.out ("Found ", normalized, " as ", corrected, " (case differs)");
+
+	    return { *adapter, corrected };
+	}
     }
 
     throw std::filesystem::filesystem_error (

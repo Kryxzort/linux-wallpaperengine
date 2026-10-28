@@ -65,6 +65,21 @@ private:
      * @return The adapter handling the file
      */
     Adapter& resolveAdapterForFile (const std::filesystem::path& path) const;
+    /**
+     * Searches for an adapter to handle the given file, and the path to give it: the requested one, or, when no
+     * adapter has that exact path, the one an adapter has that matches it ignoring case
+     *
+     * @param path The path to the file
+     * @return The adapter handling the file and the path to open on it
+     */
+    std::pair<Adapter&, std::filesystem::path> resolve (const std::filesystem::path& path) const;
+    /**
+     * @param normalized The normalized path
+     * @param ignoreCase Whether to match it ignoring case (findIgnoringCase) instead of exactly (exists)
+     * @param found The path to open on the adapter (only set when one is returned)
+     * @return The first mountpoint's adapter that has the file
+     */
+    Adapter* findAdapter (const std::string& normalized, bool ignoreCase, std::filesystem::path& found) const;
     /** The factories available for this container */
     std::vector<FactoryUniquePtr> m_factories;
     /** Mountpoints on this container */

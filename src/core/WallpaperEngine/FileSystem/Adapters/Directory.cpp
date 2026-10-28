@@ -53,6 +53,55 @@ bool DirectoryAdapter::exists (const std::filesystem::path& path) const {
     }
 }
 
+std::optional<std::filesystem::path> DirectoryAdapter::findIgnoringCase (const std::filesystem::path& path) const {
+    // walk the path one component at a time: the exact name when it exists, else the one entry of that
+    // directory whose name matches ignoring case (the first in iteration order if several do)
+    std::filesystem::path found;
+
+    try {
+	for (const auto& component : path.relative_path ()) {
+	    const auto name = component.string ();
+
+	    if (name.empty () || name == ".") {
+		continue;
+	    }
+
+	    if (name == "..") {
+		return std::nullopt;
+	    }
+
+	    if (std::filesystem::exists (this->basepath / found / component)) {
+		found /= component;
+		continue;
+	    }
+
+	    std::optional<std::filesystem::path> match;
+
+	    for (const auto& entry : std::filesystem::directory_iterator (this->basepath / found)) {
+		if (equalsIgnoringCase (entry.path ().filename ().string (), name)) {
+		    match = entry.path ().filename ();
+		    break;
+		}
+	    }
+
+	    if (!match.has_value ()) {
+		return std::nullopt;
+	    }
+
+	    found /= *match;
+	}
+    } catch (std::filesystem::filesystem_error&) {
+	return std::nullopt;
+    }
+
+    // same checks as a direct lookup: a regular file inside the base path
+    if (found.empty () || !this->exists (found)) {
+	return std::nullopt;
+    }
+
+    return found;
+}
+
 std::filesystem::path DirectoryAdapter::physicalPath (const std::filesystem::path& path) const {
     auto finalpath = std::filesystem::canonical (this->basepath / path);
 
