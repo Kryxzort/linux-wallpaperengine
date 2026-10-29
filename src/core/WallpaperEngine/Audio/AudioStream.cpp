@@ -54,6 +54,9 @@ int audio_read_thread (void* arg) {
 	}
     }
 
+    // nothing more will be queued: once the queue drains, the stream has played out
+    stream->markReadEnded ();
+
     // stop the audio too just in case
     SDL_DestroyMutex (waitMutex);
 
@@ -582,7 +585,7 @@ int AudioStream::resampleAudio (uint8_t* out_buf, const int out_size) {
 }
 
 int AudioStream::decodeFrame (uint8_t* audioBuffer, const int bufferSize) {
-    static int audio_pkt_size = 0;
+    int& audio_pkt_size = this->m_audioPacketSize;
 
     // block until there's any data in the buffers
     while (this->m_audioContext.getDriver ().getContext ().isRunning) {
@@ -637,3 +640,15 @@ int AudioStream::decodeFrame (uint8_t* audioBuffer, const int bufferSize) {
 }
 
 AudioContext& AudioStream::getAudioContext () const { return this->m_audioContext; }
+
+void AudioStream::setGain (const float gain) { this->m_gain.store (gain, std::memory_order_relaxed); }
+
+float AudioStream::getGain () const { return this->m_gain.load (std::memory_order_relaxed); }
+
+bool AudioStream::isReadEnded () const { return this->m_readEnded.load (); }
+
+void AudioStream::markReadEnded () { this->m_readEnded.store (true); }
+
+void AudioStream::markPlayedOut () { this->m_playedOut.store (true); }
+
+bool AudioStream::isPlayedOut () const { return this->m_playedOut.load (); }

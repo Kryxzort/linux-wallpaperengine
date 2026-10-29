@@ -46,6 +46,20 @@ void HostAudioDriver::removeStream (const int streamId) {
     this->m_streams.erase (it);
 }
 
+void HostAudioDriver::replaceStream (const int streamId, AudioStream* stream) {
+    std::lock_guard lock (this->m_streamsMutex);
+    const auto it = this->m_streams.find (streamId);
+
+    if (it == this->m_streams.end ()) {
+	return;
+    }
+
+    // the previous stream's decoded rest is dropped with it
+    it->second->stream = stream;
+    it->second->size = 0;
+    it->second->index = 0;
+}
+
 int HostAudioDriver::streamCount () {
     std::lock_guard lock (this->m_streamsMutex);
 
@@ -69,10 +83,12 @@ size_t HostAudioDriver::pull (float* out, const size_t frames) {
     std::lock_guard lock (this->m_streamsMutex);
 
     for (auto* buffer : this->m_streams | std::views::values) {
-	if (!buffer->stream->isInitialized ()) {
+	if (buffer->stream == nullptr || !buffer->stream->isInitialized () || buffer->stream->isPlayedOut ()) {
 	    continue;
 	}
 
+	// the stream's own level (a sound object's volume²; not clamped, > 1 boosts)
+	const float gain = buffer->stream->getGain ();
 	size_t written = 0;
 
 	while (written < samples && this->getContext ().isRunning) {
@@ -80,6 +96,11 @@ size_t HostAudioDriver::pull (float* out, const size_t frames) {
 		// decodeFrame blocks on an empty packet queue; a pull must never wait for decoding, so an
 		// empty queue is silence for the rest of this pull (and wakes the read thread)
 		if (buffer->stream->isQueueEmpty ()) {
+		    // the read thread is done and everything it queued is mixed: the file has played out
+		    if (buffer->stream->isReadEnded () && buffer->stream->isQueueEmpty ()) {
+			buffer->stream->markPlayedOut ();
+		    }
+
 		    SDL_CondSignal (buffer->stream->getWaitCondition ());
 		    break;
 		}
@@ -105,7 +126,7 @@ size_t HostAudioDriver::pull (float* out, const size_t frames) {
 	    const size_t count = std::min (samples - written, buffer->size - buffer->index);
 
 	    for (size_t i = 0; i < count; i++) {
-		out[written + i] += source[i];
+		out[written + i] += source[i] * gain;
 	    }
 
 	    written += count;

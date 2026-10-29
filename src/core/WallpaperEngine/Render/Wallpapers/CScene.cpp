@@ -258,6 +258,10 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	renderObject = nullptr;
     }
 
+    if (renderObject != nullptr && renderObject->is<Objects::CSound> ()) {
+	this->m_sounds.push_back (renderObject->as<Objects::CSound> ());
+    }
+
     return renderObject;
 }
 
@@ -318,6 +322,16 @@ void CScene::renderFrame () {
     }
     // run a tick in the javascript logic
     this->getScriptEngine ().tick ();
+
+    // advance the sound objects' playlists (next file, `random`'s silence) on the host's clock
+    const double soundDt = std::max (
+	0.0,
+	static_cast<double> (this->getContext ().getContext ().renderTime - this->getContext ().getContext ().renderTimeLast)
+    );
+
+    for (auto* sound : this->m_sounds) {
+	sound->tick (soundDt);
+    }
 
     // update main textures for images
     for (const auto& cur : this->m_objectsByRenderOrder) {

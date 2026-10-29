@@ -33,6 +33,8 @@ public:
     int addStream (AudioStream* stream) override;
     /** @inheritdoc */
     void removeStream (int streamId) override;
+    /** @inheritdoc */
+    void replaceStream (int streamId, AudioStream* stream) override;
     /**
      * @return All the registered audio streams
      */

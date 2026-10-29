@@ -133,10 +133,18 @@ public:
 };
 
 struct SoundData {
-    /** Playback mode, loop, */
+    /** Playback mode as written: `loop` (also when absent or unknown), `random` or `single` */
     // TODO: WRITE AN ENUM FOR THIS
     std::optional<std::string> playbackmode;
+    /** The files; one of them is picked at random each time the object starts */
     std::vector<std::string> sounds;
+    /** Level: each stream plays at volume² (Wallpaper Engine's mapping; not clamped). Bindable to a user property */
+    UserSettingUniquePtr volume;
+    /** `random` mode: silence between two files, uniform in [mintime, maxtime] seconds */
+    float mintime;
+    float maxtime;
+    /** Not started at load: only a script's play() starts it */
+    bool startsilent;
 };
 
 class Sound : public Object, public SoundData {

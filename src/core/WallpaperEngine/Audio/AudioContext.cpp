@@ -11,6 +11,9 @@ AudioContext::AudioContext (
 
 int AudioContext::addStream (AudioStream* stream) const { return this->m_driver->addStream (stream); }
 void AudioContext::removeStream (int streamId) const { this->m_driver->removeStream (streamId); }
+void AudioContext::replaceStream (int streamId, AudioStream* stream) const {
+    this->m_driver->replaceStream (streamId, stream);
+}
 
 AVSampleFormat AudioContext::getFormat () const { return this->m_driver->getFormat (); }
 

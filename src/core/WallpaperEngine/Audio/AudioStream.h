@@ -2,6 +2,7 @@
 
 #include "WallpaperEngine/Data/Utils/BinaryReader.h"
 
+#include <atomic>
 #include <string>
 
 extern "C" {
@@ -130,6 +131,31 @@ public:
      */
     int decodeFrame (uint8_t* audioBuffer, int bufferSize);
 
+    /**
+     * @param gain The linear amplitude the driver mixes this stream at (1 = unity, no clamp; any thread)
+     */
+    void setGain (float gain);
+    /**
+     * @return The linear amplitude the driver mixes this stream at
+     */
+    [[nodiscard]] float getGain () const;
+    /**
+     * @return If the read thread is done: the file ended without repeat (or failed), nothing more will be queued
+     */
+    [[nodiscard]] bool isReadEnded () const;
+    /**
+     * Marks the read thread as done (called by the read thread itself)
+     */
+    void markReadEnded ();
+    /**
+     * Called by a driver once it mixed the last decoded sample of an ended stream
+     */
+    void markPlayedOut ();
+    /**
+     * @return If a driver played every sample of this stream: the file ended (never true for a repeating stream)
+     */
+    [[nodiscard]] bool isPlayedOut () const;
+
 private:
     /**
      * Initializes ffmpeg to read the given file
@@ -202,5 +228,14 @@ private:
     }* m_queue {};
 
     SDL_Thread* m_audioThread = nullptr;
+
+    /** Bytes of the current packet not decoded yet (one per stream: a shared counter mixed up streams) */
+    int m_audioPacketSize = 0;
+    /** The amplitude the driver mixes this stream at */
+    std::atomic<float> m_gain { 1.0f };
+    /** The read thread finished (EOF without repeat, or an error) */
+    std::atomic<bool> m_readEnded { false };
+    /** A driver mixed the last sample */
+    std::atomic<bool> m_playedOut { false };
 };
 } // namespace WallpaperEngine::Audio

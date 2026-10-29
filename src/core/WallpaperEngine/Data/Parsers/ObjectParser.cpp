@@ -73,8 +73,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 
     if (imageIt != it.end () && imageIt->is_string ()) {
 	return parseImage (it, project, std::move (basedata), *imageIt);
-    } else if (soundIt != it.end () && soundIt->is_array ()) {
-	return parseSound (it, std::move (basedata));
+    } else if (soundIt != it.end () && (soundIt->is_array () || soundIt->is_string ())) {
+	return parseSound (it, project, std::move (basedata));
     } else if (hasParticle) {
 	return parseParticle (it, project, std::move (basedata));
     } else if (textIt != it.end ()) {
@@ -111,12 +111,19 @@ std::vector<int> ObjectParser::parseDependencies (const JSON& it) {
     return result;
 }
 
-SoundUniquePtr ObjectParser::parseSound (const JSON& it, ObjectData base) {
+SoundUniquePtr ObjectParser::parseSound (const JSON& it, const Project& project, ObjectData base) {
     const auto soundIt = it.require ("sound", "Object must have a sound");
     std::vector<std::string> sounds = {};
 
-    for (const auto& cur : soundIt) {
-	sounds.push_back (cur);
+    // one file as a string, or a list to pick from (Wallpaper Engine accepts both)
+    if (soundIt.is_string ()) {
+	sounds.push_back (soundIt);
+    } else {
+	for (const auto& cur : soundIt) {
+	    if (cur.is_string ()) {
+		sounds.push_back (cur);
+	    }
+	}
     }
 
     return std::make_unique<Sound> (
@@ -124,6 +131,10 @@ SoundUniquePtr ObjectParser::parseSound (const JSON& it, ObjectData base) {
 	SoundData {
 	    .playbackmode = it.optional<std::string> ("playbackmode"),
 	    .sounds = sounds,
+	    .volume = it.user ("volume", project.properties, 1.0f),
+	    .mintime = it.optional ("mintime", 1.0f),
+	    .maxtime = it.optional ("maxtime", 5.0f),
+	    .startsilent = it.optional ("startsilent", false),
 	}
     );
 }
