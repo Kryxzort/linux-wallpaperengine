@@ -5,6 +5,7 @@
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
 #include <ranges>
+#include <vector>
 
 using namespace WallpaperEngine::Scripting;
 
@@ -51,44 +52,38 @@ JSValue engine_get_daytime (JSContext* ctx, JSValueConst this_val, int argc, JSV
     return JS_NewFloat64 (ctx, it->second.getScene ().getContext ().getContext ().daytime);
 }
 
+// the stop function setInterval/setTimeout return: called without arguments, the timer's id is its bound data
 JSValue engine_stop_interval (
     JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic, JSValueConst* func_data
 ) {
-    if (argc != 1) {
-	return JS_EXCEPTION;
-    }
-
     const auto it = engineInstances.find (magic);
 
     if (it == engineInstances.end ()) {
-	return JS_EXCEPTION;
+	return JS_UNDEFINED;
     }
 
     int id = 0;
 
-    JS_ToInt32 (ctx, &id, argv[0]);
+    JS_ToInt32 (ctx, &id, func_data[0]);
 
     it->second.clearInterval (id);
 
     return JS_UNDEFINED;
 }
 
+// the stop function setInterval/setTimeout return: called without arguments, the timer's id is its bound data
 JSValue engine_stop_timeout (
     JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic, JSValueConst* func_data
 ) {
-    if (argc != 1) {
-	return JS_EXCEPTION;
-    }
-
     const auto it = engineInstances.find (magic);
 
     if (it == engineInstances.end ()) {
-	return JS_EXCEPTION;
+	return JS_UNDEFINED;
     }
 
     int id = 0;
 
-    JS_ToInt32 (ctx, &id, argv[0]);
+    JS_ToInt32 (ctx, &id, func_data[0]);
 
     it->second.clearTimeout (id);
 
@@ -157,6 +152,8 @@ JSValue engine_set_timeout (JSContext* ctx, JSValueConst this_val, int argc, JSV
 
 EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene) :
     m_scene (scene), m_engine (engine), m_instanceId (++EngineInstanceId), m_classId (0) {
+    // the native functions below find this object by their magic (the instance id)
+    engineInstances.emplace (this->m_instanceId, *this);
     this->m_definition = { .class_name = "IEngine" };
     JS_NewClassID (this->m_engine.getRuntime (), &this->m_classId);
     JS_NewClass (this->m_engine.getRuntime (), this->m_classId, &this->m_definition);
@@ -169,21 +166,21 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
     JS_DefinePropertyGetSet (
 	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "frametime"),
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_get_frametime, "get", 0, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_get_frametime, "get", 0, JS_CFUNC_generic_magic, this->m_instanceId
 	),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
     JS_DefinePropertyGetSet (
 	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "runtime"),
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_get_runtime, "get", 0, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_get_runtime, "get", 0, JS_CFUNC_generic_magic, this->m_instanceId
 	),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
     JS_DefinePropertyGetSet (
 	this->m_engine.getContext (), this->m_instance, JS_NewAtom (this->m_engine.getContext (), "timeOfDay"),
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_get_daytime, "get", 0, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_get_daytime, "get", 0, JS_CFUNC_generic_magic, this->m_instanceId
 	),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
@@ -202,14 +199,14 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "setInterval",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_set_interval, "setInterval", 2, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_set_interval, "setInterval", 2, JS_CFUNC_generic_magic, this->m_instanceId
 	),
 	JS_PROP_ENUMERABLE
     );
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "setTimeout",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), engine_set_timeout, "setTimeout", 2, JS_CFUNC_generic, this->m_instanceId
+	    this->m_engine.getContext (), engine_set_timeout, "setTimeout", 2, JS_CFUNC_generic_magic, this->m_instanceId
 	),
 	JS_PROP_ENUMERABLE
     );
@@ -243,7 +240,12 @@ uint32_t EngineObject::reserveNextTimeoutId (JSValue function, uint64_t duration
     const auto id = ++this->m_nextTimeoutId;
     const double seconds = static_cast<double> (duration) / 1000.0;
 
-    this->m_timeouts[id] = Timeout { .callback = function, .duration = seconds, .next = this->now () + seconds };
+    // the callback outlives the call that registered it
+    this->m_timeouts[id] = Timeout {
+	.callback = JS_DupValue (this->m_engine.getContext (), function),
+	.duration = seconds,
+	.next = this->now () + seconds,
+    };
 
     return id;
 }
@@ -252,7 +254,12 @@ uint32_t EngineObject::reserveNextIntervalId (JSValue function, uint64_t duratio
     const auto id = ++this->m_nextIntervalId;
     const double seconds = static_cast<double> (duration) / 1000.0;
 
-    this->m_intervals[id] = Timeout { .callback = function, .duration = seconds, .next = this->now () + seconds };
+    // the callback outlives the call that registered it
+    this->m_intervals[id] = Timeout {
+	.callback = JS_DupValue (this->m_engine.getContext (), function),
+	.duration = seconds,
+	.next = this->now () + seconds,
+    };
 
     return id;
 }
@@ -281,11 +288,43 @@ void EngineObject::clearTimeout (uint32_t id) {
     this->m_timeouts.erase (id);
 }
 
+void EngineObject::call (JSValue callback) {
+    JSContext* ctx = this->m_engine.getContext ();
+    // a callback may clear its own timer (freeing its stored reference): hold one for the call
+    JSValue function = JS_DupValue (ctx, callback);
+    JSValue result = JS_Call (ctx, function, JS_UNDEFINED, 0, nullptr);
+
+    if (JS_IsException (result)) {
+	JSValue exception = JS_GetException (ctx);
+	const char* message = JS_ToCString (ctx, exception);
+	sLog.error ("ScriptEngine [timer]: ", message ? message : "<exception>");
+	JS_FreeCString (ctx, message);
+	JS_FreeValue (ctx, exception);
+    }
+
+    JS_FreeValue (ctx, result);
+    JS_FreeValue (ctx, function);
+}
+
 void EngineObject::tick () {
     const double now = this->now ();
+    // callbacks may add or clear timers: walk a snapshot of the ids, re-finding each one
+    std::vector<uint32_t> ids;
 
     // check any interval and run them if needed
-    for (auto& timeout : this->m_intervals | std::views::values) {
+    for (const auto& id : this->m_intervals | std::views::keys) {
+	ids.push_back (id);
+    }
+
+    for (const auto id : ids) {
+	const auto it = this->m_intervals.find (id);
+
+	if (it == this->m_intervals.end ()) {
+	    continue;
+	}
+
+	auto& timeout = it->second;
+
 	// the host's clock went back (a seek): restart the interval from here instead of stalling
 	if (timeout.next - now > timeout.duration) {
 	    timeout.next = now + timeout.duration;
@@ -296,30 +335,35 @@ void EngineObject::tick () {
 	}
 
 	timeout.next = now + timeout.duration;
-
-	JS_Call (this->m_engine.getContext (), timeout.callback, JS_NULL, 0, nullptr);
+	this->call (timeout.callback);
     }
 
-    std::vector<uint32_t> removeTimeouts;
+    ids.clear ();
+
+    for (const auto& id : this->m_timeouts | std::views::keys) {
+	ids.push_back (id);
+    }
 
     // check any timeout and run them if needed
-    for (auto& [id, timeout] : this->m_timeouts) {
-	if (timeout.next - now > timeout.duration) {
-	    timeout.next = now + timeout.duration;
-	}
+    for (const auto id : ids) {
+	const auto it = this->m_timeouts.find (id);
 
-	if (timeout.next > now) {
+	if (it == this->m_timeouts.end ()) {
 	    continue;
 	}
 
-	JS_Call (this->m_engine.getContext (), timeout.callback, JS_NULL, 0, nullptr);
+	if (it->second.next - now > it->second.duration) {
+	    it->second.next = now + it->second.duration;
+	}
 
-	JS_FreeValue (this->m_engine.getContext (), timeout.callback);
+	if (it->second.next > now) {
+	    continue;
+	}
 
-	removeTimeouts.push_back (id);
-    }
-
-    for (auto id : removeTimeouts) {
-	this->m_timeouts.erase (id);
+	// a timeout fires once: off the list before its callback runs
+	JSValue callback = it->second.callback;
+	this->m_timeouts.erase (it);
+	this->call (callback);
+	JS_FreeValue (this->m_engine.getContext (), callback);
     }
 }

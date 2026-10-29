@@ -1,10 +1,8 @@
 #pragma once
 
-#include "Adapters/VectorAdapter.h"
 #include "ConsoleObject.h"
 #include "EngineObject.h"
 #include "InputObject.h"
-#include "Modules/ScriptModule.h"
 #include "SceneObject.h"
 
 #include <chrono>
@@ -15,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "../Data/Model/DynamicValue.h"
 #include "WallpaperEngine/Data/Model/Types.h"
@@ -33,6 +32,7 @@ class CScene;
 
 namespace WallpaperEngine::Scripting {
 class ScriptPropertiesObject;
+class ScriptableObject;
 namespace Adapters {
     class ScriptableObjectAdapter;
 }
@@ -44,14 +44,23 @@ static constexpr ScriptLayerHandle kInvalidLayerHandle = 0;
 
 class ScriptEngine {
 public:
+    /**
+     * A property script: an ES module attached to one property of one object. Compiled and evaluated on the
+     * first tick after it was queued (the whole scene exists by then), `init(value)` once, `update(value)` every
+     * tick; a return of `undefined`/`null` leaves the property as it is
+     */
     struct LoadedModule {
+	std::string key;
+	std::string source;
 	DynamicValue& value;
-	JSValue module;
+	ScriptableObject& object;
+	/** the module namespace once evaluated (JS_UNDEFINED before, or when it failed to load) */
+	JSValue ns = JS_UNDEFINED;
+	bool evaluated = false;
+	bool initialized = false;
+	int errors = 0;
     };
     struct JSObjectAdapters {
-	std::unique_ptr<Adapters::VectorAdapter<4>> vec4;
-	std::unique_ptr<Adapters::VectorAdapter<3>> vec3;
-	std::unique_ptr<Adapters::VectorAdapter<2>> vec2;
 	std::unique_ptr<Adapters::ScriptableObjectAdapter> object;
     };
 
@@ -65,13 +74,23 @@ public:
     JSValue getGlobalThis () const { return m_globalThis; }
     LoadedModule* getRunningModule () const { return m_runningModule; }
     JSValue dynamicToJs (DynamicValue& value) const;
+    /**
+     * Writes a script value into `target` (numbers, booleans, strings, Vec2/3/4); undefined/null write nothing
+     * @return false when nothing was written
+     */
+    bool jsToDynamic (JSValueConst value, DynamicValue& target) const;
+    /** A new instance of the scripts' own `Vec2`/`Vec3`/`Vec4` class (Wallpaper Engine's baseclasses.js) */
+    JSValue newVec (const glm::vec2& value) const;
+    JSValue newVec (const glm::vec3& value) const;
+    JSValue newVec (const glm::vec4& value) const;
+    /** Wallpaper Engine's script assets (`scripts/…`) as the scene's asset locator finds them; empty if absent */
+    std::string readScriptAsset (const std::string& path) const;
 
     /**
-     * Evaluate a WallpaperEngine script's update() function.
-     *
-     * @param key The full JS script text (ES6 module with export function update(value))
-     * @param currentValue The current value to pass to update()
-     * @return The modified value from update(), or a copy of currentValue on error
+     * Queue the property script of `currentValue` (its `getScriptSource`), once per key. The module is
+     * compiled and evaluated on the next tick, with `thisLayer`/`thisObject` bound to `object` for that
+     * module only; then `init(value)` runs once and `update(value)` every tick, their non-undefined
+     * returns written to `currentValue`
      */
     void queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object);
 
@@ -136,7 +155,6 @@ public:
 
     const JSObjectAdapters& getAdapters () const { return m_adapters; }
     const Render::Wallpapers::CScene& getScene () const { return m_scene; }
-    const std::map<std::string, std::unique_ptr<Modules::ScriptModule>>& getModules () const { return m_modules; }
 
     void notifyTrackMetadataChange (
 	const std::optional<std::string>& title, const std::optional<std::string>& artist,
@@ -147,9 +165,15 @@ public:
     void notifyPlaybackPositionAndDurationChange (std::optional<double> position, std::optional<double> duration);
 
 private:
-    JSValue call (JSValue module, int argc, JSValueConst argv[], const char* name);
+    JSValue newVec (int components, const float* values) const;
 
+    void installPrelude ();
     void installBuiltins ();
+    void evaluateModule (LoadedModule& module);
+    /** calls `name(argv…)` on the module if it exports it; a value other than undefined/null is written back */
+    void callModule (LoadedModule& module, const char* name, int argc, JSValueConst argv[], bool writeBack);
+    void logModuleError (LoadedModule& module, const char* what);
+    void runPendingJobs ();
 
     // Installs globalThis.__layers and related helpers. Called lazily.
     void ensureLayerRegistry ();
@@ -166,8 +190,12 @@ private:
     std::unique_ptr<ConsoleObject> m_consoleObject;
     std::unique_ptr<ScriptPropertiesObject> m_scriptPropertiesObject;
 
-    std::map<std::string, std::unique_ptr<Modules::ScriptModule>> m_modules = {};
-    std::map<std::string, LoadedModule> m_scriptModules = {};
+    /** property scripts in the order they were queued (init runs in that order) */
+    std::vector<std::unique_ptr<LoadedModule>> m_scriptModules = {};
+    std::unordered_set<std::string> m_scriptKeys = {};
+    bool m_pendingModules = false;
+    /** the scripts' Vec2/Vec3/Vec4 constructors, [0] = Vec2 */
+    JSValue m_vecCtors[3] = { JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED };
 
     LoadedModule* m_runningModule = nullptr;
 

@@ -81,8 +81,10 @@ CText::CText (Wallpapers::CScene& scene, const Text& text) :
     this->registerProperty ("scale", *text.scale->value);
     this->registerProperty ("visible", *text.visible->value);
     this->registerProperty ("pointSize", *text.pointSize->value);
-    this->registerProperty ("text", *text.text->value);
-    this->registerProperty ("pointSize", *text.pointSize->value);
+    // a text object has no angles of its own: the object's (not rendered yet)
+    this->registerProperty ("angles", *text.groupAngles->value);
+    // the text's script runs as a layer script (initScriptLayer), not a second time as a property script
+    this->registerProperty ("text", *text.text->value, false);
 }
 
 CText::~CText () {

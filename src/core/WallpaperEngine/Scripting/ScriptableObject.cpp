@@ -9,11 +9,9 @@ using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::Scripting;
 
 ScriptableObject::ScriptableObject (Wallpapers::CScene& scene, const Object& object) : CObject (scene, object) {
-    // register common dynamic values
+    // register common dynamic values. scale/angles/visible are not common: an image, text or particle object
+    // registers its own (the values it renders with); a script on the group* copies would drive nothing
     this->registerProperty ("origin", *object.origin->value);
-    this->registerProperty ("scale", *object.groupScale->value);
-    this->registerProperty ("angles", *object.groupAngles->value);
-    this->registerProperty ("visible", *object.groupVisible->value);
 }
 
 DynamicValue& ScriptableObject::getProperty (const std::string& name) {
@@ -30,12 +28,12 @@ const std::map<std::string, ScriptableObject::PropertyEntry>& ScriptableObject::
     return this->m_properties;
 }
 
-void ScriptableObject::registerProperty (const std::string& name, DynamicValue& value) {
+void ScriptableObject::registerProperty (const std::string& name, DynamicValue& value, bool runScript) {
     auto inserted = this->m_properties.emplace (
 	name, PropertyEntry { .key = name + "_" + std::to_string (this->getId ()), .value = value }
     );
 
-    if (!inserted.second) {
+    if (!inserted.second || !runScript) {
 	return;
     }
 

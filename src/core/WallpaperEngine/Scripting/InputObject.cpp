@@ -11,7 +11,7 @@ JSValue get_cursor_world_position (JSContext* ctx, JSValueConst this_val, int ar
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
 
     // TODO: PROPERLY IMPLEMENT THIS
-    return input->getScene ().getScriptEngine ().getAdapters ().vec3->instantiate ();
+    return input->getScene ().getScriptEngine ().newVec (glm::vec3 (0.0f));
 }
 
 JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -19,12 +19,7 @@ JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int a
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
     auto position = input->getScene ().getMousePositionNormalized ();
 
-    JSValue result = input->getScene ().getScriptEngine ().getAdapters ().vec2->instantiate ();
-
-    JS_SetPropertyStr (ctx, result, "x", JS_NewFloat64 (ctx, position->x));
-    JS_SetPropertyStr (ctx, result, "y", JS_NewFloat64 (ctx, position->y));
-
-    return result;
+    return input->getScene ().getScriptEngine ().newVec (*position);
 }
 
 JSValue get_cursor_left_down (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {

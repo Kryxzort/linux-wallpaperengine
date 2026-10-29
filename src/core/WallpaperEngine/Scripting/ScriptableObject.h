@@ -22,7 +22,11 @@ public:
     const std::map<std::string, PropertyEntry>& getProperties () const;
 
 protected:
-    void registerProperty (const std::string& name, DynamicValue& value);
+    /**
+     * Makes `name` readable by scripts (thisLayer, getLayer). Its property script, if any, is queued unless
+     * `runScript` is false (an object that runs that script itself)
+     */
+    void registerProperty (const std::string& name, DynamicValue& value, bool runScript = true);
 
 private:
     std::map<std::string, PropertyEntry> m_properties;

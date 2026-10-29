@@ -40,25 +40,19 @@ JSValue get_clearenabled (JSContext* ctx, JSValueConst this_val, int argc, JSVal
 JSValue get_clearcolor (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
 
-    return container->getEngine ().getAdapters ().vec3->instantiate (
-	*container->getScene ().getScene ().colors.clear->value
-    );
+    return container->getEngine ().newVec (container->getScene ().getScene ().colors.clear->value->getVec3 ());
 }
 
 JSValue get_ambientcolor (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
 
-    return container->getEngine ().getAdapters ().vec3->instantiate (
-	*container->getScene ().getScene ().colors.ambient->value
-    );
+    return container->getEngine ().newVec (container->getScene ().getScene ().colors.ambient->value->getVec3 ());
 }
 
 JSValue get_skylightcolor (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
 
-    return container->getEngine ().getAdapters ().vec3->instantiate (
-	*container->getScene ().getScene ().colors.ambient->value
-    );
+    return container->getEngine ().newVec (container->getScene ().getScene ().colors.ambient->value->getVec3 ());
 }
 
 JSValue get_fov (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -184,7 +178,8 @@ JSValue get_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst
 	}
     }
 
-    return JS_EXCEPTION;
+    // no such layer (or not one scripts can reach yet): undefined, not an exception without an error
+    return JS_UNDEFINED;
 }
 
 JSValue scene_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }
