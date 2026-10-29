@@ -35,6 +35,9 @@ protected:
 	double next;
     };
 
+    /** runs a timer callback, logging what it throws */
+    void call (JSValue callback);
+
     /** @return The scene's current time in seconds (what engine.runtime reports) */
     [[nodiscard]] double now () const;
 

@@ -166,10 +166,12 @@ ScriptPropertiesObject::ScriptPropertiesObject (ScriptEngine& engine, Render::Wa
 	this->m_engine.getContext (), this->m_creatorPrototype, "finish",
 	JS_NewCFunction (this->m_engine.getContext (), scriptpropertiescreator_finish, "finish", 0), JS_PROP_ENUMERABLE
     );
+    // the values the scene stores for a property script's scriptProperties (live: user-property bound); builtins.js
+    // lays them over the defaults of Wallpaper Engine's own createScriptProperties()
     JS_DefinePropertyValueStr (
-	this->m_engine.getContext (), this->m_engine.getGlobalThis (), "createScriptProperties",
+	this->m_engine.getContext (), this->m_engine.getGlobalThis (), "__storedScriptProperties",
 	JS_NewCFunctionMagic (
-	    this->m_engine.getContext (), scriptpropertiescreator_create, "createScriptProperties", 0, JS_CFUNC_generic,
+	    this->m_engine.getContext (), scriptpropertiescreator_create, "createScriptProperties", 0, JS_CFUNC_generic_magic,
 	    m_instanceId
 	),
 	JS_PROP_ENUMERABLE

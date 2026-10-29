@@ -89,12 +89,8 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/VideoPlayback/MPV/GLPlayer.cpp
     WallpaperEngine/VideoPlayback/MPV/MemoryStreamProtocol.cpp
 
-    WallpaperEngine/Scripting/Adapters/VectorAdapter.cpp
     WallpaperEngine/Scripting/Adapters/ObjectAdapter.cpp
     WallpaperEngine/Scripting/Adapters/ScriptableObjectAdapter.cpp
-    WallpaperEngine/Scripting/Modules/ColorModule.cpp
-    WallpaperEngine/Scripting/Modules/MathModule.cpp
-    WallpaperEngine/Scripting/Modules/ScriptModule.cpp
     WallpaperEngine/Scripting/ConsoleObject.cpp
     WallpaperEngine/Scripting/EngineObject.cpp
     WallpaperEngine/Scripting/InputObject.cpp

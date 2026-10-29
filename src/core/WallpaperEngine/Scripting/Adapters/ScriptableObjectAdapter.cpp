@@ -1,5 +1,6 @@
 #include "ScriptableObjectAdapter.h"
 
+#include <cstring>
 #include <utility>
 
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
@@ -37,6 +38,11 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 
     ScopeGuard guard ([=] { JS_FreeCString (ctx, name); });
 
+    // ILayer.name (read-only)
+    if (strcmp (name, "name") == 0) {
+	return JS_NewString (ctx, container->object.getObject ().name.c_str ());
+    }
+
     try {
 	// find the property inside, otherwise return undefined
 	auto& property = container->object.getProperty (name);
@@ -64,11 +70,25 @@ int scriptableobject_property_set (
 	return -1;
     }
 
-    return 0;
+    ScopeGuard guard ([=] { JS_FreeCString (ctx, name); });
+    const auto& properties = container->object.getProperties ();
+    const auto it = properties.find (name);
+
+    // a registered property (origin, scale, angles, visible, alpha, color, …) takes the value; other names are
+    // accepted and dropped (not an exception: a strict-mode script would abort on them)
+    if (it != properties.end ()) {
+	container->adapter.getEngine ().jsToDynamic (val, it->second.value);
+    }
+
+    return 1;
 }
 
 ScriptableObjectAdapter::ScriptableObjectAdapter (ScriptEngine& engine, std::string name) :
     ObjectAdapter (engine), m_exoticMethods (), m_name (std::move (name)) {
+    // the layer's registered properties, read and written live (these were never installed: every property of
+    // thisLayer / getLayer() read undefined)
+    this->m_exoticMethods.get_property = scriptableobject_property_get;
+    this->m_exoticMethods.set_property = scriptableobject_property_set;
     this->registerType (
 	{
 	    .class_name = m_name.c_str (),
