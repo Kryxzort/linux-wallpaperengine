@@ -13,6 +13,10 @@ class Camera;
 class CObject;
 }
 
+namespace WallpaperEngine::Render::Objects {
+class CSound;
+}
+
 namespace WallpaperEngine::Render::Wallpapers {
 using namespace WallpaperEngine::Data::Model;
 
@@ -62,6 +66,8 @@ private:
     CObject* m_bloomObject = nullptr;
     std::map<int, CObject*> m_objects = {};
     std::vector<CObject*> m_objectsByRenderOrder = {};
+    /** the sound objects, ticked on the host's clock every frame (they don't render) */
+    std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};

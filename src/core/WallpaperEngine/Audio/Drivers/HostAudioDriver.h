@@ -27,7 +27,8 @@ struct HostAudioBuffer {
  * Opens no device: the host pulls F32 interleaved PCM at the configured rate and channel count with
  * wp_context_audio_pull, from whatever thread drives its own output (a real-time callback included:
  * a pull never waits for decoding — what is not decoded yet is silence). Every stream is mixed at
- * unity gain; volume, ramps, mute and pause are the host's (not pulling = paused: the decode queues
+ * its own gain (AudioStream::setGain: a sound object's volume², unity by default) and summed; the
+ * wallpaper's volume, ramps, mute and pause are the host's (not pulling = paused: the decode queues
  * fill and the read threads wait). Because the host decides how many frames it pulls per second it
  * can also play a scene's sound faster or slower, e.g. through a time-stretch stage of its own.
  */
@@ -40,6 +41,8 @@ public:
     int addStream (AudioStream* stream) override;
     /** @inheritdoc */
     void removeStream (int streamId) override;
+    /** @inheritdoc */
+    void replaceStream (int streamId, AudioStream* stream) override;
 
     /** @inheritdoc */
     [[nodiscard]] AVSampleFormat getFormat () const override;
@@ -57,7 +60,8 @@ public:
     size_t pull (float* out, size_t frames);
 
     /**
-     * @return The number of streams currently registered
+     * @return The number of streams currently registered (a sound object's slot counts while it is
+     *         between files or held silent)
      */
     [[nodiscard]] int streamCount ();
 

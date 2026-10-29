@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <ranges>
 
 #include "SDLAudioDriver.h"
@@ -30,18 +32,34 @@ void audio_callback (void* userdata, uint8_t* streamData, int length) {
 
 	// sound is not initialized or stopped and is not in loop mode
 	// ignore mixing it in
-	if (!buffer->stream->isInitialized ()) {
+	if (buffer->stream == nullptr || !buffer->stream->isInitialized () || buffer->stream->isPlayedOut ()) {
 	    continue;
 	}
 
 	// check if queue is empty and signal the read thread
 	if (buffer->stream->isQueueEmpty ()) {
+	    if (buffer->stream->isReadEnded () && buffer->audio_buf_index >= buffer->audio_buf_size) {
+		buffer->stream->markPlayedOut ();
+	    }
+
 	    SDL_CondSignal (buffer->stream->getWaitCondition ());
 	    continue;
 	}
 
+	// the stream's own level on top of the configured volume (SDL mixes 0..128: a boost above the
+	// configured volume is capped there)
+	const int volume = std::clamp (
+	    static_cast<int> (std::lround (driver->getContext ().config.volume * buffer->stream->getGain ())), 0,
+	    SDL_MIX_MAXVOLUME
+	);
+
 	while (streamLength > 0 && driver->getContext ().isRunning) {
 	    if (buffer->audio_buf_index >= buffer->audio_buf_size) {
+		// decodeFrame blocks on an empty packet queue (a file that ended): silence for the rest
+		if (buffer->stream->isQueueEmpty ()) {
+		    break;
+		}
+
 		// get more data to fill the buffer
 		int audio_size = buffer->stream->decodeFrame (buffer->audio_buf, sizeof (buffer->audio_buf));
 
@@ -65,7 +83,7 @@ void audio_callback (void* userdata, uint8_t* streamData, int length) {
 	    // mix the audio
 	    SDL_MixAudioFormat (
 		streamDataPointer, &buffer->audio_buf[buffer->audio_buf_index], driver->getSpec ().format, len1,
-		driver->getContext ().config.volume
+		volume
 	    );
 
 	    streamLength -= len1;
@@ -137,7 +155,32 @@ int SDLAudioDriver::addStream (AudioStream* stream) {
 
     return newStreamId;
 }
-void SDLAudioDriver::removeStream (int streamId) { this->m_streams.erase (streamId); }
+void SDLAudioDriver::removeStream (int streamId) {
+    SDL_LockMutex (this->m_streamListMutex);
+
+    const auto it = this->m_streams.find (streamId);
+
+    if (it != this->m_streams.end ()) {
+	delete it->second;
+	this->m_streams.erase (it);
+    }
+
+    SDL_UnlockMutex (this->m_streamListMutex);
+}
+
+void SDLAudioDriver::replaceStream (int streamId, AudioStream* stream) {
+    SDL_LockMutex (this->m_streamListMutex);
+
+    const auto it = this->m_streams.find (streamId);
+
+    if (it != this->m_streams.end ()) {
+	it->second->stream = stream;
+	it->second->audio_buf_size = 0;
+	it->second->audio_buf_index = 0;
+    }
+
+    SDL_UnlockMutex (this->m_streamListMutex);
+}
 
 const std::map<int, SDLAudioBuffer*>& SDLAudioDriver::getStreams () { return this->m_streams; }
 

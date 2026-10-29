@@ -35,6 +35,12 @@ public:
     void removeStream (int streamId) const;
 
     /**
+     * @param streamId The slot to play another stream in
+     * @param stream The new stream, or nullptr to play nothing
+     */
+    void replaceStream (int streamId, AudioStream* stream) const;
+
+    /**
      * TODO: MAYBE THIS SHOULD BE OUR OWN DEFINITIONS INSTEAD OF LIBRARY SPECIFIC ONES?
      *
      * @return The audio format the driver supports

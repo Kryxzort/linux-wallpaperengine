@@ -120,7 +120,8 @@ WPENGINE_API void wp_context_set_time_counter (wp_context* context, wp_time_coun
 WPENGINE_API void wp_context_set_audio_input_mix (wp_context* context, wp_audio_input_mix* mix);
 
 /**
- * Pulls the next frames of the context's audio: the unity-gain mix of every playing stream, as F32
+ * Pulls the next frames of the context's audio: the sum of every playing stream, each at its sound
+ * object's level (volume², Wallpaper Engine's mapping; the wallpaper's own volume is the host's), as F32
  * interleaved samples in the format given to wp_config_set_audio_output. Never waits for decoding:
  * whatever is not decoded yet is silence. Call it from the host's audio output (any one thread), and
  * stop pulling before wp_context_destroy.
@@ -140,8 +141,9 @@ WPENGINE_API size_t wp_context_audio_pull (wp_context* context, float* interleav
 /**
  * @param context
  *
- * @return The number of audio streams the context's backgrounds currently play (0 until a scene's
- * renderer is built by its first wp_render_frame)
+ * @return The number of sound objects the context's backgrounds can play (one stream slot each, also
+ * while one is held at volume 0 or between two files; a `startsilent` object waits for a script and
+ * isn't counted), 0 until a scene's renderer is built by its first wp_render_frame
  */
 WPENGINE_API int wp_context_audio_stream_count (wp_context* context);
 

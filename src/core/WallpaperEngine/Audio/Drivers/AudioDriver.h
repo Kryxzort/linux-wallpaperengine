@@ -21,7 +21,7 @@ namespace Drivers {
 	/**
 	 * Registers the given stream in the driver for playing
 	 *
-	 * @param stream
+	 * @param stream The stream, or nullptr for a slot that plays nothing until replaceStream fills it
 	 */
 	virtual int addStream (AudioStream* stream) = 0;
 
@@ -30,6 +30,15 @@ namespace Drivers {
 	 * @param streamId The stream to stop playing
 	 */
 	virtual void removeStream (int streamId) = 0;
+
+	/**
+	 * Swaps the stream a slot plays (a sound object's next file); the previous one is no longer
+	 * touched by the driver once this returns, so the caller can delete it
+	 *
+	 * @param streamId The slot from addStream
+	 * @param stream The new stream, or nullptr to play nothing
+	 */
+	virtual void replaceStream (int streamId, AudioStream* stream) = 0;
 
 	/**
 	 * Updates status of the different audio settings
