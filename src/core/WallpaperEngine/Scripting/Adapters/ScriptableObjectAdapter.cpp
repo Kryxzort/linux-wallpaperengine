@@ -43,14 +43,16 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	return JS_NewString (ctx, container->object.getObject ().name.c_str ());
     }
 
-    try {
-	// find the property inside, otherwise return undefined
-	auto& property = container->object.getProperty (name);
+    // a registered property, otherwise undefined (looked up, not getProperty: that logs an error per miss, and a
+    // script calling a method LWE lacks, e.g. getTextureAnimation(), misses every frame)
+    const auto& properties = container->object.getProperties ();
+    const auto it = properties.find (name);
 
-	return container->adapter.getEngine ().dynamicToJs (property);
-    } catch (const std::exception& e) {
+    if (it == properties.end ()) {
 	return JS_UNDEFINED;
     }
+
+    return container->adapter.getEngine ().dynamicToJs (it->second.value);
 }
 
 int scriptableobject_property_set (
