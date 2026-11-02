@@ -7,6 +7,7 @@
 
 #include "../Utils/TypeCaster.h"
 #include "Object.h"
+#include "PropertyAnimation.h"
 #include "Types.h"
 
 namespace WallpaperEngine::Data::Model {
@@ -106,6 +107,8 @@ struct SceneData {
     } camera;
 
     ObjectList objects;
+    /** Every value in this scene with a keyframe animation (the scene advances them every frame) */
+    std::vector<AnimatedValue> animatedValues = {};
 };
 
 class Scene final : public Wallpaper, public SceneData {

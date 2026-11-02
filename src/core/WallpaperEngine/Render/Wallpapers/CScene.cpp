@@ -301,6 +301,26 @@ void CScene::addObjectToRenderOrder (const Object& object) {
 }
 
 Scripting::ScriptEngine& CScene::getScriptEngine () const { return *this->m_scriptEngine; }
+
+void CScene::advanceAnimations () {
+    auto& animated = const_cast<Data::Model::Scene&> (this->getScene ()).animatedValues;
+    const float dt = std::max (
+	0.0f, this->getContext ().getContext ().renderTime - this->getContext ().getContext ().renderTimeLast
+    );
+
+    std::erase_if (animated, [] (const Data::Model::AnimatedValue& cur) { return cur.alive && !*cur.alive; });
+
+    for (const auto& [value, alive] : animated) {
+	const auto& animation = value->getAnimation ();
+
+	if (animation == nullptr) {
+	    continue;
+	}
+
+	animation->advance (dt);
+	animation->apply (*value);
+    }
+}
 Camera& CScene::getCamera () const { return *this->m_camera; }
 
 void CScene::renderFrame () {
@@ -320,6 +340,8 @@ void CScene::renderFrame () {
 	this->m_parallaxDisplacement
 	    = glm::mix (this->m_parallaxDisplacement, (this->m_mousePosition * amount) * influence, delay);
     }
+    // keyframe animations first, so a property script's update(value) sees this frame's animated value
+    this->advanceAnimations ();
     // run a tick in the javascript logic
     this->getScriptEngine ().tick ();
 

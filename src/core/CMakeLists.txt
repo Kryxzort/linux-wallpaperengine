@@ -69,6 +69,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Data/Builders/ColorBuilder.cpp
     WallpaperEngine/Data/Builders/VectorBuilder.cpp
     WallpaperEngine/Data/Model/DynamicValue.cpp
+    WallpaperEngine/Data/Model/PropertyAnimation.cpp
     WallpaperEngine/Data/Utils/BinaryReader.cpp
     WallpaperEngine/Data/Parsers/EffectParser.cpp
     WallpaperEngine/Data/Parsers/ProjectParser.cpp

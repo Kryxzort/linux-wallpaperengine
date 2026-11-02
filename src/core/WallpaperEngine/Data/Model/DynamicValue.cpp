@@ -296,6 +296,12 @@ void DynamicValue::setProperties (std::map<std::string, UserSettingUniquePtr> pr
     this->m_properties = std::move (properties);
 }
 
+void DynamicValue::setAnimation (PropertyAnimationSharedPtr animation) { this->m_animation = std::move (animation); }
+
+const PropertyAnimationSharedPtr& DynamicValue::getAnimation () const { return this->m_animation; }
+
+std::shared_ptr<const bool> DynamicValue::getAliveFlag () const { return this->m_aliveFlag; }
+
 void DynamicValue::propagate (UpdateSource source) const {
     for (const auto& callback : this->m_listeners) {
 	callback (*this, source);

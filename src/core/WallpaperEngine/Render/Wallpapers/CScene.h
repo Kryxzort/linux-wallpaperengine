@@ -52,6 +52,8 @@ public:
 protected:
     void renderFrame () override;
     void updateMouse ();
+    /** Advances every keyframe animation by this frame's dt and writes their values (G01/G02) */
+    void advanceAnimations ();
 
     friend class CWallpaper;
 

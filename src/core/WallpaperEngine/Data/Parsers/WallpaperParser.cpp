@@ -2,6 +2,7 @@
 
 #include "../Model/Project.h"
 #include "../Model/Wallpaper.h"
+#include "DynamicValueParser.h"
 #include "ObjectParser.h"
 #include "WallpaperEngine/FileSystem/Container.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -33,7 +34,11 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
     // TODO: FIND IF THESE DEFAULTS ARE SENSIBLE OR NOT AND PERFORM PROPER VALIDATION WHEN CAMERA PREVIEW AND CAMERA
     // PARALLAX ARE PRESENT
 
-    return std::make_unique <Scene> (
+    // every value parsed from here on with a keyframe animation is listed for the scene to advance
+    std::vector<AnimatedValue> animatedValues;
+    DynamicValueParser::AnimationCollector collector (animatedValues);
+
+    auto result = std::make_unique <Scene> (
         WallpaperData {
             .filename = "",
             .project = project
@@ -80,6 +85,9 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
             .objects = parseObjects (objects, project),
         }
     );
+
+    result->animatedValues = std::move (animatedValues);
+    return result;
 }
 
 VideoUniquePtr WallpaperParser::parseVideo (const JSON& file, Project& project) {

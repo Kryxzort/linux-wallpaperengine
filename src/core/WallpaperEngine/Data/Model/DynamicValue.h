@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Color.h"
+#include "PropertyAnimation.h"
 #include "Types.h"
 
 #include <functional>
@@ -46,6 +47,8 @@ public:
 	Initialization = 0,
 	Script = 1,
 	User = 2,
+	/** a keyframe animation's value for this frame */
+	Animation = 3,
     };
 
     DynamicValue () = default;
@@ -136,6 +139,18 @@ public:
      * Updates the script properties associated with this dynamic value
      */
     void setProperties (std::map<std::string, UserSettingUniquePtr> properties);
+    /**
+     * Attaches a keyframe animation: from then on the scene writes its value into this one every frame
+     */
+    void setAnimation (PropertyAnimationSharedPtr animation);
+    /**
+     * @return The keyframe animation driving this value (if any)
+     */
+    [[nodiscard]] const PropertyAnimationSharedPtr& getAnimation () const;
+    /**
+     * @return A flag that turns false when this value is destroyed (for holders of a plain pointer to it)
+     */
+    [[nodiscard]] std::shared_ptr<const bool> getAliveFlag () const;
 
 private:
     /**
@@ -147,6 +162,7 @@ private:
     std::list<std::function<void (const DynamicValue&, UpdateSource)>> m_listeners = {};
     std::vector<std::function<void ()>> m_connections = {};
     std::optional<std::string> m_scriptSource = std::nullopt;
+    PropertyAnimationSharedPtr m_animation = nullptr;
 
     glm::vec4 m_vec4 = {};
     glm::vec3 m_vec3 = {};
