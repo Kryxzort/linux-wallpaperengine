@@ -4,7 +4,10 @@
 
 #include "CScene.h"
 
+#include <cmath>
 #include <cstdlib>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -74,10 +77,10 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	height = boundingBox.w - boundingBox.y;
     }
 
-    this->m_parallaxDisplacement = { 0, 0 };
-
     // TODO: CONVERSION
     this->m_camera->setOrthogonalProjection (width, height);
+    // WE starts the smoothed parallax position at the centre (GH 0x1401b6c60), g_ParallaxPosition at 0.5 0.5
+    this->m_parallaxPosition = { width / 2.0f, height / 2.0f };
 
     // setup framebuffers here as they're required for the scene setup
     this->setupFramebuffers ();
@@ -254,6 +257,9 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	}
 
 	renderObject = new Objects::CParticle (*this, particleData);
+    } else if (object.cameraZoom != nullptr) {
+	// a camera object: nothing to draw, CScene::updateCamera reads its data
+	renderObject = new CObject (*this, object);
     } else {
 	sLog.error ("Unknown object type, creating placeholder, empty object: ", object.id);
 	renderObject = new CObject (*this, object);
@@ -335,20 +341,9 @@ Camera& CScene::getCamera () const { return *this->m_camera; }
 void CScene::renderFrame () {
     // ensure the virtual mouse position is up to date
     this->updateMouse ();
+    // the camera: shake, zoom and the mouse parallax
+    this->updateCamera ();
 
-    // update the parallax position if required
-    if (this->getScene ().camera.parallax.enabled->value->getBool ()
-	&& !this->getContext ().getContext ().config.disableParallax) {
-	const float influence = this->getScene ().camera.parallax.mouseInfluence->value->getFloat ();
-	const float amount = this->getScene ().camera.parallax.amount->value->getFloat ();
-	const float delay = glm::min (
-	    static_cast<float> (this->getScene ().camera.parallax.delay->value->getBool ()),
-	    this->getContext ().getContext ().renderTime - this->getContext ().getContext ().renderTimeLast
-	);
-
-	this->m_parallaxDisplacement
-	    = glm::mix (this->m_parallaxDisplacement, (this->m_mousePosition * amount) * influence, delay);
-    }
     // keyframe animations first, so a property script's update(value) sees this frame's animated value
     this->advanceAnimations ();
     // run a tick in the javascript logic
@@ -448,7 +443,147 @@ const glm::vec2* CScene::getMousePositionLast () const { return &this->m_mousePo
 
 const glm::vec2* CScene::getMousePositionNormalized () const { return &this->m_mousePositionNormalized; }
 
-const glm::vec2* CScene::getParallaxDisplacement () const { return &this->m_parallaxDisplacement; }
+const glm::vec2* CScene::getParallaxPosition () const { return &this->m_parallaxPositionNormalized; }
+
+namespace {
+/** An object's own `visible` (the typed objects keep their own field) */
+bool ownVisible (const Object& object) {
+    if (object.is<Image> ()) {
+	return object.as<Image> ()->visible->value->getBool ();
+    }
+    if (object.is<Particle> ()) {
+	return object.as<Particle> ()->visible->value->getBool ();
+    }
+    if (object.is<Text> ()) {
+	return object.as<Text> ()->visible->value->getBool ();
+    }
+    return object.groupVisible == nullptr || object.groupVisible->value->getBool ();
+}
+
+/** An object's `parallaxDepth` (images and particles read their own, registered for scripts) */
+glm::vec2 parallaxDepthOf (const Object& object) {
+    if (object.is<Image> ()) {
+	return object.as<Image> ()->parallaxDepth->value->getVec2 ();
+    }
+    if (object.is<Particle> ()) {
+	return object.as<Particle> ()->parallaxDepth->value->getVec2 ();
+    }
+    return object.groupParallaxDepth == nullptr ? glm::vec2 (1.0f) : object.groupParallaxDepth->value->getVec2 ();
+}
+} // namespace
+
+glm::vec2 CScene::getParallaxOffset (const Object& object) const {
+    if (!this->getScene ().camera.parallax.enabled->value->getBool ()
+	|| this->getContext ().getContext ().config.disableParallax) {
+	return glm::vec2 (0.0f);
+    }
+
+    // the topmost ancestor's origin and depth move the whole subtree (GH 0x1401b9b50)
+    const Object* root = &object;
+    for (int depth = 0; root->parent.has_value () && depth < 32; depth++) {
+	const CObject* parent = this->getObject (root->parent.value ());
+	if (parent == nullptr) {
+	    break;
+	}
+	root = &parent->getObject ();
+    }
+
+    const float amount = this->getScene ().camera.parallax.amount->value->getFloat ();
+    const glm::vec2 origin = glm::vec2 (root->origin->value->getVec3 ());
+
+    return (origin - this->m_parallaxPosition) * amount * parallaxDepthOf (*root);
+}
+
+void CScene::updateCamera () {
+    const auto& camera = this->getScene ().camera;
+    const float width = this->m_camera->getWidth ();
+    const float height = this->m_camera->getHeight ();
+    const float dt = std::max (
+	0.0f, this->getContext ().getContext ().renderTime - this->getContext ().getContext ().renderTimeLast
+    );
+
+    // the camera position, in scene units (y up), relative to the default 2D camera. Its shake (FUN_1401c7680):
+    // a point on cos(t), sin(1.333 t) with t = speed² · g_Time, its length raised to `roughness` (unless that is
+    // ≤ 0.001 or 1), times amplitude · 0.01 · the scene height (2D: no z)
+    glm::vec2 cameraPosition (0.0f);
+
+    if (camera.shake.enabled->value->getBool ()) {
+	const float speed = camera.shake.speed->value->getFloat ();
+	const float t = speed * speed * this->getContext ().getContext ().renderTime;
+	glm::vec2 shake (std::cos (t), std::sin (t * 1.333f));
+	const float roughness = std::pow (camera.shake.roughness->value->getFloat (), 3.0f);
+
+	if (roughness > 0.001f && roughness != 1.0f) {
+	    const float length = glm::length (shake);
+
+	    if (length > 0.0f) {
+		shake *= std::pow (length, roughness) / length;
+	    }
+	}
+
+	cameraPosition += shake * (height * 0.1f * camera.shake.amplitude->value->getFloat () * 0.1f);
+    }
+
+    // the zoom: general.zoom times the active camera object's (the last visible one whose parents are visible)
+    float zoom = camera.zoom == nullptr ? 1.0f : camera.zoom->value->getFloat ();
+
+    for (auto it = this->getScene ().objects.rbegin (); it != this->getScene ().objects.rend (); ++it) {
+	const Object& object = **it;
+
+	if (object.cameraZoom == nullptr) {
+	    continue;
+	}
+
+	bool visible = ownVisible (object);
+	const Object* cur = &object;
+
+	for (int depth = 0; visible && cur->parent.has_value () && depth < 32; depth++) {
+	    const CObject* parent = this->getObject (cur->parent.value ());
+	    if (parent == nullptr) {
+		break;
+	    }
+	    cur = &parent->getObject ();
+	    visible = ownVisible (*cur);
+	}
+
+	if (visible) {
+	    zoom *= object.cameraZoom->value->getFloat ();
+	    break;
+	}
+    }
+
+    // the mouse parallax: a target from the cursor (y up), centred at mouseinfluence 0, eased in by
+    // k = min (1, (1 − delay / 3) · 10 · dt), or snapped to with a delay ≤ 0
+    if (camera.parallax.enabled->value->getBool () && !this->getContext ().getContext ().config.disableParallax) {
+	const float influence = camera.parallax.mouseInfluence->value->getFloat ();
+	const float delay = camera.parallax.delay->value->getFloat ();
+	const float mx = glm::clamp (this->m_mousePosition.x, 0.0f, 1.0f);
+	const float my = glm::clamp (this->m_mousePosition.y, 0.0f, 1.0f);
+	const glm::vec2 target = glm::vec2 (
+				     width * (0.5f * (1.0f - influence) + mx * influence),
+				     height * (0.5f * (1.0f - influence) + (1.0f - my) * influence)
+				 )
+	    + cameraPosition;
+
+	if (delay <= 0.0f) {
+	    this->m_parallaxPosition = target;
+	} else {
+	    const float k = std::min (1.0f, (1.0f - delay / 3.0f) * 10.0f * dt);
+	    this->m_parallaxPosition += (target - this->m_parallaxPosition) * k;
+	}
+
+	if (width > 0.0f && height > 0.0f) {
+	    this->m_parallaxPositionNormalized = glm::clamp (
+		this->m_parallaxPosition / glm::vec2 (width, height), glm::vec2 (0.0f), glm::vec2 (1.0f)
+	    );
+	}
+    }
+
+    // the view: zoom about the scene's centre, then the camera position. LWE's world has the centre at 0 and y down
+    glm::mat4 adjust = glm::scale (glm::mat4 (1.0f), glm::vec3 (zoom, zoom, 1.0f));
+    adjust = glm::translate (adjust, glm::vec3 (-cameraPosition.x, cameraPosition.y, 0.0f));
+    this->m_camera->setViewAdjust (adjust);
+}
 
 std::mt19937& CScene::getParticleRng () { return this->m_particleRng; }
 

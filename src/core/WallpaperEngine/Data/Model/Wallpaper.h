@@ -104,6 +104,9 @@ struct SceneData {
 	    UserSettingUniquePtr farz;
 	    UserSettingUniquePtr fov;
 	} projection;
+
+	/** `general.zoom`: scales the view about the scene's centre (with an active camera object's zoom) */
+	UserSettingUniquePtr zoom;
     } camera;
 
     ObjectList objects;

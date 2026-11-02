@@ -882,6 +882,9 @@ void CPass::setupUniforms () {
     this->addUniform ("g_ViewProjectionMatrix", &this->m_viewProjectionMatrix);
     this->addUniform ("g_PointerPosition", scene.getMousePosition ());
     this->addUniform ("g_PointerPositionLast", scene.getMousePositionLast ());
+    // the smoothed parallax position over the scene size, 0..1 (WE uniform 0x72, GH 0x14010a0e0; written by the
+    // camera update GH 0x1401b8af0)
+    this->addUniform ("g_ParallaxPosition", scene.getParallaxPosition ());
     this->addUniform ("g_EffectTextureProjectionMatrix", glm::mat4 (1.0));
     this->addUniform ("g_EffectTextureProjectionMatrixInverse", glm::mat4 (1.0));
     this->addUniform ("g_TexelSize", glm::vec2 (1.0 / scene.getWidth (), 1.0 / scene.getHeight ()));

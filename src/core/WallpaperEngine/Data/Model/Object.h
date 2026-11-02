@@ -31,6 +31,11 @@ struct ObjectData {
     UserSettingUniquePtr groupScale;
     UserSettingUniquePtr groupAngles;
     UserSettingUniquePtr groupVisible;
+    /** Mouse parallax depth (x, y) of any object; Wallpaper Engine's default is 1 1. Images and particles also keep
+     *  their own copy (registered as a script property), which the parallax reads for them */
+    UserSettingUniquePtr groupParallaxDepth;
+    /** A camera object (`"camera": "default"`): its `zoom` (null on every other object) */
+    UserSettingUniquePtr cameraZoom;
 };
 
 /**

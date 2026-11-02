@@ -58,15 +58,16 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                 },
                 .parallax = {
                     .enabled = general.user ("cameraparallax", properties, false),
-                    .amount = general.user ("cameraparallaxamount", properties, 1.0f),
-                    .delay = general.user ("cameraparallaxdelay", properties, 0.0f),
-                    .mouseInfluence = general.user ("cameraparallaxmouseinfluence", properties, 1.0f),
+                    // Wallpaper Engine's defaults (its scene constructor, wallpaper64.exe 2.8.485 GH 0x1401b6c60)
+                    .amount = general.user ("cameraparallaxamount", properties, 0.5f),
+                    .delay = general.user ("cameraparallaxdelay", properties, 0.1f),
+                    .mouseInfluence = general.user ("cameraparallaxmouseinfluence", properties, 0.5f),
                 },
                 .shake = {
                     .enabled = general.user ("camerashake", properties, false),
-                    .amplitude = general.user ("camerashakeamplitude", properties, 0.0f),
-                    .roughness = general.user ("camerashakeroughness", properties, 0.0f),
-                    .speed = general.user ("camerashakespeed", properties, 0.0f),
+                    .amplitude = general.user ("camerashakeamplitude", properties, 0.5f),
+                    .roughness = general.user ("camerashakeroughness", properties, 1.0f),
+                    .speed = general.user ("camerashakespeed", properties, 3.0f),
                 },
                 .configuration = {
                     .center = camera.require <glm::vec3> ("center", "Camera must have a center position"),
@@ -77,10 +78,12 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .width  = projection.optional ("auto", false) ? 0 : projection.require <int> ("width",  "Projection must have a width"),
                     .height = projection.optional ("auto", false) ? 0 : projection.require <int> ("height", "Projection must have a height"),
                     .isAuto = projection.optional ("auto", false),
-                    .nearz = camera.user ("nearz", properties, 0.0f),
-                    .farz = camera.user ("farz", properties, 1000.0f),
-                    .fov = camera.user ("fov", properties, 50.0f)
-                }
+                    // `general` fields in Wallpaper Engine (the camera block has none), defaults as in WE
+                    .nearz = general.user ("nearz", properties, 0.1f),
+                    .farz = general.user ("farz", properties, 10000.0f),
+                    .fov = general.user ("fov", properties, 50.0f)
+                },
+                .zoom = general.user ("zoom", properties, 1.0f)
             },
             .objects = parseObjects (objects, project),
         }

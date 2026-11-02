@@ -25,6 +25,9 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     const auto lightIt = it.find ("light");
     // use shape to refer to VolumeLight
     const auto shapeIt = it.find ("shape");
+    // a camera object ("camera": "default"): its zoom frames the scene (CScene::updateCamera)
+    const auto cameraIt = it.find ("camera");
+    const bool isCamera = cameraIt != it.end () && cameraIt->is_string ();
     // Only an inline definition or a file path is a particle system; other objects (text
     // objects, for example) can carry a placeholder like "particle": "None".
     const bool hasParticle = particleIt != it.end ()
@@ -45,6 +48,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupScale = it.user ("scale", project.properties, glm::vec3 (1.0f)),
 	    .groupAngles = it.user ("angles", project.properties, glm::vec3 (0.0f)),
 	    .groupVisible = it.user ("visible", project.properties, true),
+	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
+	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	};
     } catch (const std::exception& e) {
 	sLog.error ("Error parsing object base data: ", e.what ());
@@ -68,6 +73,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupScale = it.user ("scale", project.properties, glm::vec3 (1.0f)),
 	    .groupAngles = it.user ("angles", project.properties, glm::vec3 (0.0f)),
 	    .groupVisible = it.user ("visible", project.properties, true),
+	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
+	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	};
     }
 
@@ -83,6 +90,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	sLog.error ("Light objects are not supported yet");
     } else if (shapeIt != it.end ()) {
 	sLog.error ("VolumeLight objects are not supported yet");
+    } else if (isCamera) {
+	// a camera object: plain object data, read by CScene::updateCamera
     } else {
 	if (!it.optional ("solid", false)) {
 	    // dump the object for now, might want to change later
@@ -174,7 +183,7 @@ ObjectParser::parseImage (const JSON& it, const Project& project, ObjectData bas
 	    .color = it.color ("color", properties, Builders::ColorBuilder::White),
 	    .alignment = it.optional ("horizontalalign", it.optional ("alignment", std::string ("center"))),
 	    .size = it.user ("size", properties, glm::vec2 (0.0f))->value->getVec2 (),
-	    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (0.0f)),
+	    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
 	    .colorBlendMode = it.user ("colorBlendMode", properties, 0),
 	    .brightness = it.user ("brightness", properties, 1.0f),
 	    .model = ModelParser::load (project, image),
@@ -317,7 +326,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 		    .scale = it.user ("scale", properties, glm::vec3 (1.0f)),
 		    .angles = it.user ("angles", properties, glm::vec3 (0.0f)),
 		    .visible = it.user ("visible", properties, true),
-		    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (0.0f)),
+		    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
 		    .particleFile = "",
 		    .animationMode = "sequence",
 		    .sequenceMultiplier = 1.0f,
@@ -527,7 +536,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 		.scale = it.user ("scale", properties, glm::vec3 (1.0f)),
 		.angles = it.user ("angles", properties, glm::vec3 (0.0f)),
 		.visible = it.user ("visible", properties, true),
-		.parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (0.0f)),
+		.parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
 		.particleFile = particleFile,
 		.animationMode = animationMode,
 		.sequenceMultiplier = sequenceMultiplier,

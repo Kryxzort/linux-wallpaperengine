@@ -11,6 +11,7 @@ Camera::Camera (Wallpapers::CScene& scene, const SceneData::Camera& camera) :
     // get the lookat position
     // TODO: ENSURE THIS IS ONLY USED WHEN NOT DOING AN ORTOGRAPHIC CAMERA AS IT THROWS OFF POINTS
     this->m_lookat = glm::lookAt (this->getEye (), this->getCenter (), this->getUp ());
+    this->m_view = this->m_lookat;
 }
 
 Camera::~Camera () = default;
@@ -23,7 +24,9 @@ const glm::vec3& Camera::getUp () const { return this->m_camera.configuration.up
 
 const glm::mat4& Camera::getProjection () const { return this->m_projection; }
 
-const glm::mat4& Camera::getLookAt () const { return this->m_lookat; }
+const glm::mat4& Camera::getLookAt () const { return this->m_view; }
+
+void Camera::setViewAdjust (const glm::mat4& adjust) { this->m_view = this->m_lookat * adjust; }
 
 bool Camera::isOrthogonal () const { return this->m_isOrthogonal; }
 
@@ -43,8 +46,10 @@ void Camera::setOrthogonalProjection (const float width, const float height) {
     this->m_width = width;
     this->m_height = height;
 
-    float nearz = this->m_camera.projection.nearz->value->getFloat ();
-    float farz = this->m_camera.projection.farz->value->getFloat ();
+    // the 2D projection keeps the depth range it always had: general.nearz (0.1 by default) would clip the layers,
+    // which sit at z 0 (nearz/farz/fov are for perspective use, getNearZ/getFarZ/getFov)
+    constexpr float nearz = 0.0f;
+    constexpr float farz = 1000.0f;
 
     this->m_projection = glm::ortho<float> (-width / 2.0, width / 2.0, -height / 2.0, height / 2.0, nearz, farz);
     this->m_projection = glm::translate (this->m_projection, this->getEye ());

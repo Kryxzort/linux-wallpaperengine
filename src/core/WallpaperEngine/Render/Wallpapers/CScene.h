@@ -46,7 +46,14 @@ public:
     const glm::vec2* getMousePosition () const;
     const glm::vec2* getMousePositionLast () const;
     const glm::vec2* getMousePositionNormalized () const;
-    const glm::vec2* getParallaxDisplacement () const;
+    /** `g_ParallaxPosition`: the smoothed parallax position over the scene size, clamped to 0..1 (0.5 = centre) */
+    const glm::vec2* getParallaxPosition () const;
+    /**
+     * The mouse parallax offset of an object, in scene units (Wallpaper Engine's world: x right, y up), or zero while
+     * parallax is off. WE (GH 0x1401b9b50) translates each object's view by (root.origin − parallax position) ·
+     * cameraparallaxamount · root.parallaxDepth, where root is the object's topmost ancestor
+     */
+    [[nodiscard]] glm::vec2 getParallaxOffset (const Object& object) const;
 
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
@@ -58,6 +65,8 @@ protected:
     void updateMouse ();
     /** Advances every keyframe animation by this frame's dt and writes their values (G01/G02) */
     void advanceAnimations ();
+    /** The camera update (WE GH 0x1401b8af0): shake, the active camera object's zoom, general.zoom, the parallax */
+    void updateCamera ();
 
     friend class CWallpaper;
 
@@ -79,7 +88,9 @@ private:
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
     glm::vec2 m_mousePositionNormalized = {};
-    glm::vec2 m_parallaxDisplacement = {};
+    /** the smoothed parallax position (WE scene+0x300) in scene units, y up; starts at the centre */
+    glm::vec2 m_parallaxPosition = {};
+    glm::vec2 m_parallaxPositionNormalized = { 0.5f, 0.5f };
     std::shared_ptr<const CFBO> _rt_4FrameBuffer = nullptr;
     std::shared_ptr<const CFBO> _rt_8FrameBuffer = nullptr;
     std::shared_ptr<const CFBO> _rt_Bloom = nullptr;

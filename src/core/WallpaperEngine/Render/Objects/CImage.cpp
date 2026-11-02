@@ -1119,20 +1119,11 @@ void CImage::updateScreenSpacePosition () {
 	rotModel = glm::translate (rotModel, -this->m_sceneCenter);
     }
 
-    glm::mat4 mvp
-	= this->getScene ().getCamera ().getProjection () * this->getScene ().getCamera ().getLookAt () * rotModel;
-
-    // Apply parallax displacement if enabled
-    if (this->getScene ().getScene ().camera.parallax.enabled
-	&& !this->getScene ().getContext ().getContext ().config.disableParallax) {
-	const double parallaxAmount = this->getScene ().getScene ().camera.parallax.amount->value->getFloat ();
-	const glm::vec2 depth = this->getImage ().parallaxDepth->value->getVec2 ();
-	const glm::vec2* displacement = this->getScene ().getParallaxDisplacement ();
-	const float referenceSize = static_cast<float> (this->getScene ().getWidth ());
-	float x = (depth.x + parallaxAmount) * displacement->x * referenceSize;
-	float y = (depth.y + parallaxAmount) * displacement->y * referenceSize;
-	mvp = glm::translate (mvp, { x, y, 0.0f });
-    }
+    // the mouse parallax moves the object in the world, after its own transform (WE: view · translate(offset), GH
+    // 0x1401b9b50); WE's y is up, this world's y is down
+    const glm::vec2 parallax = this->getScene ().getParallaxOffset (this->getImage ());
+    const glm::mat4 mvp = this->getScene ().getCamera ().getProjection () * this->getScene ().getCamera ().getLookAt ()
+	* glm::translate (glm::mat4 (1.0f), glm::vec3 (parallax.x, -parallax.y, 0.0f)) * rotModel;
 
     this->m_modelViewProjectionScreen = mvp;
     this->m_modelViewProjectionScreenInverse = glm::inverse (mvp);

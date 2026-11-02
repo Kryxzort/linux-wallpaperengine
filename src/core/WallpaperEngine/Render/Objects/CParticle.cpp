@@ -2025,29 +2025,14 @@ void CParticle::updateMatrices () {
 }
 
 void CParticle::applyParallaxToModelMatrix () {
-    if (!getScene ().getScene ().camera.parallax.enabled
-	|| getScene ().getContext ().getContext ().config.disableParallax) {
+    // as for every object (CScene::getParallaxOffset): a world translation by the root's offset, y flipped
+    const glm::vec2 parallax = getScene ().getParallaxOffset (m_particle);
+
+    if (parallax.x == 0.0f && parallax.y == 0.0f) {
 	return;
     }
 
-    const float parallaxAmount = getScene ().getScene ().camera.parallax.amount->value->getFloat ();
-    glm::vec2 depth = m_particle.parallaxDepth->value->getVec2 ();
-    constexpr float minimumParticleDepth = 0.65f;
-    if (std::abs (depth.x) < minimumParticleDepth) {
-	depth.x = depth.x < 0.0f ? -minimumParticleDepth : minimumParticleDepth;
-    }
-    if (std::abs (depth.y) < minimumParticleDepth) {
-	depth.y = depth.y < 0.0f ? -minimumParticleDepth : minimumParticleDepth;
-    }
-
-    const glm::vec2* displacement = getScene ().getParallaxDisplacement ();
-    const float referenceSize = static_cast<float> (getScene ().getWidth ());
-    const glm::vec3 parallaxOffset {
-	(depth.x + parallaxAmount) * displacement->x * referenceSize,
-	(depth.y + parallaxAmount) * displacement->y * referenceSize,
-	0.0f,
-    };
-    m_modelMatrix = glm::translate (m_modelMatrix, parallaxOffset);
+    m_modelMatrix = glm::translate (glm::mat4 (1.0f), glm::vec3 (parallax.x, -parallax.y, 0.0f)) * m_modelMatrix;
 }
 
 void CParticle::updateParticleViewProjection () {

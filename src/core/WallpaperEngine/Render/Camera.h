@@ -25,7 +25,10 @@ public:
     [[nodiscard]] const glm::vec3& getEye () const;
     [[nodiscard]] const glm::vec3& getUp () const;
     [[nodiscard]] const glm::mat4& getProjection () const;
+    /** The view: the lookAt with the frame's adjustment (zoom, camera shake) applied in world space */
     [[nodiscard]] const glm::mat4& getLookAt () const;
+    /** Sets the frame's world-space view adjustment (CScene::updateCamera) */
+    void setViewAdjust (const glm::mat4& adjust);
     [[nodiscard]] Wallpapers::CScene& getScene () const;
     [[nodiscard]] bool isOrthogonal () const;
     [[nodiscard]] float getWidth () const;
@@ -40,6 +43,7 @@ private:
     bool m_isOrthogonal = false;
     glm::mat4 m_projection = {};
     glm::mat4 m_lookat = {};
+    glm::mat4 m_view = {};
     const SceneData::Camera& m_camera;
     Wallpapers::CScene& m_scene;
 };
