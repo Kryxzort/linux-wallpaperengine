@@ -645,7 +645,7 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
     if (name == "colorrandom") {
 	return std::make_unique<ColorRandomInitializer> (
 	    it.color ("min", properties, Builders::ColorBuilder::Black),
-	    it.color ("max", properties, Builders::ColorBuilder::White)
+	    it.color ("max", properties, Builders::ColorBuilder::White), it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "sizerandom") {
 	return std::make_unique<SizeRandomInitializer> (
@@ -654,20 +654,24 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
 	);
     } else if (name == "alpharandom") {
 	return std::make_unique<AlphaRandomInitializer> (
-	    it.user ("min", properties, 0.05f), it.user ("max", properties, 1.0f)
+	    it.user ("min", properties, 0.05f), it.user ("max", properties, 1.0f),
+	    it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "lifetimerandom") {
 	return std::make_unique<LifetimeRandomInitializer> (
-	    it.user ("min", properties, 0.0f), it.user ("max", properties, 1.0f)
+	    it.user ("min", properties, 0.0f), it.user ("max", properties, 1.0f),
+	    it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "velocityrandom") {
 	return std::make_unique<VelocityRandomInitializer> (
-	    it.user ("min", properties, glm::vec3 (-32.0f)), it.user ("max", properties, glm::vec3 (32.0f))
+	    it.user ("min", properties, glm::vec3 (-32.0f)), it.user ("max", properties, glm::vec3 (32.0f)),
+	    it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "rotationrandom") {
 	return std::make_unique<RotationRandomInitializer> (
 	    it.user ("min", properties, glm::vec3 (0.0f)),
-	    it.user ("max", properties, glm::vec3 (0.0f, 0.0f, glm::two_pi<float> ()))
+	    it.user ("max", properties, glm::vec3 (0.0f, 0.0f, glm::two_pi<float> ())),
+	    it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "angularvelocityrandom") {
 	return std::make_unique<AngularVelocityRandomInitializer> (

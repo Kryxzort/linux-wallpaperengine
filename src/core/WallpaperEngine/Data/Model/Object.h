@@ -205,10 +205,12 @@ public:
 
 class ColorRandomInitializer : public ParticleInitializerBase {
 public:
-    ColorRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max) :
-	min (std::move (min)), max (std::move (max)) { }
+    ColorRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
+	min (std::move (min)), max (std::move (max)), exponent (std::move (exponent)) { }
     UserSettingUniquePtr min;
     UserSettingUniquePtr max;
+    /** the random draw is pow(rand, exponent) (WE spawn interpreter GH 0x140260d80) */
+    UserSettingUniquePtr exponent;
 };
 
 class SizeRandomInitializer : public ParticleInitializerBase {
@@ -222,34 +224,42 @@ public:
 
 class AlphaRandomInitializer : public ParticleInitializerBase {
 public:
-    AlphaRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max) :
-	min (std::move (min)), max (std::move (max)) { }
+    AlphaRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
+	min (std::move (min)), max (std::move (max)), exponent (std::move (exponent)) { }
     UserSettingUniquePtr min;
     UserSettingUniquePtr max;
+    /** the random draw is pow(rand, exponent) (WE spawn interpreter GH 0x140260d80) */
+    UserSettingUniquePtr exponent;
 };
 
 class LifetimeRandomInitializer : public ParticleInitializerBase {
 public:
-    LifetimeRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max) :
-	min (std::move (min)), max (std::move (max)) { }
+    LifetimeRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
+	min (std::move (min)), max (std::move (max)), exponent (std::move (exponent)) { }
     UserSettingUniquePtr min;
     UserSettingUniquePtr max;
+    /** the random draw is pow(rand, exponent) (WE spawn interpreter GH 0x140260d80) */
+    UserSettingUniquePtr exponent;
 };
 
 class VelocityRandomInitializer : public ParticleInitializerBase {
 public:
-    VelocityRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max) :
-	min (std::move (min)), max (std::move (max)) { }
+    VelocityRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
+	min (std::move (min)), max (std::move (max)), exponent (std::move (exponent)) { }
     UserSettingUniquePtr min;
     UserSettingUniquePtr max;
+    /** the random draw is pow(rand, exponent) (WE spawn interpreter GH 0x140260d80) */
+    UserSettingUniquePtr exponent;
 };
 
 class RotationRandomInitializer : public ParticleInitializerBase {
 public:
-    RotationRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max) :
-	min (std::move (min)), max (std::move (max)) { }
+    RotationRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
+	min (std::move (min)), max (std::move (max)), exponent (std::move (exponent)) { }
     UserSettingUniquePtr min;
     UserSettingUniquePtr max;
+    /** the random draw is pow(rand, exponent) (WE spawn interpreter GH 0x140260d80) */
+    UserSettingUniquePtr exponent;
 };
 
 class AngularVelocityRandomInitializer : public ParticleInitializerBase {

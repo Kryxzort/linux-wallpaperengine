@@ -130,6 +130,9 @@ protected:
     void setupInitializers ();
     void setupOperators ();
 
+    /** a uniform draw in [0, 1) from the scene's generator, raised to `exponent` (WE's initializers) */
+    float randomT (float exponent);
+
     // Emitter creators
     EmitterFunc createBoxEmitter (const ParticleEmitter& emitter);
     EmitterFunc createSphereEmitter (const ParticleEmitter& emitter);

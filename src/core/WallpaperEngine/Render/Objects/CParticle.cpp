@@ -706,14 +706,24 @@ void CParticle::setupInitializers () {
     }
 }
 
+float CParticle::randomT (float exponent) {
+    // WE's spawn interpreter (GH 0x140260d80): one uniform draw from the scene's generator, raised to the
+    // initializer's `exponent` unless it is exactly 1
+    const float t = WallpaperEngine::Maths::randomFloat (m_rng, 0.0f, 1.0f);
+    return exponent == 1.0f ? t : std::pow (t, exponent);
+}
+
 InitializerFunc CParticle::createColorRandomInitializer (const ColorRandomInitializer& init) {
     DynamicValue* minValue = init.min->value.get ();
     DynamicValue* maxValue = init.max->value.get ();
-    DynamicValue* colorOverride = m_particle.instanceOverride.colorn->value.get ();
+    DynamicValue* exponentValue = init.exponent->value.get ();
 
-    return [this, minValue, maxValue, colorOverride] (ParticleInstance& p) {
-	p.color = WallpaperEngine::Maths::randomVec3 (m_rng, minValue->getVec3 (), maxValue->getVec3 ())
-	    * colorOverride->getVec3 ();
+    return [this, minValue, maxValue, exponentValue] (ParticleInstance& p) {
+	// one t for all three channels (GH 0x140260d80 case 3): the colour lies on the line from min to max,
+	// it multiplies the spawn's colour
+	const glm::vec3 min = minValue->getVec3 ();
+	const float t = randomT (exponentValue->getFloat ());
+	p.color = (min + t * (maxValue->getVec3 () - min)) * p.color;
 	p.initial.color = p.color;
     };
 }
@@ -740,11 +750,12 @@ InitializerFunc CParticle::createSizeRandomInitializer (const SizeRandomInitiali
 InitializerFunc CParticle::createAlphaRandomInitializer (const AlphaRandomInitializer& init) {
     DynamicValue* minValue = init.min->value.get ();
     DynamicValue* maxValue = init.max->value.get ();
-    DynamicValue* alphaOverride = m_particle.instanceOverride.alpha->value.get ();
+    DynamicValue* exponentValue = init.exponent->value.get ();
 
-    return [this, minValue, maxValue, alphaOverride] (ParticleInstance& p) {
-	p.alpha = WallpaperEngine::Maths::randomFloat (m_rng, minValue->getFloat (), maxValue->getFloat ())
-	    * alphaOverride->getFloat ();
+    return [this, minValue, maxValue, exponentValue] (ParticleInstance& p) {
+	// multiplies the spawn's alpha, the override's (GH 0x140260d80 case 6)
+	const float min = minValue->getFloat ();
+	p.alpha = (min + randomT (exponentValue->getFloat ()) * (maxValue->getFloat () - min)) * p.alpha;
 	p.initial.alpha = p.alpha;
     };
 }
@@ -752,11 +763,14 @@ InitializerFunc CParticle::createAlphaRandomInitializer (const AlphaRandomInitia
 InitializerFunc CParticle::createLifetimeRandomInitializer (const LifetimeRandomInitializer& init) {
     DynamicValue* minValue = init.min->value.get ();
     DynamicValue* maxValue = init.max->value.get ();
+    DynamicValue* exponentValue = init.exponent->value.get ();
     DynamicValue* lifetimeOverride = m_particle.instanceOverride.lifetime->value.get ();
 
-    return [this, minValue, maxValue, lifetimeOverride] (ParticleInstance& p) {
-	p.lifetime = WallpaperEngine::Maths::randomFloat (m_rng, minValue->getFloat (), maxValue->getFloat ())
-	    * lifetimeOverride->getFloat ();
+    return [this, minValue, maxValue, exponentValue, lifetimeOverride] (ParticleInstance& p) {
+	// GH 0x140260d80 case 1: at least 0.001 s
+	const float min = minValue->getFloat ();
+	const float t = randomT (exponentValue->getFloat ());
+	p.lifetime = std::max (0.001f, (min + t * (maxValue->getFloat () - min)) * lifetimeOverride->getFloat ());
 	p.initial.lifetime = p.lifetime;
     };
 }
@@ -764,11 +778,19 @@ InitializerFunc CParticle::createLifetimeRandomInitializer (const LifetimeRandom
 InitializerFunc CParticle::createVelocityRandomInitializer (const VelocityRandomInitializer& init) {
     DynamicValue* minValue = init.min->value.get ();
     DynamicValue* maxValue = init.max->value.get ();
+    DynamicValue* exponentValue = init.exponent->value.get ();
     DynamicValue* speedOverride = m_particle.instanceOverride.speed->value.get ();
 
-    return [this, minValue, maxValue, speedOverride] (ParticleInstance& p) {
-	glm::vec3 vel = WallpaperEngine::Maths::randomVec3 (m_rng, minValue->getVec3 (), maxValue->getVec3 ())
-	    * speedOverride->getFloat ();
+    return [this, minValue, maxValue, exponentValue, speedOverride] (ParticleInstance& p) {
+	// a draw per axis, each raised to `exponent` (GH 0x140260d80 case 7)
+	const glm::vec3 min = minValue->getVec3 ();
+	const glm::vec3 range = maxValue->getVec3 () - min;
+	const float exponent = exponentValue->getFloat ();
+	glm::vec3 vel;
+	for (int i = 0; i < 3; i++) {
+	    vel[i] = min[i] + randomT (exponent) * range[i];
+	}
+	vel *= speedOverride->getFloat ();
 	vel.y = -vel.y;
 	p.velocity += vel;
     };
@@ -779,9 +801,17 @@ InitializerFunc CParticle::createRotationRandomInitializer (const RotationRandom
     DynamicValue* maxValue = init.max->value.get ();
     DynamicValue* speedOverride = m_particle.instanceOverride.speed->value.get ();
 
-    return [this, minValue, maxValue, speedOverride] (ParticleInstance& p) {
-	p.rotation = WallpaperEngine::Maths::randomVec3 (m_rng, minValue->getVec3 (), maxValue->getVec3 ())
-	    * speedOverride->getFloat ();
+    DynamicValue* exponentValue = init.exponent->value.get ();
+
+    return [this, minValue, maxValue, exponentValue, speedOverride] (ParticleInstance& p) {
+	// a draw per axis, each raised to `exponent` (GH 0x140260d80 case 10)
+	const glm::vec3 min = minValue->getVec3 ();
+	const glm::vec3 range = maxValue->getVec3 () - min;
+	const float exponent = exponentValue->getFloat ();
+	for (int i = 0; i < 3; i++) {
+	    p.rotation[i] = min[i] + randomT (exponent) * range[i];
+	}
+	p.rotation *= speedOverride->getFloat ();
     };
 }
 
