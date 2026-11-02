@@ -190,6 +190,8 @@ protected:
     void setupGeometryCallbacks ();
     void setupParticleUniforms ();
     void updateMatrices ();
+    /** The system's origin/scale/angle this frame, with its parents' (P36/G04); moves world-space control points */
+    void refreshTransform ();
     void applyParallaxToModelMatrix ();
     void updateParticleViewProjection ();
     void updateParticleRenderVars ();
@@ -289,6 +291,9 @@ private:
 
     // Transformed origin (screen space to centered space conversion)
     glm::vec3 m_transformedOrigin { 0.0f };
+    glm::vec3 m_resolvedScale { 1.0f };
+    float m_resolvedAngle { 0.0f };
+    bool m_transformValid { false };
 
     // Last known resolution for detecting changes
     float m_lastScreenWidth { 0.0f };

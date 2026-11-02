@@ -54,6 +54,11 @@ public:
      * cameraparallaxamount · root.parallaxDepth, where root is the object's topmost ancestor
      */
     [[nodiscard]] glm::vec2 getParallaxOffset (const Object& object) const;
+    /**
+     * Whether an object is drawn: its own `visible` and, recursively, every ancestor's (WE's "effectively visible",
+     * GH 0x1401b50e0: bit 0 of +0x120 AND the parent's at +0x180). A hidden group hides its whole subtree
+     */
+    [[nodiscard]] bool isEffectivelyVisible (const Object& object) const;
 
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */

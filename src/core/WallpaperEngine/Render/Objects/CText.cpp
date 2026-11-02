@@ -376,7 +376,8 @@ void CText::render () {
     if (!m_valid) {
 	return;
     }
-    if (!m_text.visible->value->getBool ()) {
+    // a hidden ancestor hides it too (WE's "effectively visible", GH 0x1401b50e0)
+    if (!this->getScene ().isEffectivelyVisible (m_text)) {
 	return;
     }
 

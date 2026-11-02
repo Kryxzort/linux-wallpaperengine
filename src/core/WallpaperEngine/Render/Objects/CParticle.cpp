@@ -104,10 +104,7 @@ void CParticle::setup () {
     m_lastScreenWidth = getScene ().getCamera ().getWidth ();
     m_lastScreenHeight = getScene ().getCamera ().getHeight ();
 
-    glm::vec3 origin = m_particle.origin->value->getVec3 ();
-    origin.x -= m_lastScreenWidth / 2.0f;
-    origin.y = m_lastScreenHeight / 2.0f - origin.y;
-    m_transformedOrigin = origin;
+    refreshTransform ();
 
     // Load particle material constants
     if (m_particle.material && m_particle.material->material && !m_particle.material->material->passes.empty ()) {
@@ -207,8 +204,8 @@ void CParticle::render () {
 	return;
     }
 
-    if (!m_particle.visible->value->getBool ()) {
-	// a hidden system is reset (GH 0x140255d00 → 0x140254f50 / 0x140255430): its particles are cleared and its
+    if (!getScene ().isEffectivelyVisible (m_particle)) {
+	// a hidden system (or one under a hidden ancestor: GH 0x140255d00 asks GH 0x1401b50e0) is reset (GH 0x140255d00 → 0x140254f50 / 0x140255430): its particles are cleared and its
 	// emitters reloaded, so it starts fresh when shown again (bursts replay). It doesn't advance meanwhile,
 	// and the clock follows so the first visible frame's dt is one frame, not the hidden time
 	if (m_particleCount > 0) {
@@ -219,6 +216,9 @@ void CParticle::render () {
 	}
 	return;
     }
+
+    // the system's place this frame: its own origin/scale/angle under its parents' (live: animated, scripted)
+    refreshTransform ();
 
     // Initialize time on first render to avoid huge dt spike
     if (m_time == 0.0) {
@@ -350,23 +350,10 @@ void CParticle::update (float dt) {
     float screenHeight = static_cast<float> (getScene ().getHeight ());
 
     if (screenWidth != m_lastScreenWidth || screenHeight != m_lastScreenHeight) {
-	// Resolution changed - recalculate transformed origin
-	glm::vec3 origin = m_particle.origin->value->getVec3 ();
-	origin.x -= screenWidth / 2.0f;
-	origin.y = screenHeight / 2.0f - origin.y;
-	m_transformedOrigin = origin;
-
-	// Update world-space control points that aren't mouse-linked
-	for (size_t i = 0; i < m_controlPoints.size (); i++) {
-	    auto& cp = m_controlPoints[i];
-	    if (!cp.linkMouse && cp.worldSpace) {
-		// Recalculate position from offset using new transformed origin
-		cp.position = cp.offset - m_transformedOrigin;
-	    }
-	}
-
+	// Resolution changed - recalculate transformed origin (and the world-space control points)
 	m_lastScreenWidth = screenWidth;
 	m_lastScreenHeight = screenHeight;
+	refreshTransform ();
     }
 
     // Update control points with mouse position
@@ -1996,9 +1983,41 @@ void CParticle::setupParticleUniforms () {
     }
 }
 
+void CParticle::refreshTransform () {
+    // a particle system has a parent like any object (WE's shared base transform, GH 0x14020dcc0): its origin is in
+    // its parent's space, rotated and scaled by the parent's, so it follows a moving or animated parent
+    const ResolvedTransform transform = this->resolveTransform (m_particle);
+    const float width = getScene ().getCamera ().getWidth ();
+    const float height = getScene ().getCamera ().getHeight ();
+
+    // from WE's world (y up, (0,0) bottom-left) to this projection's centred, y-down space
+    glm::vec3 origin = transform.origin;
+    origin.x -= width / 2.0f;
+    origin.y = height / 2.0f - origin.y;
+
+    m_resolvedScale = transform.scale;
+    m_resolvedAngle = transform.angle;
+
+    if (origin == m_transformedOrigin && m_transformValid) {
+	return;
+    }
+
+    m_transformedOrigin = origin;
+    m_transformValid = true;
+
+    // world-space control points stay where they are in the world
+    for (auto& cp : m_controlPoints) {
+	if (!cp.linkMouse && cp.worldSpace) {
+	    cp.position = cp.offset - m_transformedOrigin;
+	}
+    }
+}
+
 void CParticle::updateMatrices () {
-    glm::vec3 scale = m_particle.scale->value->getVec3 ();
+    glm::vec3 scale = m_resolvedScale;
     glm::vec3 angles = m_particle.angles->value->getVec3 ();
+    // z turns with the parents' (resolveTransform's angle is the chain's sum); x and y are the system's own
+    angles.z = m_resolvedAngle;
 
     m_modelMatrix = glm::mat4 (1.0f);
     m_modelMatrix = glm::translate (m_modelMatrix, m_transformedOrigin);

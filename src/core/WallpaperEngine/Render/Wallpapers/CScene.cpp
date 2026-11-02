@@ -472,6 +472,26 @@ glm::vec2 parallaxDepthOf (const Object& object) {
 }
 } // namespace
 
+bool CScene::isEffectivelyVisible (const Object& object) const {
+    const Object* cur = &object;
+
+    for (int depth = 0; depth <= 32; depth++) {
+	if (!ownVisible (*cur)) {
+	    return false;
+	}
+	if (!cur->parent.has_value ()) {
+	    return true;
+	}
+	const CObject* parent = this->getObject (cur->parent.value ());
+	if (parent == nullptr) {
+	    return true;
+	}
+	cur = &parent->getObject ();
+    }
+
+    return true;
+}
+
 glm::vec2 CScene::getParallaxOffset (const Object& object) const {
     if (!this->getScene ().camera.parallax.enabled->value->getBool ()
 	|| this->getContext ().getContext ().config.disableParallax) {
@@ -534,19 +554,7 @@ void CScene::updateCamera () {
 	    continue;
 	}
 
-	bool visible = ownVisible (object);
-	const Object* cur = &object;
-
-	for (int depth = 0; visible && cur->parent.has_value () && depth < 32; depth++) {
-	    const CObject* parent = this->getObject (cur->parent.value ());
-	    if (parent == nullptr) {
-		break;
-	    }
-	    cur = &parent->getObject ();
-	    visible = ownVisible (*cur);
-	}
-
-	if (visible) {
+	if (this->isEffectivelyVisible (object)) {
 	    zoom *= object.cameraZoom->value->getFloat ();
 	    break;
 	}

@@ -19,12 +19,6 @@ using namespace WallpaperEngine::Data::Builders;
 using namespace WallpaperEngine::Data::Utils;
 
 namespace {
-glm::vec2 rotateVec2 (const glm::vec2& value, float angle) {
-    const float cosAngle = std::cos (angle);
-    const float sinAngle = std::sin (angle);
-    return { value.x * cosAngle - value.y * sinAngle, value.x * sinAngle + value.y * cosAngle };
-}
-
 bool isMagentaNeonTint (const glm::vec3& color) { return color.r > 0.55f && color.g < 0.25f && color.b > 0.45f; }
 
 std::optional<glm::vec3> findMagentaCompositeTint (const Image& image, const std::vector<int>& skippedEffectIds) {
@@ -94,65 +88,6 @@ std::optional<PuppetMeshBlock> findPuppetMeshBlock (
 
     return std::nullopt;
 }
-}
-
-CImage::ResolvedTransform CImage::localTransform (const Object& object) {
-    glm::vec3 origin = object.origin->value->getVec3 ();
-    glm::vec3 scale = glm::vec3 (1.0f);
-    float angle = 0.0f;
-
-    if (object.is<Image> ()) {
-	const auto* image = object.as<Image> ();
-	scale = image->scale->value->getVec3 ();
-	angle = image->angles->value->getVec3 ().z;
-    } else if (object.is<Text> ()) {
-	const auto* text = object.as<Text> ();
-	scale = text->scale->value->getVec3 ();
-    } else {
-	scale = object.groupScale->value->getVec3 ();
-	angle = object.groupAngles->value->getVec3 ().z;
-    }
-
-    return { origin, scale, angle };
-}
-
-CImage::ResolvedTransform CImage::resolveTransform (const Object& object) const {
-    constexpr int kMaxParentDepth = 32;
-
-    // Walk up the parent chain leaf-first, bounded by kMaxParentDepth to guard
-    // against cycles. chain[0] is the requested object; the last entry is the root.
-    const Object* chain[kMaxParentDepth + 1];
-    int count = 0;
-    const Object* current = &object;
-    chain[count++] = current;
-
-    while (current->parent.has_value ()) {
-	if (count > kMaxParentDepth) {
-	    sLog.error ("Parent transform chain is too deep; possible cycle at object id=", current->id);
-	    break;
-	}
-	const auto* parentObject = this->getScene ().getObject (current->parent.value ());
-	if (parentObject == nullptr) {
-	    break;
-	}
-	current = &parentObject->getObject ();
-	chain[count++] = current;
-    }
-
-    // Accumulate top-down: the root's local transform is already its resolved
-    // transform, then fold each child onto its already-resolved parent.
-    ResolvedTransform resolved = localTransform (*chain[count - 1]);
-    for (int i = count - 2; i >= 0; --i) {
-	ResolvedTransform local = localTransform (*chain[i]);
-	const glm::vec2 offset
-	    = rotateVec2 ({ local.origin.x * resolved.scale.x, local.origin.y * resolved.scale.y }, resolved.angle);
-	local.origin.x = resolved.origin.x + offset.x;
-	local.origin.y = resolved.origin.y + offset.y;
-	local.origin.z = resolved.origin.z + local.origin.z * resolved.scale.z;
-	resolved = { local.origin, local.scale * resolved.scale, local.angle + resolved.angle };
-    }
-
-    return resolved;
 }
 
 CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
@@ -859,7 +794,10 @@ void CImage::setupPasses () {
 }
 
 bool CImage::shouldRenderFinalPass (bool isLastPass) const {
-    if (!isLastPass || !this->getImage ().visible->value->getBool ()) {
+    // not the visibility: this is decided once, while the passes are built, and render () skips a hidden image every
+    // frame. Asking it here sent the last pass of an image hidden at load (by itself or a parent) into an FBO for
+    // good, so a property or script showing it later never brought it to the screen
+    if (!isLastPass) {
 	return false;
     }
 
@@ -919,7 +857,8 @@ void CImage::render () {
 	return;
     }
 
-    if (!this->getImage ().visible->value->getBool ()) {
+    // a hidden ancestor hides it too (WE's "effectively visible", GH 0x1401b50e0)
+    if (!this->getScene ().isEffectivelyVisible (this->getImage ())) {
 	return;
     }
 
@@ -1027,6 +966,10 @@ void CImage::updateScenePosition (
     this->m_pos.y = sceneHeight / 2.0f - this->m_pos.y;
     this->m_pos.z -= sceneWidth / 2.0f;
     this->m_pos.w = sceneHeight / 2.0f - this->m_pos.w;
+    // the pivot of the rotation is the origin, not the quad's centre: WE's model matrix is the object's transform
+    // (T(origin) · R · S) times T(the alignment offset ±size/2), so an aligned quad turns about its anchor point
+    // (GH 0x1402277d0; the offset is set from `alignment` at GH 0x140230a80)
+    this->m_scenePivot = glm::vec3 (origin.x - sceneWidth / 2.0f, sceneHeight / 2.0f - origin.y, 0.0f);
 }
 
 void CImage::uploadGeometryBuffers (const glm::vec2& size) {
@@ -1114,9 +1057,9 @@ void CImage::updateScreenSpacePosition () {
     const float angle = transform.angle;
     glm::mat4 rotModel = glm::mat4 (1.0f);
     if (angle != 0.0f) {
-	rotModel = glm::translate (rotModel, this->m_sceneCenter);
+	rotModel = glm::translate (rotModel, this->m_scenePivot);
 	rotModel = glm::rotate (rotModel, -angle, glm::vec3 (0.0f, 0.0f, 1.0f));
-	rotModel = glm::translate (rotModel, -this->m_sceneCenter);
+	rotModel = glm::translate (rotModel, -this->m_scenePivot);
     }
 
     // the mouse parallax moves the object in the world, after its own transform (WE: view · translate(offset), GH
