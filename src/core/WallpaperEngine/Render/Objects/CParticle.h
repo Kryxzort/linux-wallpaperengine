@@ -148,6 +148,10 @@ protected:
     uint32_t emitCount (const ParticleEmitter& emitter, EmitterState& state, float dt);
     /** WE's hidden-system reset (GH 0x140255d00): every particle gone, every emitter reloaded */
     void resetSystem ();
+    /** re-evaluates the `colorn` tint for this step (WE's override patcher GH 0x1401ff240) */
+    void patchColor ();
+    /** a colour shifted in HSV by (colorn − reference), WE's patch op 0xb */
+    glm::vec3 tintColor (const glm::vec3& color) const;
 
     // Emitter creators
     EmitterFunc createBoxEmitter (const ParticleEmitter& emitter);
@@ -210,6 +214,18 @@ private:
     double m_time { 0.0 };
     /** the system's own clock: the sum of its (rate-scaled) steps, prewarm included (WE: system+0x3f0) */
     float m_simTime { 0.0f };
+
+    // colorn (P5): the system's reference colour comes from its first colorrandom (the mid-point of min and
+    // max) or else its first colorchange (startvalue); without either it is white and `m_hasColor` is false
+    const ColorRandomInitializer* m_referenceColorRandom { nullptr };
+    const ColorChangeOperator* m_referenceColorChange { nullptr };
+    bool m_hasColor { false };
+    /** colorn differs from the reference: colour initializers are shifted in HSV */
+    bool m_tint { false };
+    glm::vec3 m_colornHSV { 0.0f };
+    glm::vec3 m_referenceHSV { 0.0f };
+    /** every particle's colour before the initializers: colorn for a system without a colour source, else white */
+    glm::vec3 m_spawnColor { 1.0f };
 
     // CPass-based rendering
     Effects::CPass* m_pass { nullptr };

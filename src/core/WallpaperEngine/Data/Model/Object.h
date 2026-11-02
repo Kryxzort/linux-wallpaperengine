@@ -558,7 +558,9 @@ struct ParticleInstanceOverride {
     UserSettingUniquePtr speed;
     UserSettingUniquePtr count;
     UserSettingUniquePtr color; // Replaces particle color
-    UserSettingUniquePtr colorn; // Multiplies particle color
+    UserSettingUniquePtr colorn; // Tints the system: an HSV shift against its reference colour (CParticle)
+    /** colorn is in the object's instanceoverride (WE tints nothing otherwise) */
+    bool colornSet = false;
 };
 
 struct ParticleData {

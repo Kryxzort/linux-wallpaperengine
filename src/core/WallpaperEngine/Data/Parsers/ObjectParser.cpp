@@ -886,6 +886,7 @@ ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& p
 }
 
 ParticleInstanceOverride ObjectParser::parseParticleInstanceOverride (const JSON& it, const Properties& properties) {
+    const bool colornSet = it.find ("colorn") != it.end ();
     return ParticleInstanceOverride {
 	.enabled = it.user ("enabled", properties, true),
 	.alpha = it.user ("alpha", properties, 1.0f),
@@ -896,5 +897,6 @@ ParticleInstanceOverride ObjectParser::parseParticleInstanceOverride (const JSON
 	.count = it.user ("count", properties, 1.0f),
 	.color = it.user ("color", properties, glm::vec3 (1.0f)),
 	.colorn = it.user ("colorn", properties, glm::vec3 (1.0f)),
+	.colornSet = colornSet,
     };
 }

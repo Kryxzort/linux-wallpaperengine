@@ -137,6 +137,23 @@ void CParticle::setup () {
     setupOperators ();
     setupPass ();
 
+    // colorn's reference colour (GH 0x1401f2210): the first colour initializer, else the first colorchange
+    for (const auto& initializer : m_particle.initializers) {
+	if (initializer && initializer->is<ColorRandomInitializer> ()) {
+	    m_referenceColorRandom = initializer->as<ColorRandomInitializer> ();
+	    break;
+	}
+    }
+    if (m_referenceColorRandom == nullptr) {
+	for (const auto& op : m_particle.operators) {
+	    if (op && op->is<ColorChangeOperator> ()) {
+		m_referenceColorChange = op->as<ColorChangeOperator> ();
+		break;
+	    }
+	}
+    }
+    m_hasColor = m_referenceColorRandom != nullptr || m_referenceColorChange != nullptr;
+
     // Setup control points (max 8)
     m_controlPoints.resize (8);
     for (const auto& cp : m_particle.controlPoints) {
@@ -240,8 +257,93 @@ void CParticle::render () {
     }
 }
 
+namespace {
+// WE's RGB -> HSV (inlined in GH 0x1401ff240): h in [0, 1), s = (max − min) / max, v = max; grey (or black) is h = s = 0
+glm::vec3 rgbToHsv (const glm::vec3& c) {
+    const float max = std::max ({ c.r, c.g, c.b });
+    const float min = std::min ({ c.r, c.g, c.b });
+    const float d = max - min;
+    if (d < 1e-5f || max <= 0.0f) {
+	return { 0.0f, 0.0f, max };
+    }
+    float h;
+    if (c.r >= max) {
+	h = (c.g - c.b) / d;
+    } else if (c.g >= max) {
+	h = (c.b - c.r) / d + 2.0f;
+    } else {
+	h = (c.r - c.g) / d + 4.0f;
+    }
+    h /= 6.0f;
+    if (h < 0.0f) {
+	h += 1.0f;
+    }
+    return { h, d / max, max };
+}
+
+// WE's HSV -> RGB (GH 0x1401e57b0)
+glm::vec3 hsvToRgb (const glm::vec3& hsv) {
+    const float c = hsv.z * hsv.y;
+    const float hp = std::fmod (hsv.x * 6.0f, 6.0f);
+    const float x = c * (1.0f - std::abs (std::fmod (hp, 2.0f) - 1.0f));
+    const float m = hsv.z - c;
+    glm::vec3 rgb (0.0f);
+    if (hp >= 0.0f && hp < 1.0f) {
+	rgb = { c, x, 0.0f };
+    } else if (hp >= 1.0f && hp < 2.0f) {
+	rgb = { x, c, 0.0f };
+    } else if (hp >= 2.0f && hp < 3.0f) {
+	rgb = { 0.0f, c, x };
+    } else if (hp >= 3.0f && hp < 4.0f) {
+	rgb = { 0.0f, x, c };
+    } else if (hp >= 4.0f && hp < 5.0f) {
+	rgb = { x, 0.0f, c };
+    } else if (hp >= 5.0f && hp < 6.0f) {
+	rgb = { c, 0.0f, x };
+    }
+    return rgb + m;
+}
+} // namespace
+
+void CParticle::patchColor () {
+    // the override patcher (GH 0x140251f70 / 0x1401ff240), re-run every step so a colorn bound to a user
+    // property, a script or an animation is live. colorn tints only if the object sets it, the particle flags
+    // lack 8, and it differs from the reference colour by 0.9/255 or more in some channel
+    glm::vec3 reference (1.0f);
+    if (m_referenceColorRandom != nullptr) {
+	reference = (m_referenceColorRandom->min->value->getVec3 () + m_referenceColorRandom->max->value->getVec3 ()) * 0.5f;
+    } else if (m_referenceColorChange != nullptr) {
+	reference = m_referenceColorChange->startValue->value->getVec3 ();
+    }
+    const glm::vec3 colorn = m_particle.instanceOverride.colorn->value->getVec3 ();
+    const glm::vec3 diff = glm::abs (colorn - reference);
+    m_tint = m_particle.instanceOverride.colornSet && (m_particle.flags & 8) == 0 && colorn.r >= 0.0f
+	  && (diff.r >= 0.0035294118f || diff.g >= 0.0035294118f || diff.b >= 0.0035294118f);
+    // a system without a colour source is tinted by its spawn colour (template flag 0x200000)
+    m_spawnColor = m_tint && !m_hasColor ? colorn : glm::vec3 (1.0f);
+    if (m_tint) {
+	m_colornHSV = rgbToHsv (colorn);
+	m_referenceHSV = rgbToHsv (reference);
+    }
+}
+
+glm::vec3 CParticle::tintColor (const glm::vec3& color) const {
+    // WE's patch op 0xb (GH 0x1401ff240): the colour moves in HSV by (colorn − reference); a colour too grey
+    // to have a hue (s < 0.01) takes colorn's hue; s and v are clamped to [0, 1]
+    const glm::vec3 hsv = rgbToHsv (color);
+    float h = m_colornHSV.x;
+    if (hsv.y >= 0.01f) {
+	h = hsv.x + m_colornHSV.x - m_referenceHSV.x;
+	h -= std::floor (h);
+    }
+    const float sat = glm::clamp (hsv.y + m_colornHSV.y - m_referenceHSV.y, 0.0f, 1.0f);
+    const float val = glm::clamp (hsv.z + m_colornHSV.z - m_referenceHSV.z, 0.0f, 1.0f);
+    return hsvToRgb ({ h, sat, val });
+}
+
 void CParticle::update (float dt) {
     m_simTime += dt;
+    patchColor ();
 
     // Detect resolution changes and recalculate transformed origin
     float screenWidth = static_cast<float> (getScene ().getWidth ());
@@ -533,7 +635,7 @@ EmitterFunc CParticle::createBoxEmitter (const ParticleEmitter& emitter) {
 		p.angularVelocity = glm::vec3 (0.0f);
 		p.angularAcceleration = glm::vec3 (0.0f);
 
-		p.color = glm::vec3 (1.0f) * m_particle.instanceOverride.colorn->value->getVec3 ();
+		p.color = m_spawnColor;
 		p.alpha = 1.0f * m_particle.instanceOverride.alpha->value->getFloat ();
 		p.size = 20.0f * m_particle.instanceOverride.size->value->getFloat ();
 		p.lifetime = 1.0f * m_particle.instanceOverride.lifetime->value->getFloat ();
@@ -661,7 +763,7 @@ EmitterFunc CParticle::createSphereEmitter (const ParticleEmitter& emitter) {
 	    p.angularVelocity = glm::vec3 (0.0f);
 	    p.angularAcceleration = glm::vec3 (0.0f);
 
-	    p.color = glm::vec3 (1.0f) * m_particle.instanceOverride.colorn->value->getVec3 ();
+	    p.color = m_spawnColor;
 	    p.alpha = 1.0f * m_particle.instanceOverride.alpha->value->getFloat ();
 	    p.size = 20.0f * m_particle.instanceOverride.size->value->getFloat ();
 	    p.lifetime = m_particle.instanceOverride.lifetime->value->getFloat ();
@@ -745,9 +847,15 @@ InitializerFunc CParticle::createColorRandomInitializer (const ColorRandomInitia
     return [this, minValue, maxValue, exponentValue] (ParticleInstance& p) {
 	// one t for all three channels (GH 0x140260d80 case 3): the colour lies on the line from min to max,
 	// it multiplies the spawn's colour
-	const glm::vec3 min = minValue->getVec3 ();
+	glm::vec3 min = minValue->getVec3 ();
+	glm::vec3 max = maxValue->getVec3 ();
+	if (m_tint) {
+	    // colorn shifts the range's ends in HSV (it used to multiply the colour in RGB)
+	    min = tintColor (min);
+	    max = tintColor (max);
+	}
 	const float t = randomT (exponentValue->getFloat ());
-	p.color = (min + t * (maxValue->getVec3 () - min)) * p.color;
+	p.color = (min + t * (max - min)) * p.color;
 	p.initial.color = p.color;
     };
 }
