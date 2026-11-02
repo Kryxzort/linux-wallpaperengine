@@ -5,6 +5,8 @@
 #include "WallpaperEngine/Render/CWallpaper.h"
 #include "linux-wallpaperengine/project.h"
 
+#include <random>
+
 namespace WallpaperEngine::Scripting {
 class ScriptEngine;
 }
@@ -47,6 +49,8 @@ public:
     const glm::vec2* getParallaxDisplacement () const;
 
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
+    /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
+    [[nodiscard]] std::mt19937& getParticleRng ();
     [[nodiscard]] const CObject* getObject (int id) const;
 
 protected:
@@ -71,6 +75,7 @@ private:
     /** the sound objects, ticked on the host's clock every frame (they don't render) */
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};
+    std::mt19937 m_particleRng;
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
     glm::vec2 m_mousePositionNormalized = {};

@@ -256,8 +256,8 @@ private:
     float m_lastScreenWidth { 0.0f };
     float m_lastScreenHeight { 0.0f };
 
-    // Random number generator
-    std::mt19937 m_rng;
+    // The scene's random source, shared by every particle system (WE has one, at scene+0x1f08)
+    std::mt19937& m_rng;
 
     bool m_initialized { false };
 };

@@ -4,6 +4,8 @@
 
 #include "CScene.h"
 
+#include <cstdlib>
+
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Logging/Log.h"
 
@@ -21,6 +23,13 @@ using JSON = WallpaperEngine::Data::JSON::JSON;
 
 CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext& audioContext, wp_mouse_input* input) :
     CWallpaper (wallpaper, context, audioContext, input) {
+    // WPENGINE_PARTICLE_SEED: the same particles on every run (tests); else a random seed
+    if (const char* env = std::getenv ("WPENGINE_PARTICLE_SEED"); env != nullptr && *env != '\0') {
+	this->m_particleRng.seed (static_cast<std::mt19937::result_type> (std::strtoul (env, nullptr, 0)));
+    } else {
+	std::random_device device;
+	this->m_particleRng.seed (device ());
+    }
     // caller should check this, if not a std::bad_cast is good to throw
     auto scene = wallpaper.as<Scene> ();
 
@@ -440,6 +449,8 @@ const glm::vec2* CScene::getMousePositionLast () const { return &this->m_mousePo
 const glm::vec2* CScene::getMousePositionNormalized () const { return &this->m_mousePositionNormalized; }
 
 const glm::vec2* CScene::getParallaxDisplacement () const { return &this->m_parallaxDisplacement; }
+
+std::mt19937& CScene::getParticleRng () { return this->m_particleRng; }
 
 const std::vector<CObject*>& CScene::getObjectsByRenderOrder () const { return this->m_objectsByRenderOrder; }
 

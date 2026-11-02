@@ -19,16 +19,13 @@ using namespace WallpaperEngine::Data::Model;
 
 CParticle::CParticle (Wallpapers::CScene& scene, const Particle& particle) :
     CObject (scene, particle), CRenderable (scene, particle, *particle.material->material),
-    Scripting::ScriptableObject (scene, particle), m_particle (particle) {
+    Scripting::ScriptableObject (scene, particle), m_particle (particle), m_rng (scene.getParticleRng ()) {
     this->registerProperty ("scale", *particle.scale->value);
     this->registerProperty ("angles", *particle.angles->value);
     this->registerProperty ("visible", *particle.visible->value);
     this->registerProperty ("parallaxDepth", *particle.parallaxDepth->value);
 
     this->detectTexture ();
-    // Initialize random number generator with time-based seed
-    std::random_device rd;
-    m_rng.seed (rd ());
 
     // Read renderer configuration early to determine rendering mode
     if (!m_particle.renderers.empty ()) {
@@ -280,11 +277,11 @@ void CParticle::update (float dt) {
 
 	    if (m_particle.animationMode == "randomframe") {
 		if (p.frame < 0.0f) {
-		    std::mt19937 particleRng (
-			static_cast<std::mt19937::result_type> (reinterpret_cast<uintptr_t> (&p))
-		    );
+		    // one draw from the scene's random source per particle (WE: the spawn's own random value,
+		    // GH 0x140260d80); was seeded by the particle's slot address, so a reused slot always showed
+		    // the same frame
 		    std::uniform_int_distribution<int> dist (0, m_spritesheetFrames - 1);
-		    p.frame = static_cast<float> (dist (particleRng));
+		    p.frame = static_cast<float> (dist (m_rng));
 		}
 	    } else if (m_particle.animationMode == "once") {
 		p.frame = std::min (
