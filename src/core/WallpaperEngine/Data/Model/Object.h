@@ -577,7 +577,8 @@ struct ParticleData {
     std::string animationMode;
     float sequenceMultiplier;
     uint32_t maxCount;
-    uint32_t startTime;
+    /** seconds simulated before the first frame (WE parses a float) */
+    float startTime;
     uint32_t flags;
 
     /** Material for rendering */

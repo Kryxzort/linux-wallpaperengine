@@ -133,6 +133,22 @@ protected:
     /** a uniform draw in [0, 1) from the scene's generator, raised to `exponent` (WE's initializers) */
     float randomT (float exponent);
 
+    /** an emitter's timers (WE's emitter record, GH 0x14025cfe0 / 0x140254f50) */
+    struct EmitterState {
+	float delay { 0.0f };
+	float durationLeft { 0.0f };
+	float accumulator { 0.0f };
+	/** > 0: the time left of a periodic "on" window; <= 0: minus the time left of an "off" one */
+	float periodicTimer { 0.0f };
+	uint32_t burst { 0 };
+    };
+    std::shared_ptr<EmitterState> addEmitterState (const ParticleEmitter& emitter);
+    static void resetEmitter (const ParticleEmitter& emitter, EmitterState& state);
+    /** how many particles the emitter spawns this step (rate × count, burst, delay, duration, periodic windows) */
+    uint32_t emitCount (const ParticleEmitter& emitter, EmitterState& state, float dt);
+    /** WE's hidden-system reset (GH 0x140255d00): every particle gone, every emitter reloaded */
+    void resetSystem ();
+
     // Emitter creators
     EmitterFunc createBoxEmitter (const ParticleEmitter& emitter);
     EmitterFunc createSphereEmitter (const ParticleEmitter& emitter);
@@ -182,6 +198,7 @@ private:
     uint32_t m_maxParticles { DEFAULT_MAX_PARTICLES };
 
     std::vector<EmitterFunc> m_emitters;
+    std::vector<std::pair<const ParticleEmitter*, std::shared_ptr<EmitterState>>> m_emitterStates;
     std::vector<InitializerFunc> m_initializers;
     std::vector<OperatorFunc> m_operators;
 
@@ -191,6 +208,8 @@ private:
     std::vector<uint32_t> m_indices;
 
     double m_time { 0.0 };
+    /** the system's own clock: the sum of its (rate-scaled) steps, prewarm included (WE: system+0x3f0) */
+    float m_simTime { 0.0f };
 
     // CPass-based rendering
     Effects::CPass* m_pass { nullptr };
