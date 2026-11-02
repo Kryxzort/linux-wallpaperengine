@@ -1818,6 +1818,13 @@ void CParticle::setupPass () {
     }
     if (m_spritesheetFrames > 0) {
 	m_passOverride->combos["SPRITESHEET"] = 1;
+	// WE cross-fades a sheet's current and next frame (genericparticle.frag) unless the particle flags have
+	// bit 1 or the frames are random (GH 0x1401fffb0); the frames stepped. SPRITESHEETBLENDNPOT (a padded
+	// sheet) is left off: it needs g_Texture0Resolution.z to be the sheet's unpadded width, and an animated
+	// texture's is its frame width here
+	if ((m_particle.flags & 2) == 0 && m_particle.animationMode != "randomframe") {
+	    m_passOverride->combos["SPRITESHEETBLEND"] = 1;
+	}
     }
     if (m_useTrailRenderer) {
 	m_passOverride->combos["TRAILRENDERER"] = 1;
