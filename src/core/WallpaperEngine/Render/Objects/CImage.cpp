@@ -925,6 +925,9 @@ void CImage::render () {
 
     glColorMask (true, true, true, true);
 
+    // g_Color4 is bound to m_color4: bring it up to this frame's colour and alpha
+    static_cast<void> (this->getColor4 ());
+
     // Always update screen transform (handles rotation + parallax dynamically)
     this->updateScreenSpacePosition ();
 
@@ -964,7 +967,12 @@ const float& CImage::getAlpha () const { return this->m_image.alpha->value->getF
 
 const glm::vec3& CImage::getColor () const { return this->m_image.color->value->getVec3 (); }
 
-const glm::vec4& CImage::getColor4 () const { return this->m_image.color->value->getVec4 (); }
+const glm::vec4& CImage::getColor4 () const {
+    // WE's g_Color4 is (g_Color, g_Alpha): the colour and the layer's alpha, not the colour value's own w
+    // (ColorBuilder's 1, or 0 once a vec3 was written)
+    this->m_color4 = glm::vec4 (this->getColor (), this->getAlpha ());
+    return this->m_color4;
+}
 
 const glm::vec3& CImage::getCompositeColor () const { return this->m_image.color->value->getVec3 (); }
 

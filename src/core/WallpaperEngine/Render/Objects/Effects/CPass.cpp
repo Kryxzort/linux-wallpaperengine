@@ -858,14 +858,16 @@ void CPass::setupUniforms () {
     // lighting variables
     this->addUniform ("g_LightAmbientColor", sceneData.colors.ambient->value->getVec3 ());
     this->addUniform ("g_LightSkylightColor", sceneData.colors.skylight->value->getVec3 ());
-    // register variables like brightness and alpha with some default value
-    this->addUniform ("g_Brightness", renderable.getBrightness ());
-    this->addUniform ("g_UserAlpha", renderable.getUserAlpha ());
-    this->addUniform ("g_Alpha", renderable.getAlpha ());
-    this->addUniform ("g_Color", renderable.getColor ());
-    this->addUniform ("g_Color4", renderable.getColor4 ());
+    // the object's brightness, alpha and colour, bound to the live values: WE uploads them on every draw, so
+    // keyframe animations, user properties and scripts reach the shader (taking the references' addresses —
+    // passing the `const T&` itself picked the by-value overloads, which froze them at setup)
+    this->addUniform ("g_Brightness", &renderable.getBrightness ());
+    this->addUniform ("g_UserAlpha", &renderable.getUserAlpha ());
+    this->addUniform ("g_Alpha", &renderable.getAlpha ());
+    this->addUniform ("g_Color", &renderable.getColor ());
+    this->addUniform ("g_Color4", &renderable.getColor4 ());
     if (!this->m_uniforms.contains ("g_CompositeColor")) {
-	this->addUniform ("g_CompositeColor", renderable.getCompositeColor ());
+	this->addUniform ("g_CompositeColor", &renderable.getCompositeColor ());
     }
     // add some external variables
     this->addUniform ("g_Time", &this->getContext ().getContext ().renderTime);

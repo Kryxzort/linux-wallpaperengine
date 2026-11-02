@@ -128,6 +128,8 @@ private:
     glm::vec2 m_size = {};
 
     bool m_initialized = false;
+    /** (color.rgb, alpha) for g_Color4, refreshed by getColor4 () — every render () */
+    mutable glm::vec4 m_color4 = glm::vec4 (1.0f);
 
     struct {
 	struct {
