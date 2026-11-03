@@ -28,9 +28,10 @@ enum wp_property_type {
     WP_PROPERTY_TYPE_SLIDER = 2,
     WP_PROPERTY_TYPE_COLOR = 3,
     WP_PROPERTY_TYPE_BOOLEAN = 4,
-    WP_PROPERTY_TYPE_FILE = 4,
+    WP_PROPERTY_TYPE_FILE = 5,
     WP_PROPERTY_TYPE_SCENE_TEXTURE = 6,
     WP_PROPERTY_TYPE_COMBO = 7,
+    WP_PROPERTY_TYPE_TEXT_INPUT = 8,
 };
 
 /**
@@ -92,6 +93,12 @@ struct wp_project_property_text {
     const char* value;
 };
 
+/** A `textinput` property: the text the user typed, or its default */
+struct wp_project_property_text_input {
+    wp_project_property base;
+    const char* value;
+};
+
 struct wp_project_property_file {
     wp_project_property base;
     const char* path;
@@ -133,6 +140,7 @@ struct wp_project_property_boolean {
 #define WP_TYPE_LOWER_FILE file
 #define WP_TYPE_LOWER_SCENE_TEXTURE scene_texture
 #define WP_TYPE_LOWER_COMBO combo
+#define WP_TYPE_LOWER_TEXT_INPUT text_input
 
 #define WP_TYPE_EXPAND(x) x
 #define WP_TYPE_CONCAT(a, b) a##b
@@ -162,6 +170,8 @@ struct wp_project_property_boolean {
 #define WP_PROPERTY_AS_SCENE_TEXTURE(property) WP_PROPERTY_AS (property, SCENE_TEXTURE)
 #define WP_PROPERTY_IS_COMBO(property) WP_PROPERTY_IS (property, COMBO)
 #define WP_PROPERTY_AS_COMBO(property) WP_PROPERTY_AS (property, COMBO)
+#define WP_PROPERTY_IS_TEXT_INPUT(property) WP_PROPERTY_IS (property, TEXT_INPUT)
+#define WP_PROPERTY_AS_TEXT_INPUT(property) WP_PROPERTY_AS (property, TEXT_INPUT)
 
 /**
  * Loads the given background ID from the backgrounds folder

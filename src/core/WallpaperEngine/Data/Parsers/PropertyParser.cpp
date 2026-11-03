@@ -4,6 +4,22 @@
 using namespace WallpaperEngine::Data::Parsers;
 using namespace WallpaperEngine::Data::Model;
 
+namespace {
+/**
+ * A property value as the text WE keeps: a string as is (a textinput's default kept its JSON quotes: "\"NAME\""),
+ * an integer in decimal, any other number as written (a combo option 0.5 was truncated to "0")
+ */
+std::string textValue (const JSON& value) {
+    if (value.is_string ()) {
+	return value.get<std::string> ();
+    }
+    if (value.is_number_integer ()) {
+	return std::to_string (value.get<long long> ());
+    }
+    return value.dump ();
+}
+} // namespace
+
 PropertySharedPtr PropertyParser::parse (const JSON& it, const std::string& name) {
     // type might not be included, in which case means the same as a group
     const auto type = it.optional ("type");
@@ -62,7 +78,7 @@ PropertySharedPtr PropertyParser::parseCombo (const JSON& it, const std::string&
 	const auto value = cur.require ("value", "Combo option must have a value");
 
 	optionsMap.emplace (
-	    value.is_number () ? std::to_string (value.get<int> ()) : value.get<std::string> (),
+	    textValue (value),
 	    cur.require ("label", "Combo option must have a label")
 	);
     }
@@ -75,7 +91,7 @@ PropertySharedPtr PropertyParser::parseCombo (const JSON& it, const std::string&
 	    .text = it.optional<std::string> ("text", ""),
 	},
 	ComboData { .values = optionsMap },
-	value.is_number () ? std::to_string (value.get<int> ()) : value.get<std::string> ()
+	textValue (value)
     );
 }
 
@@ -147,6 +163,6 @@ PropertySharedPtr PropertyParser::parseTextInput (const JSON& it, const std::str
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
 	},
-	it.require ("value", "Property must have a value").dump ()
+	textValue (it.require ("value", "Property must have a value"))
     );
 }

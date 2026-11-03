@@ -291,6 +291,10 @@ wp_project_property* WallpaperEngine::Project::propertyListNext () {
 	this->current_property = reinterpret_cast<wp_project_property*> (new wp_project_property_scene_texture {
 	    .base = { .type = WP_PROPERTY_TYPE_SCENE_TEXTURE, .name = sceneTexture->name.c_str () },
 	    .value = sceneTexture->getString ().c_str () });
+    } else if (const auto textInput = property->second->asOrNull<PropertyTextInput> ()) {
+	this->current_property = reinterpret_cast<wp_project_property*> (new wp_project_property_text_input {
+	    .base = { .type = WP_PROPERTY_TYPE_TEXT_INPUT, .name = textInput->name.c_str () },
+	    .value = textInput->getString ().c_str () });
     } else {
 	sLog.exception ("Unknown property type");
     }
