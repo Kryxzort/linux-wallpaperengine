@@ -414,6 +414,40 @@ std::string ShaderUnit::applyLinkedVaryingCompatibility (std::string source) con
     return source;
 }
 
+std::string ShaderUnit::applyFragmentVaryingDeclarations (std::string source) const {
+    if (this->m_type != GLSLContext::UnitType_Fragment || this->m_link == nullptr) {
+	return source;
+    }
+
+    static const std::regex vertexVarying (
+	R"(\bvarying\s+(?:(?:lowp|mediump|highp|flat|smooth|noperspective)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)"
+    );
+    const std::string& vertex = this->m_link->m_preprocessed;
+    std::string missing;
+
+    for (auto it = std::sregex_iterator (vertex.begin (), vertex.end (), vertexVarying); it != std::sregex_iterator ();
+	 ++it) {
+	const std::string type = (*it)[1].str ();
+	const std::string name = (*it)[2].str ();
+	const std::regex declared ("\\bvarying\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+)+" + name + "\\s*;");
+	const std::regex used ("\\b" + name + "\\b");
+
+	if (std::regex_search (source, declared) || !std::regex_search (source, used)
+	    || missing.find (" " + name + ";") != std::string::npos) {
+	    continue;
+	}
+
+	missing += "varying " + type + " " + name + ";\n";
+    }
+
+    if (missing.empty ()) {
+	return source;
+    }
+
+    sLog.out ("Declaring in the fragment unit of ", this->m_file, " the varyings only its vertex unit has: ", missing);
+    return missing + source;
+}
+
 std::string ShaderUnit::applyFragmentTexCoordCompatibility (std::string source) const {
     if (this->m_type != GLSLContext::UnitType_Fragment) {
 	return source;
@@ -747,7 +781,9 @@ const std::string& ShaderUnit::compile () {
 
     // this should be the rest of the shader
     this->m_final
-	+= this->applyFragmentTexCoordCompatibility (this->applyLinkedVaryingCompatibility (this->m_preprocessed));
+	+= this->applyFragmentTexCoordCompatibility (this->applyFragmentVaryingDeclarations (
+	    this->applyLinkedVaryingCompatibility (this->m_preprocessed)
+	));
 
     // the pass itself handles shader compilation, the unit doesn't have enough information for this step
     return this->m_final;
