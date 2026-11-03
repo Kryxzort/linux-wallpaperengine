@@ -1,6 +1,7 @@
 #include "ShaderUnit.h"
 
 #include "WallpaperEngine/Logging/Log.h"
+#include <cstdlib>
 #include <regex>
 #include <stack>
 #include <string>
@@ -478,6 +479,44 @@ void ShaderUnit::parseComboConfiguration (const std::string& content, const int 
     }
 }
 
+namespace {
+/**
+ * A uniform annotation's vector `default`: an "x y z" string, or a number for every component (a workshop shader
+ * writes `"default": 0` for a vec2). It threw a JSON type error, which dropped the whole effect
+ */
+template <typename V> V vectorDefault (const JSON& value) {
+    if (value.is_number ()) {
+	return V (value.get<float> ());
+    }
+    if (value.is_string ()) {
+	return VectorBuilder::parse<V> (value.get<std::string> ());
+    }
+    return V (0.0f);
+}
+
+/** A float `default` written as a string ("0.1") is that float (std::stoi read 0) */
+float floatDefault (const JSON& value) {
+    if (value.is_number ()) {
+	return value.get<float> ();
+    }
+    if (value.is_string ()) {
+	return std::strtof (value.get<std::string> ().c_str (), nullptr);
+    }
+    return 0.0f;
+}
+
+/** An int `default` written as a string: its leading number, 0 when there is none (std::stoi threw) */
+int intDefault (const JSON& value) {
+    if (value.is_number ()) {
+	return value.get<int> ();
+    }
+    if (value.is_string ()) {
+	return static_cast<int> (std::strtol (value.get<std::string> ().c_str (), nullptr, 10));
+    }
+    return 0;
+}
+} // namespace
+
 void ShaderUnit::parseParameterConfiguration (
     const std::string& type, const std::string& name, const std::string& content
 ) {
@@ -507,26 +546,20 @@ void ShaderUnit::parseParameterConfiguration (
     }
 
     Variables::ShaderVariable* parameter = nullptr;
+    // a parameter bound to a material constant may have no `default` (dereferencing the empty optional was UB)
+    const JSON noDefault;
+    const JSON& defaultValue = defvalue.has_value () ? *defvalue : noDefault;
 
     if (type == "vec4") {
-	parameter
-	    = new Variables::ShaderVariableVector4 (VectorBuilder::parse<glm::vec4> (defvalue->get<std::string> ()));
+	parameter = new Variables::ShaderVariableVector4 (vectorDefault<glm::vec4> (defaultValue));
     } else if (type == "vec3") {
-	parameter = new Variables::ShaderVariableVector3 (VectorBuilder::parse<glm::vec3> (*defvalue));
+	parameter = new Variables::ShaderVariableVector3 (vectorDefault<glm::vec3> (defaultValue));
     } else if (type == "vec2") {
-	parameter = new Variables::ShaderVariableVector2 (VectorBuilder::parse<glm::vec2> (*defvalue));
+	parameter = new Variables::ShaderVariableVector2 (vectorDefault<glm::vec2> (defaultValue));
     } else if (type == "float") {
-	if (defvalue->is_string ()) {
-	    parameter = new Variables::ShaderVariableFloat (std::stoi (defvalue->get<std::string> ()));
-	} else {
-	    parameter = new Variables::ShaderVariableFloat (defvalue->get<float> ());
-	}
+	parameter = new Variables::ShaderVariableFloat (floatDefault (defaultValue));
     } else if (type == "int") {
-	if (defvalue->is_string ()) {
-	    parameter = new Variables::ShaderVariableInteger (std::stoi (defvalue->get<std::string> ()));
-	} else {
-	    parameter = new Variables::ShaderVariableInteger (defvalue->get<int> ());
-	}
+	parameter = new Variables::ShaderVariableInteger (intDefault (defaultValue));
     } else if (type == "sampler2D" || type == "sampler2DComparison") {
 	// samplers can have special requirements, check what sampler we're working with and create definitions
 	// if needed
