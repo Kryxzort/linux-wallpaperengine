@@ -145,6 +145,8 @@ protected:
     std::shared_ptr<EmitterState> addEmitterState (const ParticleEmitter& emitter);
     static void resetEmitter (const ParticleEmitter& emitter, EmitterState& state);
     /** how many particles the emitter spawns this step (rate × count, burst, delay, duration, periodic windows) */
+    /** an audio-responsive emitter's rate factor this frame, 0..1 */
+    [[nodiscard]] float audioLevel (const ParticleEmitter& emitter) const;
     uint32_t emitCount (const ParticleEmitter& emitter, EmitterState& state, float dt);
     /** WE's hidden-system reset (GH 0x140255d00): every particle gone, every emitter reloaded */
     void resetSystem ();

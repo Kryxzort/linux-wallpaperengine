@@ -193,7 +193,7 @@ struct ParticleEmitter {
     float delay;
     float duration;
     glm::vec2 audioProcessingBounds;
-    int audioProcessingExponent;
+    float audioProcessingExponent;
     int audioProcessingFrequencyStart;
     int audioProcessingFrequencyEnd;
     int audioProcessingMode;

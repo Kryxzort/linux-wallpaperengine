@@ -2,6 +2,7 @@
 #include "quickjs.h"
 
 #include <map>
+#include <vector>
 
 namespace WallpaperEngine::Render::Wallpapers {
 class CScene;
@@ -24,6 +25,9 @@ public:
 
     void tick ();
 
+    /** engine.registerAudioBuffers (resolution): left/right/average Float32Arrays, refreshed every frame */
+    JSValue registerAudioBuffers (int resolution);
+
 protected:
     /**
      * Timers run on the scene's clock (the host's wp_time_counter, in seconds), not the wall clock:
@@ -40,6 +44,15 @@ protected:
 
     /** @return The scene's current time in seconds (what engine.runtime reports) */
     [[nodiscard]] double now () const;
+
+    /** copies the frame's spectrum into every registered AudioBuffers */
+    void refreshAudioBuffers ();
+
+    struct AudioBuffers {
+	int resolution;
+	JSValue arrays[3]; // left, right, average
+    };
+    std::vector<AudioBuffers> m_audioBuffers;
 
     uint32_t m_nextTimeoutId = 0;
     uint32_t m_nextIntervalId = 0;

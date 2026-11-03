@@ -1,9 +1,11 @@
 #include "EngineObject.h"
 #include "ScriptEngine.h"
+#include "WallpaperEngine/Audio/AudioContext.h"
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 
+#include <cstring>
 #include <ranges>
 #include <vector>
 
@@ -186,6 +188,29 @@ JSValue engine_set_timeout (JSContext* ctx, JSValueConst this_val, int argc, JSV
     return JS_NewCFunctionData (ctx, engine_stop_timeout, 2, magic, 1, args);
 }
 
+// engine.registerAudioBuffers (resolution) — SceneScript's AudioBuffers (left, right, average; 16, 32 or 64
+// bands, index 0 = bass), the same spectrum as the g_AudioSpectrum uniforms. Only at a module's top level, as in
+// WE (scenescript64.dll: "registerAudioBuffers can only be called from global scope.")
+JSValue engine_register_audio_buffers (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    const auto it = engineInstances.find (magic);
+
+    if (it == engineInstances.end ()) {
+	return JS_EXCEPTION;
+    }
+
+    if (it->second.getEngine ().getRunningModule () == nullptr) {
+	return JS_ThrowSyntaxError (ctx, "registerAudioBuffers can only be called from global scope.");
+    }
+
+    int32_t resolution = 0;
+    if (argc < 1 || JS_ToInt32 (ctx, &resolution, argv [0]) < 0
+	|| (resolution != 16 && resolution != 32 && resolution != 64)) {
+	return JS_ThrowRangeError (ctx, "Resolution must be either 16, 32 or 64.");
+    }
+
+    return it->second.registerAudioBuffers (resolution);
+}
+
 EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene) :
     m_scene (scene), m_engine (engine), m_instanceId (++EngineInstanceId), m_classId (0) {
     // the native functions below find this object by their magic (the instance id)
@@ -247,6 +272,14 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	JS_NewInt32 (this->m_engine.getContext (), 64), JS_PROP_ENUMERABLE
     );
     JS_DefinePropertyValueStr (
+	this->m_engine.getContext (), this->m_instance, "registerAudioBuffers",
+	JS_NewCFunctionMagic (
+	    this->m_engine.getContext (), engine_register_audio_buffers, "registerAudioBuffers", 1,
+	    JS_CFUNC_generic_magic, this->m_instanceId
+	),
+	JS_PROP_ENUMERABLE
+    );
+    JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "setInterval",
 	JS_NewCFunctionMagic (
 	    this->m_engine.getContext (), engine_set_interval, "setInterval", 2, JS_CFUNC_generic_magic, this->m_instanceId
@@ -269,6 +302,12 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 }
 
 EngineObject::~EngineObject () {
+    for (const auto& buffers : this->m_audioBuffers) {
+	for (const auto& array : buffers.arrays) {
+	    JS_FreeValue (this->m_engine.getContext (), array);
+	}
+    }
+    this->m_audioBuffers.clear ();
     // clear all the timeouts and intervals
     for (const auto& [id, timeout] : this->m_timeouts) {
 	JS_FreeValue (this->m_engine.getContext (), timeout.callback);
@@ -356,7 +395,63 @@ void EngineObject::call (JSValue callback) {
     JS_FreeValue (ctx, function);
 }
 
+JSValue EngineObject::registerAudioBuffers (int resolution) {
+    JSContext* ctx = this->m_engine.getContext ();
+    JSValue object = JS_NewObject (ctx);
+    AudioBuffers buffers { .resolution = resolution, .arrays = { JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED } };
+    const char* names[] = { "left", "right", "average" };
+
+    for (int c = 0; c < 3; c++) {
+	JSValue length = JS_NewInt32 (ctx, resolution);
+	JSValue array = JS_NewTypedArray (ctx, 1, &length, JS_TYPED_ARRAY_FLOAT32);
+	if (JS_IsException (array)) {
+	    JS_FreeValue (ctx, object);
+	    for (const auto& a : buffers.arrays) {
+		JS_FreeValue (ctx, a);
+	    }
+	    return array;
+	}
+	buffers.arrays [c] = JS_DupValue (ctx, array);
+	JS_DefinePropertyValueStr (ctx, object, names [c], array, JS_PROP_ENUMERABLE);
+    }
+
+    this->m_audioBuffers.push_back (buffers);
+    this->refreshAudioBuffers ();
+    return object;
+}
+
+void EngineObject::refreshAudioBuffers () {
+    if (this->m_audioBuffers.empty ()) {
+	return;
+    }
+
+    JSContext* ctx = this->m_engine.getContext ();
+    const auto& recorder = this->m_scene.getAudioContext ().getRecorder ();
+
+    for (const auto& buffers : this->m_audioBuffers) {
+	for (int c = 0; c < 3; c++) {
+	    size_t offset = 0, length = 0, element = 0;
+	    JSValue buffer = JS_GetTypedArrayBuffer (ctx, buffers.arrays [c], &offset, &length, &element);
+	    if (JS_IsException (buffer)) {
+		JS_FreeValue (ctx, JS_GetException (ctx));
+		continue;
+	    }
+	    size_t size = 0;
+	    uint8_t* data = JS_GetArrayBuffer (ctx, &size, buffer);
+	    const float* bands = recorder.bands (buffers.resolution, c);
+	    const size_t bytes = sizeof (float) * buffers.resolution;
+	    if (data != nullptr && bands != nullptr && offset + bytes <= size && length >= bytes) {
+		std::memcpy (data + offset, bands, bytes);
+	    }
+	    JS_FreeValue (ctx, buffer);
+	}
+    }
+}
+
 void EngineObject::tick () {
+    // the frame's spectrum first: scripts read it in their update () this frame
+    this->refreshAudioBuffers ();
+
     const double now = this->now ();
     // callbacks may add or clear timers: walk a snapshot of the ids, re-finding each one
     std::vector<uint32_t> ids;
