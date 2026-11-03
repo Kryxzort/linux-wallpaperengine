@@ -11,6 +11,7 @@
 
 #include "WallpaperEngine/Data/Model/Effect.h"
 #include "WallpaperEngine/Data/Model/Material.h"
+#include "WallpaperEngine/Data/Model/Property.h"
 
 #include "WallpaperEngine/Render/CFBO.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
@@ -108,6 +109,30 @@ std::shared_ptr<const TextureProvider> CPass::resolveTexture (
 
     // the bind actually has a name, search the FBO in the effect and return it
     return this->resolveFBO (it->second);
+}
+
+std::optional<std::string> CPass::userTextureName (const std::string& name) const {
+    // a non-system user texture names a project property of type scenetexture: its value (a file the user picked,
+    // or the author's default) is the texture; none picked keeps the slot's fallback (it was resolved as a texture
+    // path named after the property, which failed and logged)
+    const auto& properties = this->m_renderable.getScene ().getScene ().project.properties;
+    const auto property = properties.find (name);
+
+    if (property == properties.end ()) {
+	return name;
+    }
+
+    if (const auto sceneTexture = property->second->asOrNull<Data::Model::PropertySceneTexture> ()) {
+	const std::string& value = sceneTexture->getString ();
+
+	if (value.empty ()) {
+	    return std::nullopt;
+	}
+
+	return value;
+    }
+
+    return name;
 }
 
 std::shared_ptr<const CFBO> CPass::resolveFBO (const std::string& name) const {
@@ -753,7 +778,12 @@ void CPass::setupTextureUniforms () {
 	}
     }
 
-    for (const auto& [index, textureName] : this->m_pass.usertextures) {
+    for (const auto& [index, userTexture] : this->m_pass.usertextures) {
+	const auto picked = this->userTextureName (userTexture);
+	if (!picked.has_value ()) {
+	    continue;
+	}
+	const std::string& textureName = *picked;
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
@@ -790,7 +820,12 @@ void CPass::setupTextureUniforms () {
 	}
     }
 
-    for (const auto& [index, textureName] : this->m_override.usertextures) {
+    for (const auto& [index, userTexture] : this->m_override.usertextures) {
+	const auto picked = this->userTextureName (userTexture);
+	if (!picked.has_value ()) {
+	    continue;
+	}
+	const std::string& textureName = *picked;
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <functional>
 #include <glm/gtc/type_ptr.hpp>
 #include <utility>
@@ -45,6 +47,8 @@ public:
     void setBlendingMode (BlendingMode blendingmode);
     [[nodiscard]] BlendingMode getBlendingMode () const;
     [[nodiscard]] std::shared_ptr<const CFBO> resolveFBO (const std::string& name) const;
+    /** A usertexture's texture: the value of the scenetexture property it names (none picked: nullopt), else itself */
+    [[nodiscard]] std::optional<std::string> userTextureName (const std::string& name) const;
 
     [[nodiscard]] std::shared_ptr<const FBOProvider> getFBOProvider () const;
     [[nodiscard]] const CRenderable& getRenderable () const;
