@@ -114,6 +114,8 @@ struct SceneData {
     ObjectList objects;
     /** Every value in this scene with a keyframe animation (the scene advances them every frame) */
     std::vector<AnimatedValue> animatedValues = {};
+    /** the scene's scripts call `getEffect`: every effect is built, a script may show one hidden at load */
+    bool scriptsReachEffects = false;
 };
 
 class Scene final : public Wallpaper, public SceneData {

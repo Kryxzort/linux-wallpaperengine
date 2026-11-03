@@ -18,7 +18,7 @@ JSValue console_log (JSContext* ctx, JSValueConst this_val, int argc, JSValueCon
 	const char* str = JS_ToCString (ctx, argv[i]);
 	ScopeGuard guard ([ctx, str] { JS_FreeCString (ctx, str); });
 
-	stream << str;
+	stream << (i > 0 ? " " : "") << (str ? str : "");
     }
 
     sLog.out (stream.str ());
@@ -37,7 +37,7 @@ JSValue console_error (JSContext* ctx, JSValueConst this_val, int argc, JSValueC
 	const char* str = JS_ToCString (ctx, argv[i]);
 	ScopeGuard guard ([ctx, str] { JS_FreeCString (ctx, str); });
 
-	stream << str;
+	stream << (i > 0 ? " " : "") << (str ? str : "");
     }
 
     sLog.error (stream.str ());

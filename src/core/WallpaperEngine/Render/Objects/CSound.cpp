@@ -25,7 +25,12 @@ uint64_t soundSeed (const int objectId) {
 } // namespace
 
 CSound::CSound (Wallpapers::CScene& scene, const Sound& sound) :
-    CObject (scene, sound), m_sound (sound), m_random (soundSeed (sound.id)) {
+    CObject (scene, sound), ScriptableObject (scene, sound), m_sound (sound), m_random (soundSeed (sound.id)) {
+    // ISoundLayer.volume, read and written by scripts (and a script on it runs like any layer property's)
+    if (sound.volume != nullptr && sound.volume->value != nullptr) {
+	this->registerProperty ("volume", *sound.volume->value);
+    }
+
     const auto& mode = sound.playbackmode;
 
     // absent = loop (WE's constructor default); an unknown name falls back to it too
@@ -86,7 +91,9 @@ float CSound::getGain () const {
     return v * v;
 }
 
-bool CSound::isPlaying () const { return this->m_stream != nullptr && !this->m_stream->isPlayedOut (); }
+bool CSound::isPlaying () const {
+    return !this->m_paused && this->m_stream != nullptr && !this->m_stream->isPlayedOut ();
+}
 
 void CSound::swapStream (Audio::AudioStream* stream) {
     Audio::AudioStream* previous = this->m_stream;
@@ -160,9 +167,43 @@ void CSound::play () {
 	this->m_slot = this->getScene ().getAudioContext ().addStream (nullptr);
     }
 
-    // a script's play() restarts a waiting `random` object at once
+    // paused: back into the slot where it stopped
+    if (this->m_paused) {
+	this->m_paused = false;
+	this->getScene ().getAudioContext ().replaceStream (this->m_slot, this->m_stream);
+	return;
+    }
+
+    // "if it is not already running"
+    if (this->isPlaying ()) {
+	return;
+    }
+
+    // a script's play() starts the object even when it is `startsilent`, and doesn't wait out `random`'s silence
     this->m_gap = -1.0;
     this->start ();
+}
+
+void CSound::stop () {
+    if (!this->m_audio || this->m_slot < 0) {
+	return;
+    }
+
+    this->m_paused = false;
+    this->swapStream (nullptr);
+    this->m_gap = -1.0;
+    // nothing restarts it (the playlist, a volume rise) but play ()
+    this->m_neverStarted = true;
+}
+
+void CSound::pause () {
+    if (!this->m_audio || this->m_slot < 0 || this->m_paused || !this->isPlaying ()) {
+	return;
+    }
+
+    this->m_paused = true;
+    // out of the slot, kept: its decoder waits where it is
+    this->getScene ().getAudioContext ().replaceStream (this->m_slot, nullptr);
 }
 
 void CSound::onVolumeChanged () {
@@ -179,13 +220,13 @@ void CSound::onVolumeChanged () {
 
     // a rise from 0 starts an object that isn't playing — never a `single` one, never one that hasn't
     // had its first start (startsilent)
-    if (gain > 0.0f && !this->isPlaying () && this->m_mode != Mode::Single && !this->m_neverStarted) {
+    if (gain > 0.0f && !this->isPlaying () && !this->m_paused && this->m_mode != Mode::Single && !this->m_neverStarted) {
 	this->start ();
     }
 }
 
 void CSound::tick (const double dt) {
-    if (!this->m_audio || this->m_slot < 0 || this->m_neverStarted || this->m_mode == Mode::Single) {
+    if (!this->m_audio || this->m_slot < 0 || this->m_neverStarted || this->m_paused || this->m_mode == Mode::Single) {
 	return;
     }
 

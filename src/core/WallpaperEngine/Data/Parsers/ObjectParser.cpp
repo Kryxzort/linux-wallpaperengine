@@ -50,6 +50,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupVisible = it.user ("visible", project.properties, true),
 	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
+	    .solid = it.optional ("solid", true),
 	};
     } catch (const std::exception& e) {
 	sLog.error ("Error parsing object base data: ", e.what ());
@@ -75,6 +76,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupVisible = it.user ("visible", project.properties, true),
 	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
+	    .solid = it.optional ("solid", true),
 	};
     }
 

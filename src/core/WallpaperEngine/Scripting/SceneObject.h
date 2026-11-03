@@ -1,6 +1,10 @@
 #pragma once
 #include "quickjs.h"
 
+namespace WallpaperEngine::Data::Model {
+class DynamicValue;
+}
+
 namespace WallpaperEngine::Render::Wallpapers {
 class CScene;
 }
@@ -11,7 +15,9 @@ public:
     SceneObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene);
     ~SceneObject ();
 
-    const Render::Wallpapers::CScene& getScene () const { return m_scene; }
+    Render::Wallpapers::CScene& getScene () const { return m_scene; }
+    /** the scene value a property setter writes (by the setter's magic), or nullptr (read-only) */
+    Data::Model::DynamicValue* settableValue (int index) const;
     JSValue getInstance () const { return m_instance; }
     ScriptEngine& getEngine () const { return m_engine; }
 

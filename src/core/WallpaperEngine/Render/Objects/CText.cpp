@@ -121,11 +121,11 @@ void CText::setup () {
 	return;
     }
 
-    if (!initFreeType ()) {
-	return;
-    }
-
-    if (!loadEmbeddedFont () && !loadSystemFont ()) {
+    // without a font nothing draws, but a script still runs (it may drive other layers)
+    if (!initFreeType () || (!loadEmbeddedFont () && !loadSystemFont ())) {
+	if (scripted) {
+	    initScriptLayer ();
+	}
 	return;
     }
 
@@ -222,7 +222,7 @@ void CText::initScriptLayer () {
     }
 
     m_layerHandle = this->getScene ().getScriptEngine ().createLayerScript (
-	*script, m_text.text->value->getProperties (), m_text.text->value->getString ()
+	*script, m_text.text->value->getProperties (), m_text.text->value->getString (), *this
     );
 
     if (m_layerHandle == Scripting::kInvalidLayerHandle) {
@@ -373,6 +373,21 @@ void CText::uploadQuadVertices () {
 }
 
 void CText::render () {
+    // the script runs while the layer is hidden too (it may be what shows it again), and before the font check
+    std::string renderedText = m_lastRenderedText;
+    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
+	auto& se = this->getScene ().getScriptEngine ();
+	se.tickLayer (
+	    m_layerHandle, static_cast<double> (getScene ().getTime ()),
+	    static_cast<double> (getScene ().getDeltaTime ()), static_cast<double> (getScene ().getFps ())
+	);
+	const std::string current = se.layerText (m_layerHandle);
+	renderedText = current.empty () ? std::string (" ") : current;
+    } else if (m_text.text->value->getType () == DynamicValue::String && !m_text.text->value->getString ().empty ()) {
+	// a text another layer's script (or a user property) writes
+	renderedText = m_text.text->value->getString ();
+    }
+
     if (!m_valid) {
 	return;
     }
@@ -385,17 +400,6 @@ void CText::render () {
     std::string str = "Text " + this->getObject ().name + " (" + std::to_string (this->getObject ().id) + ")";
     glPushDebugGroup (GL_DEBUG_SOURCE_APPLICATION, 0, -1, str.c_str ());
 #endif /* DEBUG */
-    std::string renderedText = m_lastRenderedText;
-    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
-	auto& se = this->getScene ().getScriptEngine ();
-	se.tickLayer (
-	    m_layerHandle, static_cast<double> (getScene ().getTime ()),
-	    static_cast<double> (getScene ().getDeltaTime ()), static_cast<double> (getScene ().getFps ())
-	);
-	const std::string current = se.layerText (m_layerHandle);
-	renderedText = current.empty () ? std::string (" ") : current;
-    }
-
     const unsigned int pixelSize = computeEffectivePixelSize ();
     if (pixelSize != m_lastPixelSize) {
 	m_lastPixelSize = pixelSize;

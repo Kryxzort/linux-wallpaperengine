@@ -21,6 +21,10 @@ public:
 
     const std::map<std::string, PropertyEntry>& getProperties () const;
 
+    /** `solid`: the layer receives cursor events (scene.json, default true; a script may change it) */
+    [[nodiscard]] bool isSolid () const { return this->m_solid; }
+    void setSolid (bool solid) { this->m_solid = solid; }
+
 protected:
     /**
      * Makes `name` readable by scripts (thisLayer, getLayer). Its property script, if any, is queued unless
@@ -30,5 +34,6 @@ protected:
 
 private:
     std::map<std::string, PropertyEntry> m_properties;
+    bool m_solid = true;
 };
 }

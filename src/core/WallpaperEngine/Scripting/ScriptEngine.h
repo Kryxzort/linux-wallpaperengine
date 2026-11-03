@@ -9,7 +9,9 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -130,8 +132,21 @@ public:
      */
     ScriptLayerHandle createLayerScript (
 	const std::string& scriptSource, std::map<std::string, UserSettingUniquePtr>& initialScriptProps,
-	const std::string& initialText
+	const std::string& initialText, ScriptableObject& layer
     );
+
+    /** The live value of a text layer's script property (`scriptProperties.<name>`), or JS_UNDEFINED */
+    JSValue layerScriptProperty (ScriptLayerHandle handle, const std::string& name);
+
+    /**
+     * Calls the event `name` (cursorClick, mediaPropertiesChanged, applyUserProperties, …) with `arg` on every script
+     * that exports it: property scripts and text-layer scripts. `only` limits it to the scripts of one layer
+     */
+    void dispatchEvent (const char* name, JSValueConst arg, const ScriptableObject* only = nullptr);
+    /** A script of `object` exports `name` (a property script's or its text-layer script's) */
+    [[nodiscard]] bool handlesEvent (const ScriptableObject& object, const char* name);
+    /** engine.userProperties: every user property, colours as Vec3 (a new object) */
+    [[nodiscard]] JSValue userProperties ();
 
     /**
      * Advance a layer by one frame.
@@ -202,6 +217,18 @@ private:
     ScriptLayerHandle m_nextLayerId = 1;
     bool m_layerRegistryReady = false;
     std::map<ScriptLayerHandle, bool> m_layerInitialized;
+    /** each text-layer script's layer and its script properties (live) */
+    std::map<ScriptLayerHandle, ScriptableObject*> m_layerObjects;
+    std::map<ScriptLayerHandle, std::map<std::string, UserSettingUniquePtr>*> m_layerProps;
+    /** the user properties changed since the last tick (applyUserProperties gets them) */
+    std::set<std::string> m_changedProperties;
+    std::vector<std::function<void ()>> m_propertyListeners;
+    /** calls a text-layer hook (`_init`, `_tick`, or an event in `_events`) if the script has it */
+    void callLayerHook (ScriptLayerHandle handle, const char* name, int argc, JSValueConst argv[], bool event);
+    /** init + the first applyUserProperties of property and text-layer scripts queued since the last tick */
+    void startPendingScripts ();
+    /** the value scripts see for one user property (colours as Vec3) */
+    JSValue userPropertyValue (const Property& property);
     bool m_builtinsInstalled = false;
 
     std::map<std::string, JSValue> m_queuedEvents;

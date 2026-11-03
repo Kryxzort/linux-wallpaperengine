@@ -40,6 +40,10 @@ using namespace WallpaperEngine::Scripting;
 using namespace WallpaperEngine::Data::Model;
 
 extern char** environ;
+
+namespace {
+JSValue scriptengine_layer_prop (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+}
 extern float g_Time;
 extern float g_TimeLast;
 
@@ -246,6 +250,7 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene) : m_scene (scene) {
     }
 
     this->m_globalThis = JS_GetGlobalObject (this->m_context);
+    JS_SetContextOpaque (this->m_context, this);
 
     this->m_adapters = {
 	.object
@@ -262,8 +267,6 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene) : m_scene (scene) {
     this->m_consoleObject = std::make_unique<ConsoleObject> (*this, scene);
     this->m_scriptPropertiesObject = std::make_unique<ScriptPropertiesObject> (*this, scene);
 
-    // setup scene objects and other things
-    this->installBuiltins ();
     // add engine to the global
     JS_DefinePropertyValueStr (
 	this->m_context, this->m_globalThis, "engine", this->m_engineObject->getInstance (), JS_PROP_ENUMERABLE
@@ -280,9 +283,30 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene) : m_scene (scene) {
     JS_DefinePropertyValueStr (
 	this->m_context, this->m_globalThis, "shared", JS_NewObject (this->m_context), JS_PROP_ENUMERABLE
     );
+    JS_SetPropertyStr (
+	this->m_context, this->m_globalThis, "__layerProp",
+	JS_NewCFunction (this->m_context, scriptengine_layer_prop, "__layerProp", 2)
+    );
+    // the rest of the API in JS (engine.is*(), localStorage, …), on top of the globals above
+    this->installBuiltins ();
+
+    // a user property the user changes reaches applyUserProperties on the next tick
+    for (const auto& [name, property] : scene.getScene ().project.properties) {
+	this->m_propertyListeners.push_back (
+	    property->listen ([this, key = name] (const DynamicValue&, DynamicValue::UpdateSource source) {
+		if (source == DynamicValue::UpdateSource::User) {
+		    this->m_changedProperties.insert (key);
+		}
+	    })
+	);
+    }
 }
 
 ScriptEngine::~ScriptEngine () {
+    for (auto& unlisten : this->m_propertyListeners) {
+	unlisten ();
+    }
+
     for (const auto& module : this->m_scriptModules) {
 	JS_FreeValue (this->m_context, module->ns);
     }
@@ -429,9 +453,39 @@ void ScriptEngine::ensureLayerRegistry () {
     this->m_layerRegistryReady = true;
 }
 
+namespace {
+/** what a text-layer script may export besides init/update/destroy: the events dispatchEvent delivers */
+constexpr const char* kLayerEvents[] = {
+    "applyUserProperties",   "resizeScreen",	      "cursorEnter",	      "cursorLeave",
+    "cursorMove",	     "cursorDown",	      "cursorUp",	      "cursorClick",
+    "mediaPlaybackChanged",  "mediaPropertiesChanged", "mediaThumbnailChanged", "mediaTimelineChanged",
+    "mediaStatusChanged",
+};
+
+// __layerProp (id, name): a text-layer script property's live value (bound to a user property: follows it)
+JSValue scriptengine_layer_prop (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* engine = static_cast<ScriptEngine*> (JS_GetContextOpaque (ctx));
+    int id = 0;
+
+    if (engine == nullptr || argc < 2 || JS_ToInt32 (ctx, &id, argv[0]) < 0) {
+	return JS_UNDEFINED;
+    }
+
+    const char* name = JS_ToCString (ctx, argv[1]);
+
+    if (name == nullptr) {
+	return JS_UNDEFINED;
+    }
+
+    JSValue result = engine->layerScriptProperty (id, name);
+    JS_FreeCString (ctx, name);
+    return result;
+}
+} // namespace
+
 ScriptLayerHandle ScriptEngine::createLayerScript (
     const std::string& scriptSource, std::map<std::string, UserSettingUniquePtr>& initialScriptProps,
-    const std::string& initialText
+    const std::string& initialText, ScriptableObject& layer
 ) {
     if (!this->m_context) {
 	sLog.error ("ScriptEngine: No JS context available");
@@ -441,22 +495,15 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
     this->ensureLayerRegistry ();
 
     JSContext* ctx = this->m_context;
-    JSValue globalObj = JS_GetGlobalObject (ctx);
 
-    // Seed initial scriptProperties and text as temporary globals the IIFE reads.
-    JSValue seedProps = JS_NewObject (ctx);
-
-    for (auto& [name, dynVal] : initialScriptProps) {
-	JS_SetPropertyStr (ctx, seedProps, name.c_str (), this->dynamicToJs (*dynVal->value));
-    }
-
-    JS_SetPropertyStr (ctx, globalObj, "__layerSeedProps", seedProps);
-    JS_SetPropertyStr (ctx, globalObj, "__layerSeedText", JS_NewString (ctx, initialText.c_str ()));
+    // the layer the script is on: thisLayer is the real layer (its text, and every ILayer member)
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__layerSeedLayer", this->m_adapters.object->instantiate (layer));
 
     const ScriptLayerHandle id = this->m_nextLayerId++;
+    this->m_layerObjects[id] = &layer;
+    this->m_layerProps[id] = &initialScriptProps;
 
-    // Same stripping logic as evaluate(): WE scripts come as ES6 modules but
-    // QuickJS is easier to drive as plain script evaluation.
+    // WE scripts come as ES6 modules; this path drives them as plain script evaluation
     std::string body = scriptSource;
     size_t pos;
     while ((pos = body.find ("'use strict';")) != std::string::npos) {
@@ -469,18 +516,26 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	body.erase (pos, 7);
     }
 
-    // The IIFE gives every layer its own closure for top-level vars and
-    // functions, so two layers that both define `function update()` or a
-    // top-level `var scriptProperties` don't clobber each other. Lifecycle
-    // hooks are captured into globalThis.__textLayers[id] so tick/destroy can
-    // reach them later. `typeof init === 'function'` is safe even when
+    // The IIFE gives every layer its own closure for top-level vars and functions, so two layers that both define
+    // `function update()` don't clobber each other. Lifecycle hooks and events are captured into
+    // globalThis.__textLayers[id] so the engine can reach them later. `typeof init === 'function'` is safe even when
     // `init` was never declared — bare-identifier `typeof` never throws.
     std::ostringstream wrapper;
     wrapper
 	<< "(function() {\n"
 	<< "  var __id = " << id << ";\n"
-	<< "  var __props = Object.assign({}, globalThis.__layerSeedProps || {});\n"
-	<< "  var thisLayer = { text: String(globalThis.__layerSeedText || '') };\n"
+	// the script properties: the scene's stored values, live (a user property bound to one reaches the script on
+	// its next read); a key the scene doesn't store reads its builder default
+	<< "  var __defaults = {};\n"
+	<< "  var __props = new Proxy(__defaults, {\n"
+	<< "    get: function(t, k) {\n"
+	<< "      if (typeof k !== 'string') { return t[k]; }\n"
+	<< "      var v = globalThis.__layerProp(__id, k);\n"
+	<< "      return v === undefined ? t[k] : v;\n"
+	<< "    },\n"
+	<< "    has: function(t, k) { return (k in t) || globalThis.__layerProp(__id, k) !== undefined; }\n"
+	<< "  });\n"
+	<< "  var thisLayer = globalThis.__layerSeedLayer, thisObject = thisLayer;\n"
 	// `thisScene` and `engine` are the real objects (getLayer, setInterval, …) seen through a layer of the text
 	// layer's own clock: time/currentTime/dt/fps and `frametime` (the per-frame delta in seconds, what
 	// InsertFPS reads) come from the text object's tick
@@ -502,57 +557,105 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	<< "    get frametime() { var c = globalThis.__sceneCtx; return c ? c.dt : 0; },\n"
 	<< "    get time()      { var c = globalThis.__sceneCtx; return c ? c.time : 0; },\n"
 	<< "  });\n"
+	// WE's builder semantics (baseclasses.js): every key gets its default, a combo its first option's value
 	<< "  function createScriptProperties() {\n"
+	<< "    function add(o) {\n"
+	<< "      if (o && o.name !== undefined) {\n"
+	<< "        var d = o.value;\n"
+	<< "        if (d === undefined && o.options && o.options.length) { d = o.options[0].value; }\n"
+	<< "        __defaults[o.name] = d;\n"
+	<< "      }\n"
+	<< "      return builder;\n"
+	<< "    }\n"
 	<< "    var builder = {\n"
-	<< "      addSlider:   function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
-	<< "      addCheckbox: function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
-	<< "      addCombo:    function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
-	<< "      addColor:    function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
-	<< "      addText:     function(o){ if (!(o.name in __props)) __props[o.name] = o.value; return builder; },\n"
-	<< "      finish:      function(){ return __props; }\n"
+	<< "      addSlider: add, addCheckbox: add, addCombo: add, addColor: add, addText: add, addTextInput: add,\n"
+	<< "      addFile: add, addDirectory: add,\n"
+	<< "      finish: function(){ return __props; }\n"
 	<< "    };\n"
 	<< "    return builder;\n"
 	<< "  }\n"
 	<< body
 	<< "\n"
-	// `_tick` wraps the user's `update()` so both WE text conventions work:
-	//   A) `export function update() { thisLayer.text = …; }` (mutates in place)
-	//   B) `export function update(value) { …; return value; }` (returns new text)
-	// We pass the current text in, and if the return value is a string we
-	// adopt it as the new `thisLayer.text`. Non-string / undefined return
-	// leaves `thisLayer.text` as whatever the function assigned itself.
+	// `update` either assigns thisLayer.text or returns the text (both WE conventions); init (value) the same
+	<< "  function __adopt(r) { if (typeof r === 'string') thisLayer.text = r; }\n"
 	<< "  globalThis.__textLayers[__id] = {\n"
 	<< "    thisLayer: thisLayer,\n"
 	<< "    thisScene: thisScene,\n"
-	<< "    _init:    (typeof init    === 'function') ? init    : null,\n"
+	<< "    _init:    (typeof init    === 'function') ? function() { __adopt(init(thisLayer.text)); } : null,\n"
 	<< "    _destroy: (typeof destroy === 'function') ? destroy : null,\n"
-	<< "    _tick:    (typeof update  === 'function')\n"
-	<< "              ? function() {\n"
-	<< "                  var r = update(thisLayer.text);\n"
-	<< "                  if (typeof r === 'string') thisLayer.text = r;\n"
-	<< "                }\n"
-	<< "              : null,\n"
-	<< "    _scriptProperties: (typeof scriptProperties !== 'undefined') ? scriptProperties : __props\n"
-	<< "  };\n"
-	<< "})();\n";
+	<< "    _tick:    (typeof update  === 'function') ? function() { __adopt(update(thisLayer.text)); } : null,\n"
+	<< "    _events: {\n";
+    for (const char* event : kLayerEvents) {
+	wrapper << "      " << event << ": (typeof " << event << " === 'function') ? " << event << " : null,\n";
+    }
+    wrapper << "    },\n"
+	    << "    _scriptProperties: (typeof scriptProperties !== 'undefined') ? scriptProperties : __props\n"
+	    << "  };\n"
+	    << "})();\n";
 
     const std::string evalScript = wrapper.str ();
     JSValue result = JS_Eval (ctx, evalScript.c_str (), evalScript.size (), "<layer-script>", JS_EVAL_TYPE_GLOBAL);
 
-    // Unset seeds so they don't leak into the next createLayerScript call.
-    JS_SetPropertyStr (ctx, globalObj, "__layerSeedProps", JS_UNDEFINED);
-    JS_SetPropertyStr (ctx, globalObj, "__layerSeedText", JS_UNDEFINED);
-    JS_FreeValue (ctx, globalObj);
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__layerSeedLayer", JS_UNDEFINED);
 
     if (JS_IsException (result)) {
 	logJSException (ctx, "createLayerScript");
 	JS_FreeValue (ctx, result);
+	this->m_layerObjects.erase (id);
+	this->m_layerProps.erase (id);
 	return kInvalidLayerHandle;
     }
     JS_FreeValue (ctx, result);
 
+    // init and the first applyUserProperties run on the next tick, with the property scripts'
     this->m_layerInitialized[id] = false;
+    this->m_pendingModules = true;
     return id;
+}
+
+JSValue ScriptEngine::layerScriptProperty (ScriptLayerHandle handle, const std::string& name) {
+    const auto it = this->m_layerProps.find (handle);
+
+    if (it == this->m_layerProps.end () || it->second == nullptr) {
+	return JS_UNDEFINED;
+    }
+
+    const auto prop = it->second->find (name);
+
+    if (prop == it->second->end () || prop->second == nullptr || prop->second->value == nullptr) {
+	return JS_UNDEFINED;
+    }
+
+    return this->dynamicToJs (*prop->second->value);
+}
+
+void ScriptEngine::callLayerHook (ScriptLayerHandle handle, const char* name, int argc, JSValueConst argv[], bool event) {
+    JSContext* ctx = this->m_context;
+    JSValue layers = JS_GetPropertyStr (ctx, this->m_globalThis, "__textLayers");
+    JSValue layerObj = JS_IsObject (layers) ? JS_GetPropertyUint32 (ctx, layers, static_cast<uint32_t> (handle))
+					    : JS_UNDEFINED;
+    JS_FreeValue (ctx, layers);
+
+    if (!JS_IsObject (layerObj)) {
+	JS_FreeValue (ctx, layerObj);
+	return;
+    }
+
+    JSValue holder = event ? JS_GetPropertyStr (ctx, layerObj, "_events") : JS_DupValue (ctx, layerObj);
+    JSValue fn = JS_IsObject (holder) ? JS_GetPropertyStr (ctx, holder, name) : JS_UNDEFINED;
+
+    if (JS_IsFunction (ctx, fn)) {
+	JSValue ret = JS_Call (ctx, fn, layerObj, argc, argv);
+	if (JS_IsException (ret)) {
+	    const std::string tag = std::string ("layer.") + name;
+	    logJSException (ctx, tag.c_str ());
+	}
+	JS_FreeValue (ctx, ret);
+    }
+
+    JS_FreeValue (ctx, fn);
+    JS_FreeValue (ctx, holder);
+    JS_FreeValue (ctx, layerObj);
 }
 
 void ScriptEngine::tickLayer (ScriptLayerHandle handle, double time, double deltaTime, double fps) {
@@ -560,50 +663,33 @@ void ScriptEngine::tickLayer (ScriptLayerHandle handle, double time, double delt
 	return;
     }
     JSContext* ctx = this->m_context;
-    JSValue globalObj = JS_GetGlobalObject (ctx);
 
     JSValue sceneCtx = JS_NewObject (ctx);
     JS_SetPropertyStr (ctx, sceneCtx, "time", JS_NewFloat64 (ctx, time));
     JS_SetPropertyStr (ctx, sceneCtx, "dt", JS_NewFloat64 (ctx, deltaTime));
     JS_SetPropertyStr (ctx, sceneCtx, "fps", JS_NewFloat64 (ctx, fps));
-    JS_SetPropertyStr (ctx, globalObj, "__sceneCtx", sceneCtx);
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__sceneCtx", sceneCtx);
 
-    JSValue layers = JS_GetPropertyStr (ctx, globalObj, "__textLayers");
-    JSValue layerObj = JS_GetPropertyUint32 (ctx, layers, static_cast<uint32_t> (handle));
-    JS_FreeValue (ctx, layers);
-
-    if (JS_IsUndefined (layerObj) || JS_IsNull (layerObj)) {
-	JS_FreeValue (ctx, layerObj);
-	JS_FreeValue (ctx, globalObj);
-	return;
+    // init runs first, from tick (); a layer created after the last tick is started here
+    if (const auto it = this->m_layerInitialized.find (handle); it != this->m_layerInitialized.end () && !it->second) {
+	this->startPendingScripts ();
     }
 
-    auto callHook = [&] (const char* prop, const char* tag) {
-	JSValue fn = JS_GetPropertyStr (ctx, layerObj, prop);
-	if (JS_IsFunction (ctx, fn)) {
-	    JSValue ret = JS_Call (ctx, fn, layerObj, 0, nullptr);
-	    if (JS_IsException (ret)) {
-		logJSException (ctx, tag);
-	    }
-	    JS_FreeValue (ctx, ret);
-	}
-	JS_FreeValue (ctx, fn);
-    };
-
-    auto it = this->m_layerInitialized.find (handle);
-    if (it != this->m_layerInitialized.end () && !it->second) {
-	callHook ("_init", "layer.init");
-	it->second = true;
-    }
-    callHook ("_tick", "layer.update");
-
-    JS_FreeValue (ctx, layerObj);
-    JS_FreeValue (ctx, globalObj);
+    this->callLayerHook (handle, "_tick", 0, nullptr, false);
 }
 
 std::string ScriptEngine::layerText (ScriptLayerHandle handle) {
     if (!this->m_context || handle == kInvalidLayerHandle) {
 	return {};
+    }
+
+    // thisLayer is the real layer: its text is the layer's `text` value
+    if (const auto it = this->m_layerObjects.find (handle); it != this->m_layerObjects.end ()) {
+	const auto& properties = it->second->getProperties ();
+	if (const auto text = properties.find ("text"); text != properties.end ()) {
+	    return text->second.value.getType () == DynamicValue::String ? text->second.value.getString ()
+									  : text->second.value.toString ();
+	}
     }
     JSContext* ctx = this->m_context;
     JSValue globalObj = JS_GetGlobalObject (ctx);
@@ -664,6 +750,8 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
     JS_FreeValue (ctx, delResult);
 
     this->m_layerInitialized.erase (handle);
+    this->m_layerObjects.erase (handle);
+    this->m_layerProps.erase (handle);
 }
 
 void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object) {
@@ -798,75 +886,187 @@ void ScriptEngine::callModule (LoadedModule& module, const char* name, int argc,
     JS_FreeValue (ctx, result);
 }
 
-void ScriptEngine::tick () {
+JSValue ScriptEngine::userPropertyValue (const Property& property) {
+    // "color properties are converted to Vec3 automatically"
+    return property.getType () == DynamicValue::Vec4 ? this->newVec (property.getVec3 ())
+						      : this->dynamicToJs (const_cast<Property&> (property));
+}
+
+JSValue ScriptEngine::userProperties () {
+    JSValue properties = JS_NewObject (this->m_context);
+
+    for (const auto& [name, property] : this->m_scene.getScene ().project.properties) {
+	JS_SetPropertyStr (this->m_context, properties, name.c_str (), this->userPropertyValue (*property));
+    }
+
+    return properties;
+}
+
+void ScriptEngine::startPendingScripts () {
+    if (!this->m_pendingModules) {
+	return;
+    }
+
+    this->m_pendingModules = false;
+
     // scripts queued since the last tick: evaluate every module first, then init(value) each, in the order the
     // objects queued them (so one script's init sees the others' top-level state, e.g. `shared`)
-    if (this->m_pendingModules) {
-	this->m_pendingModules = false;
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	if (!this->m_scriptModules[i]->evaluated) {
+	    this->evaluateModule (*this->m_scriptModules[i]);
+	}
+    }
 
-	for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
-	    if (!this->m_scriptModules[i]->evaluated) {
-		this->evaluateModule (*this->m_scriptModules[i]);
+    std::vector<LoadedModule*> started;
+
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	auto& module = *this->m_scriptModules[i];
+
+	if (module.initialized) {
+	    continue;
+	}
+
+	module.initialized = true;
+	started.push_back (&module);
+	JSValue args[] = { this->dynamicToJs (module.value) };
+	this->callModule (module, "init", 1, args, true);
+	JS_FreeValue (this->m_context, args[0]);
+    }
+
+    // text-layer scripts: init (value) once, the text it returns adopted
+    std::vector<ScriptLayerHandle> startedLayers;
+
+    for (auto& [handle, initialized] : this->m_layerInitialized) {
+	if (!initialized) {
+	    initialized = true;
+	    startedLayers.push_back (handle);
+	}
+    }
+
+    for (const auto handle : startedLayers) {
+	this->callLayerHook (handle, "_init", 0, nullptr, false);
+    }
+
+    // WE calls applyUserProperties once on load, after init, with every user property (scripts set up state there
+    // that update relies on); later, with the changed ones only (tick)
+    if (!started.empty () || !startedLayers.empty ()) {
+	JSValue properties = this->userProperties ();
+
+	for (auto* module : started) {
+	    this->callModule (*module, "applyUserProperties", 1, &properties, false);
+	}
+	for (const auto handle : startedLayers) {
+	    this->callLayerHook (handle, "applyUserProperties", 1, &properties, true);
+	}
+
+	JS_FreeValue (this->m_context, properties);
+    }
+}
+
+void ScriptEngine::dispatchEvent (const char* name, JSValueConst arg, const ScriptableObject* only) {
+    JSValueConst args[] = { arg };
+
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	auto& module = *this->m_scriptModules[i];
+
+	if (only == nullptr || &module.object == only) {
+	    this->callModule (module, name, 1, args, false);
+	}
+    }
+
+    std::vector<ScriptLayerHandle> handles;
+
+    for (const auto& [handle, object] : this->m_layerObjects) {
+	if (only == nullptr || object == only) {
+	    handles.push_back (handle);
+	}
+    }
+
+    for (const auto handle : handles) {
+	this->callLayerHook (handle, name, 1, args, true);
+    }
+}
+
+bool ScriptEngine::handlesEvent (const ScriptableObject& object, const char* name) {
+    JSContext* ctx = this->m_context;
+
+    for (const auto& module : this->m_scriptModules) {
+	if (&module->object != &object || !JS_IsObject (module->ns)) {
+	    continue;
+	}
+
+	JSValue fn = JS_GetPropertyStr (ctx, module->ns, name);
+	const bool found = JS_IsFunction (ctx, fn);
+	JS_FreeValue (ctx, fn);
+
+	if (found) {
+	    return true;
+	}
+    }
+
+    for (const auto& [handle, layer] : this->m_layerObjects) {
+	if (layer != &object) {
+	    continue;
+	}
+
+	JSValue layers = JS_GetPropertyStr (ctx, this->m_globalThis, "__textLayers");
+	JSValue layerObj = JS_IsObject (layers) ? JS_GetPropertyUint32 (ctx, layers, static_cast<uint32_t> (handle))
+						: JS_UNDEFINED;
+	JSValue events = JS_IsObject (layerObj) ? JS_GetPropertyStr (ctx, layerObj, "_events") : JS_UNDEFINED;
+	JSValue fn = JS_IsObject (events) ? JS_GetPropertyStr (ctx, events, name) : JS_UNDEFINED;
+	const bool found = JS_IsFunction (ctx, fn);
+
+	JS_FreeValue (ctx, fn);
+	JS_FreeValue (ctx, events);
+	JS_FreeValue (ctx, layerObj);
+	JS_FreeValue (ctx, layers);
+
+	if (found) {
+	    return true;
+	}
+    }
+
+    return false;
+}
+
+void ScriptEngine::tick () {
+    this->startPendingScripts ();
+
+    // user properties changed since the last tick: applyUserProperties gets only those
+    if (!this->m_changedProperties.empty ()) {
+	JSValue changed = JS_NewObject (this->m_context);
+	const auto& properties = this->m_scene.getScene ().project.properties;
+
+	for (const auto& name : this->m_changedProperties) {
+	    if (const auto it = properties.find (name); it != properties.end ()) {
+		JS_SetPropertyStr (this->m_context, changed, name.c_str (), this->userPropertyValue (*it->second));
 	    }
 	}
 
-	std::vector<LoadedModule*> started;
-
-	for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
-	    auto& module = *this->m_scriptModules[i];
-
-	    if (module.initialized) {
-		continue;
-	    }
-
-	    module.initialized = true;
-	    started.push_back (&module);
-	    JSValue args[] = { this->dynamicToJs (module.value) };
-	    this->callModule (module, "init", 1, args, true);
-	    JS_FreeValue (this->m_context, args[0]);
-	}
-
-	// WE calls applyUserProperties once on load, after init, with every user property (scripts set up state
-	// there that update relies on). Later changes don't reach it yet
-	if (!started.empty ()) {
-	    JSValue properties = JS_NewObject (this->m_context);
-
-	    for (const auto& [name, property] : this->m_scene.getScene ().project.properties) {
-		JSValue value = property->getType () == DynamicValue::Vec4 ? this->newVec (property->getVec3 ())
-									    : this->dynamicToJs (*property);
-		JS_SetPropertyStr (this->m_context, properties, name.c_str (), value);
-	    }
-
-	    for (auto* module : started) {
-		this->callModule (*module, "applyUserProperties", 1, &properties, false);
-	    }
-
-	    JS_FreeValue (this->m_context, properties);
-	}
+	this->m_changedProperties.clear ();
+	this->dispatchEvent ("applyUserProperties", changed);
+	JS_FreeValue (this->m_context, changed);
     }
 
     // run intervals
     this->m_engineObject->tick ();
 
-    // run any pending notifications
+    // run any pending notifications (property scripts and text-layer scripts)
     if (!this->m_queuedEvents.empty ()) {
-	for (auto& event : this->m_queuedEvents) {
-	    JSValue args[] = { event.second };
-
-	    for (const auto& module : this->m_scriptModules) {
-		this->callModule (*module, event.first.c_str (), 1, args, false);
-	    }
-
-	    JS_FreeValue (this->m_context, event.second);
-	}
-
+	auto events = std::move (this->m_queuedEvents);
 	this->m_queuedEvents.clear ();
+
+	for (auto& [name, value] : events) {
+	    this->dispatchEvent (name.c_str (), value);
+	    JS_FreeValue (this->m_context, value);
+	}
     }
 
     // run all update methods
-    for (const auto& module : this->m_scriptModules) {
-	JSValue args[] = { this->dynamicToJs (module->value) };
-	this->callModule (*module, "update", 1, args, true);
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	auto& module = *this->m_scriptModules[i];
+	JSValue args[] = { this->dynamicToJs (module.value) };
+	this->callModule (module, "update", 1, args, true);
 	JS_FreeValue (this->m_context, args[0]);
     }
 

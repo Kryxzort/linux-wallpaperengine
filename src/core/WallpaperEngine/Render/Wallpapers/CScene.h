@@ -69,6 +69,12 @@ public:
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
     [[nodiscard]] std::mt19937& getParticleRng ();
     [[nodiscard]] const CObject* getObject (int id) const;
+    /** The layers scripts index (thisScene.getLayer (n), enumerateLayers): the scene's objects in their order */
+    [[nodiscard]] const std::vector<CObject*>& getLayers () const;
+    /** IScene.sortLayer: moves a layer to `index` in the layer list, and in the draw order with it */
+    bool sortLayer (CObject* layer, int index);
+    /** The scene's scripts call `getEffect`: every effect is built, a script may show it (SceneScript IEffect.visible) */
+    [[nodiscard]] bool scriptsReachEffects () const;
 
 protected:
     void renderFrame () override;
@@ -91,6 +97,7 @@ private:
     CObject* m_bloomObject = nullptr;
     std::map<int, CObject*> m_objects = {};
     std::vector<CObject*> m_objectsByRenderOrder = {};
+    std::vector<CObject*> m_layers = {};
     /** the sound objects, ticked on the host's clock every frame (they don't render) */
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};

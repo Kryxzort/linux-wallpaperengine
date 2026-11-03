@@ -5,6 +5,7 @@
 
 #include "WallpaperEngine/Audio/AudioStream.h"
 #include "WallpaperEngine/Render/CObject.h"
+#include "WallpaperEngine/Scripting/ScriptableObject.h"
 
 using namespace WallpaperEngine;
 
@@ -32,7 +33,7 @@ using namespace WallpaperEngine::Data::Model;
  * the picked file into it. Picks come from a per-object RNG, seeded from WPENGINE_SOUND_SEED when set
  * (deterministic tests), else from std::random_device.
  */
-class CSound final : public CObject {
+class CSound final : virtual public CObject, public Scripting::ScriptableObject {
 public:
     enum class Mode { Loop, Random, Single };
 
@@ -50,10 +51,14 @@ public:
     void tick (double dt);
 
     /**
-     * A script's play(): starts the object even if `startsilent` (SceneScript has no sound methods
-     * yet; the entry point exists for when it does)
+     * ISoundLayer.play(): "starts audio playback if it is not already running" (WE's SceneScript docs). Resumes a
+     * paused object; starts a stopped (or `startsilent`) one
      */
     void play ();
+    /** ISoundLayer.stop(): "stops the sound and resets the internal playback timer"; only play() starts it again */
+    void stop ();
+    /** ISoundLayer.pause(): "pauses the sound at the current playback time" (play() resumes it) */
+    void pause ();
 
     /** @return The playback mode in use */
     [[nodiscard]] Mode getMode () const;
@@ -79,6 +84,8 @@ private:
     /** the stream in the slot (nullptr between files / before the first start) */
     Audio::AudioStream* m_stream = nullptr;
 
+    /** paused by a script: the stream is out of the driver slot, kept where it was */
+    bool m_paused = false;
     /** a start was never attempted (WE's "stopped" bit): volume changes don't start the object */
     bool m_neverStarted = true;
     /** `random`: seconds of silence still to wait once the current file played out (< 0: none pending) */

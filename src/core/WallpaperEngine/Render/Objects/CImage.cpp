@@ -737,10 +737,11 @@ void CImage::setup () {
     this->m_initialized = true;
 }
 
-bool CImage::effectCanBeVisible (const ImageEffect& effect) {
-    // visible now, or bound to a user property, or driven by a script
+bool CImage::effectCanBeVisible (const ImageEffect& effect) const {
+    // visible now, or bound to a user property, or driven by a script (its own, or a layer script's
+    // getEffect (…).visible: built whenever the scene's scripts call getEffect)
     return effect.visible->value->getBool () || effect.visible->property != nullptr
-	|| effect.visible->value->getScriptSource ().has_value ();
+	|| effect.visible->value->getScriptSource ().has_value () || this->getScene ().scriptsReachEffects ();
 }
 
 bool CImage::effectVisibilityChanged () const {

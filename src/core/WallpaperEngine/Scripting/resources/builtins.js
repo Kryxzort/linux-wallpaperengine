@@ -55,3 +55,22 @@ globalThis.MediaPlaybackEvent = globalThis.MediaPlaybackEvent || {
     return creator;
   };
 })();
+
+// IEngine members that are constants or plain JS here (WE's PC app, running as a wallpaper, outside its editor)
+(function () {
+  const engine = globalThis.engine;
+  if (engine === undefined || engine === null) {
+    return;
+  }
+  const define = (name, value) => Object.defineProperty(engine, name, { value, enumerable: true, configurable: true });
+  define('isDesktopDevice', () => true);
+  define('isMobileDevice', () => false);
+  define('isWallpaper', () => true);
+  define('isScreensaver', () => false);
+  define('isRunningInEditor', () => false);
+  define('isPortrait', () => { const r = engine.screenResolution; return r.y > r.x; });
+  define('isLandscape', () => { const r = engine.screenResolution; return r.x >= r.y; });
+  // an IAssetHandle: what createLayer would take (createLayer isn't supported, so a plain record of the file)
+  define('registerAsset', (file) => ({ file: String(file) }));
+  define('isObjectValid', (object) => object !== undefined && object !== null);
+})();

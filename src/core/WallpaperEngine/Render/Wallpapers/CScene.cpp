@@ -1,9 +1,11 @@
+#include "WallpaperEngine/Render/Objects/CGroup.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
 #include "WallpaperEngine/Render/Objects/CParticle.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
 
 #include "CScene.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -109,6 +111,13 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	this->addObjectToRenderOrder (*object);
     }
 
+    // the layers scripts see (thisScene.getLayer (index), enumerateLayers, sortLayer): the scene's objects in order
+    for (const auto& object : scene->objects) {
+	if (const auto it = this->m_objects.find (object->id); it != this->m_objects.end ()) {
+	    this->m_layers.push_back (it->second);
+	}
+    }
+
     // create extra framebuffers for the bloom effect
     this->_rt_4FrameBuffer = this->create (
 	"_rt_4FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 4, sceneHeight / 4 },
@@ -168,7 +177,9 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     // the image for the bloom passes, built when bloom is on or a user property can turn it on: `bloom` is read every
     // frame (renderFrame). A scene whose bloom is a plain false never builds it (nor needs WE's bloom materials)
     const auto& bloomEnabled = scene->camera.bloom.enabled;
-    if (bloomEnabled->value->getBool () || bloomEnabled->property != nullptr) {
+    const auto& bloomCamera = scene->camera.bloom;
+    const bool bloomScripted = bloomEnabled->value->getScriptSource ().has_value ();
+    if (bloomEnabled->value->getBool () || bloomEnabled->property != nullptr || bloomScripted) {
 	try {
 	    this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
 
@@ -198,6 +209,20 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 
 	if (this->m_bloomObject != nullptr) {
 	    this->m_objectsByRenderOrder.push_back (this->m_bloomObject);
+
+	    // scripts on general's bloom values (e.g. a hover toggling bloom) run like a layer property's, with
+	    // thisLayer = the bloom image
+	    if (auto* owner = this->m_bloomObject->asOrNull<Scripting::ScriptableObject> ()) {
+		const std::pair<const char*, DynamicValue*> scripted[] = {
+		    { "general_bloom", bloomCamera.enabled->value.get () },
+		    { "general_bloomstrength", bloomCamera.strength->value.get () },
+		    { "general_bloomthreshold", bloomCamera.threshold->value.get () },
+		};
+
+		for (const auto& [key, value] : scripted) {
+		    this->m_scriptEngine->queueScript (key, *value, *owner);
+		}
+	    }
 	}
     }
 }
@@ -286,10 +311,10 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	renderObject = new Objects::CParticle (*this, particleData);
     } else if (object.cameraZoom != nullptr) {
 	// a camera object: nothing to draw, CScene::updateCamera reads its data
-	renderObject = new CObject (*this, object);
+	renderObject = new Objects::CGroup (*this, object);
     } else {
-	sLog.error ("Unknown object type, creating placeholder, empty object: ", object.id);
-	renderObject = new CObject (*this, object);
+	// a group (or a type LWE doesn't draw): nothing to draw, but a layer to scripts
+	renderObject = new Objects::CGroup (*this, object);
     }
 
     try {
@@ -384,6 +409,13 @@ void CScene::renderFrame () {
 
     for (auto* sound : this->m_sounds) {
 	sound->tick (soundDt);
+    }
+
+    // texture animations a script took off the shared clock (ITextureAnimation) run on their own
+    for (const auto& cur : this->m_objectsByRenderOrder) {
+	if (cur->is<Objects::CImage> ()) {
+	    cur->as<Objects::CImage> ()->advanceTextureAnimation (soundDt);
+	}
     }
 
     // update main textures for images
@@ -639,6 +671,51 @@ void CScene::updateCamera () {
 std::mt19937& CScene::getParticleRng () { return this->m_particleRng; }
 
 const std::vector<CObject*>& CScene::getObjectsByRenderOrder () const { return this->m_objectsByRenderOrder; }
+
+bool CScene::scriptsReachEffects () const { return this->getScene ().scriptsReachEffects; }
+
+const std::vector<CObject*>& CScene::getLayers () const { return this->m_layers; }
+
+bool CScene::sortLayer (CObject* layer, int index) {
+    const auto from = std::ranges::find (this->m_layers, layer);
+
+    if (from == this->m_layers.end () || this->m_layers.empty ()) {
+	return false;
+    }
+
+    index = std::clamp (index, 0, static_cast<int> (this->m_layers.size ()) - 1);
+    this->m_layers.erase (from);
+    this->m_layers.insert (this->m_layers.begin () + index, layer);
+
+    // the draw order follows: the layer goes right before the layer that now comes after it (or after the one
+    // before it, when it is last)
+    const auto drawn = std::ranges::find (this->m_objectsByRenderOrder, layer);
+
+    if (drawn == this->m_objectsByRenderOrder.end ()) {
+	return true;
+    }
+
+    this->m_objectsByRenderOrder.erase (drawn);
+
+    auto at = this->m_objectsByRenderOrder.end ();
+
+    if (static_cast<size_t> (index) + 1 < this->m_layers.size ()) {
+	at = std::ranges::find (this->m_objectsByRenderOrder, this->m_layers[index + 1]);
+    } else if (index > 0) {
+	at = std::ranges::find (this->m_objectsByRenderOrder, this->m_layers[index - 1]);
+	if (at != this->m_objectsByRenderOrder.end ()) {
+	    ++at;
+	}
+    }
+
+    // the bloom object stays last
+    if (at == this->m_objectsByRenderOrder.end () && this->m_bloomObject != nullptr) {
+	at = std::ranges::find (this->m_objectsByRenderOrder, this->m_bloomObject);
+    }
+
+    this->m_objectsByRenderOrder.insert (at, layer);
+    return true;
+}
 
 const CObject* CScene::getObject (int id) const {
     const auto object = this->m_objects.find (id);

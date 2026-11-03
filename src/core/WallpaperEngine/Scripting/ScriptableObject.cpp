@@ -11,6 +11,7 @@ using namespace WallpaperEngine::Scripting;
 ScriptableObject::ScriptableObject (Wallpapers::CScene& scene, const Object& object) : CObject (scene, object) {
     // register common dynamic values. scale/angles/visible are not common: an image, text or particle object
     // registers its own (the values it renders with); a script on the group* copies would drive nothing
+    this->m_solid = object.solid;
     this->registerProperty ("origin", *object.origin->value);
 }
 

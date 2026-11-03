@@ -61,8 +61,8 @@ protected:
     void updateActivePasses ();
     /** An effect's `visible` differs from the one the active chain was set up for */
     [[nodiscard]] bool effectVisibilityChanged () const;
-    /** Visible now, or a property or script can make it visible: it is built */
-    [[nodiscard]] static bool effectCanBeVisible (const ImageEffect& effect);
+    /** Visible now, or a property or script can make it visible (also a layer script's getEffect ()): it is built */
+    [[nodiscard]] bool effectCanBeVisible (const ImageEffect& effect) const;
 
     void updateScreenSpacePosition ();
 

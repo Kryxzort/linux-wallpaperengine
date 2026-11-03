@@ -36,6 +36,9 @@ struct ObjectData {
     UserSettingUniquePtr groupParallaxDepth;
     /** A camera object (`"camera": "default"`): its `zoom` (null on every other object) */
     UserSettingUniquePtr cameraZoom;
+    /** `solid` (default true): the object receives cursor events (WE's docs: "All mouse cursor events will only work on
+     *  objects marked as Solid") */
+    bool solid = true;
 };
 
 /**

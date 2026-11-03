@@ -14,8 +14,9 @@ std::map<uint32_t, EngineObject&> engineInstances;
 
 JSValue engine_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }
 
+// a User Shortcut property launches a Windows shortcut: nothing to open here, so "no shortcut was called"
 JSValue engine_open_user_shortcut (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    return JS_UNDEFINED;
+    return JS_FALSE;
 }
 
 JSValue engine_get_frametime (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
@@ -50,6 +51,41 @@ JSValue engine_get_daytime (JSContext* ctx, JSValueConst this_val, int argc, JSV
     }
 
     return JS_NewFloat64 (ctx, it->second.getScene ().getContext ().getContext ().daytime);
+}
+
+JSValue engine_get_canvas_size (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    const auto it = engineInstances.find (magic);
+
+    if (it == engineInstances.end ()) {
+	return JS_EXCEPTION;
+    }
+
+    // "the size of the wallpaper project defined in the editor": the scene's orthographic size
+    const auto& scene = it->second.getScene ();
+    return it->second.getEngine ().newVec (glm::vec2 (scene.getWidth (), scene.getHeight ()));
+}
+
+JSValue engine_get_screen_resolution (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    const auto it = engineInstances.find (magic);
+
+    if (it == engineInstances.end ()) {
+	return JS_EXCEPTION;
+    }
+
+    // "the size of the screen the wallpaper is displayed on": the core renders at the scene's size and the host
+    // scales that to its output, which the core doesn't know, so the scene's size
+    const auto& scene = it->second.getScene ();
+    return it->second.getEngine ().newVec (glm::vec2 (scene.getWidth (), scene.getHeight ()));
+}
+
+JSValue engine_get_user_properties (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    const auto it = engineInstances.find (magic);
+
+    if (it == engineInstances.end ()) {
+	return JS_EXCEPTION;
+    }
+
+    return it->second.getEngine ().userProperties ();
 }
 
 // the stop function setInterval/setTimeout return: called without arguments, the timer's id is its bound data
@@ -184,6 +220,20 @@ EngineObject::EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& sc
 	),
 	JS_NewCFunction (this->m_engine.getContext (), engine_set_value, "set", 1), JS_PROP_ENUMERABLE
     );
+    const std::pair<const char*, JSCFunctionMagic*> live[] = {
+	{ "canvasSize", engine_get_canvas_size },
+	{ "screenResolution", engine_get_screen_resolution },
+	{ "userProperties", engine_get_user_properties },
+    };
+    for (const auto& [name, getter] : live) {
+	JSAtom atom = JS_NewAtom (this->m_engine.getContext (), name);
+	JS_DefinePropertyGetSet (
+	    this->m_engine.getContext (), this->m_instance, atom,
+	    JS_NewCFunctionMagic (this->m_engine.getContext (), getter, "get", 0, JS_CFUNC_generic_magic, this->m_instanceId),
+	    JS_UNDEFINED, JS_PROP_ENUMERABLE
+	);
+	JS_FreeAtom (this->m_engine.getContext (), atom);
+    }
     JS_DefinePropertyValueStr (
 	this->m_engine.getContext (), this->m_instance, "AUDIO_RESOLUTION_16",
 	JS_NewInt32 (this->m_engine.getContext (), 16), JS_PROP_ENUMERABLE
