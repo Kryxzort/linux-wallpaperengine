@@ -91,7 +91,13 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
     );
 
     result->animatedValues = std::move (animatedValues);
-    result->scriptsReachEffects = scene.dump ().find ("getEffect") != std::string::npos;
+    const std::string dump = scene.dump ();
+    result->scriptsReachEffects = dump.find ("getEffect") != std::string::npos;
+    result->usesMedia = dump.find ("mediaPlaybackChanged") != std::string::npos
+	|| dump.find ("mediaPropertiesChanged") != std::string::npos
+	|| dump.find ("mediaThumbnailChanged") != std::string::npos
+	|| dump.find ("mediaTimelineChanged") != std::string::npos
+	|| dump.find ("mediaStatusChanged") != std::string::npos || dump.find ("$mediaThumbnail") != std::string::npos;
     return result;
 }
 

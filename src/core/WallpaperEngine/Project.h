@@ -22,6 +22,13 @@ public:
 	std::optional<wp_media_playback_state> state;
 	std::optional<double> duration;
 	std::optional<double> position;
+	/** MediaPropertiesEvent's other fields (wp_project_notify_track_metadata_extra) */
+	std::string albumArtist;
+	std::string subTitle;
+	std::string genres;
+	std::string contentType = "music";
+	/** mediaStatusChanged's `enabled`, once the host said */
+	std::optional<bool> enabled;
     };
 
     ~Project ();
@@ -53,6 +60,9 @@ public:
     void playbackPositionAndDurationChange (double position, double duration);
 
     const MediaInfo& getMediaInfo () const;
+    void trackMetadataExtraChange (const char* albumArtist, const char* subTitle, const char* genres, const char* contentType);
+    void mediaStatusChange (bool enabled);
+    [[nodiscard]] bool usesMedia () const;
 
     static Project* loadId (Context* context, wp_mouse_input* mouse_input, const unsigned long int id);
     static Project* loadId (Context* context, wp_mouse_input* mouse_input, const std::string& id);

@@ -212,6 +212,26 @@ WPENGINE_API void wp_project_notify_track_metadata_change (
     static_cast<WallpaperEngine::Project*> (project)->trackMetadataChange (title, artist, album);
     WPENGINE_PROJECT_API_END ();
 }
+WPENGINE_API void wp_project_notify_track_metadata_extra (
+    wp_project* project, const char* album_artist, const char* sub_title, const char* genres, const char* content_type
+) {
+    WPENGINE_PROJECT_API_BEGIN
+    static_cast<WallpaperEngine::Project*> (project)->trackMetadataExtraChange (album_artist, sub_title, genres, content_type);
+    WPENGINE_PROJECT_API_END ();
+}
+
+WPENGINE_API void wp_project_notify_media_status (wp_project* project, bool enabled) {
+    WPENGINE_PROJECT_API_BEGIN
+    static_cast<WallpaperEngine::Project*> (project)->mediaStatusChange (enabled);
+    WPENGINE_PROJECT_API_END ();
+}
+
+WPENGINE_API bool wp_project_uses_media (wp_project* project) {
+    WPENGINE_PROJECT_API_BEGIN
+    return static_cast<WallpaperEngine::Project*> (project)->usesMedia ();
+    WPENGINE_PROJECT_API_END (false);
+}
+
 WPENGINE_API void wp_project_notify_album_art_url_change (wp_project* project, const char* url) {
     WPENGINE_PROJECT_API_BEGIN
     static_cast<WallpaperEngine::Project*> (project)->albumArtUrlChange (url);

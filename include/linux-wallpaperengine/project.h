@@ -478,6 +478,33 @@ WPENGINE_API void wp_project_notify_playback_state_change (wp_project* project, 
 WPENGINE_API void
 wp_project_notify_playback_position_and_duration_change (wp_project* project, double position, double duration);
 
+/**
+ * Notifies the project about the current track's metadata beyond title/artist/album (SceneScript's
+ * MediaPropertiesEvent): the album artist, a sub-title, the genres (comma-separated) and the content type
+ * ("music", "video" or "image"). NULL or empty leaves a field empty. Sends a mediaPropertiesChanged with every field
+ *
+ * @param project
+ */
+WPENGINE_API void wp_project_notify_track_metadata_extra (
+    wp_project* project, const char* album_artist, const char* sub_title, const char* genres, const char* content_type
+);
+
+/**
+ * Notifies the project whether media integration is on (SceneScript's mediaStatusChanged, MediaStatusEvent.enabled):
+ * a host that feeds the media events above says so once, and again when that changes
+ *
+ * @param project
+ * @param enabled
+ */
+WPENGINE_API void wp_project_notify_media_status (wp_project* project, bool enabled);
+
+/**
+ * @param project
+ * @return Whether the project's scripts or materials use the media events or the media thumbnail (a host may skip
+ * reading the system's media sessions for one that doesn't)
+ */
+WPENGINE_API bool wp_project_uses_media (wp_project* project);
+
 #ifdef __cplusplus
 }
 #endif

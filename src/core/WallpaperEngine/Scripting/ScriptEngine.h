@@ -171,10 +171,18 @@ public:
     const JSObjectAdapters& getAdapters () const { return m_adapters; }
     const Render::Wallpapers::CScene& getScene () const { return m_scene; }
 
-    void notifyTrackMetadataChange (
-	const std::optional<std::string>& title, const std::optional<std::string>& artist,
-	const std::optional<std::string>& album
-    );
+    /** MediaPropertiesEvent's fields (empty: unknown) */
+    struct MediaProperties {
+	std::string title;
+	std::string artist;
+	std::string albumTitle;
+	std::string albumArtist;
+	std::string subTitle;
+	std::string genres;
+	std::string contentType;
+    };
+    void notifyTrackMetadataChange (const MediaProperties& properties);
+    void notifyMediaStatusChange (bool enabled);
     void notifyAlbumArtUrlChange (const std::optional<std::string>& url);
     void notifyPlaybackStateChange (std::optional<wp_media_playback_state> state);
     void notifyPlaybackPositionAndDurationChange (std::optional<double> position, std::optional<double> duration);
@@ -232,6 +240,9 @@ private:
     bool m_builtinsInstalled = false;
 
     std::map<std::string, JSValue> m_queuedEvents;
+    /** the last thumbnail sent: mediaThumbnailChanged fires when the image changes, not per track */
+    std::optional<std::string> m_lastThumbnail;
+    bool m_thumbnailSent = false;
 
     JSObjectAdapters m_adapters;
 };

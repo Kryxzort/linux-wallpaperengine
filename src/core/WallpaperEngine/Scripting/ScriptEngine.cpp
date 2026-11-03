@@ -13,6 +13,9 @@
 #include "WallpaperEngine/Scripting/Builtins.generated.h"
 #include "WallpaperEngine/Utils/ScopeGuard.h"
 #include "quickjs.h"
+#include "stb_image.h"
+
+#include <glm/glm.hpp>
 
 #include <algorithm>
 #include <array>
@@ -1073,43 +1076,180 @@ void ScriptEngine::tick () {
     this->runPendingJobs ();
 }
 
-void ScriptEngine::notifyTrackMetadataChange (
-    const std::optional<std::string>& title, const std::optional<std::string>& artist,
-    const std::optional<std::string>& album
-) {
+void ScriptEngine::notifyTrackMetadataChange (const MediaProperties& properties) {
     JSContext* ctx = this->m_context;
+    JSValue event = JS_NewObject (ctx);
 
-    JSValue propertiesEvent = JS_NewObject (ctx);
+    // MediaPropertiesEvent: title, artist, contentType ("music, video or image"); albumTitle, subTitle, albumArtist,
+    // genres (comma-separated) when known. Unknown ones are empty strings (a script printing one shows nothing)
+    const std::pair<const char*, const std::string*> fields[] = {
+	{ "title", &properties.title },		  { "artist", &properties.artist },
+	{ "albumTitle", &properties.albumTitle }, { "albumArtist", &properties.albumArtist },
+	{ "subTitle", &properties.subTitle },	  { "genres", &properties.genres },
+	{ "contentType", &properties.contentType },
+    };
 
-    // set properties
-    JS_SetPropertyStr (ctx, propertiesEvent, "title", JS_NewString (ctx, title.has_value () ? title->c_str () : ""));
-    JS_SetPropertyStr (ctx, propertiesEvent, "artist", JS_NewString (ctx, artist.has_value () ? artist->c_str () : ""));
-    JS_SetPropertyStr (
-	ctx, propertiesEvent, "albumTitle", JS_NewString (ctx, album.has_value () ? album->c_str () : "")
-    );
+    for (const auto& [name, value] : fields) {
+	JS_SetPropertyStr (ctx, event, name, JS_NewString (ctx, value->c_str ()));
+    }
 
-    this->m_queuedEvents.insert_or_assign ("mediaPropertiesChanged", propertiesEvent);
+    if (const auto it = this->m_queuedEvents.find ("mediaPropertiesChanged"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (ctx, it->second);
+    }
+    this->m_queuedEvents.insert_or_assign ("mediaPropertiesChanged", event);
 }
 
+void ScriptEngine::notifyMediaStatusChange (bool enabled) {
+    JSContext* ctx = this->m_context;
+    JSValue event = JS_NewObject (ctx);
+
+    JS_SetPropertyStr (ctx, event, "enabled", JS_NewBool (ctx, enabled));
+
+    if (const auto it = this->m_queuedEvents.find ("mediaStatusChanged"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (ctx, it->second);
+    }
+    this->m_queuedEvents.insert_or_assign ("mediaStatusChanged", event);
+}
+
+namespace {
+float luminance (const glm::vec3& c) {
+    auto channel = [] (float v) { return v <= 0.03928f ? v / 12.92f : std::pow ((v + 0.055f) / 1.055f, 2.4f); };
+    return 0.2126f * channel (c.r) + 0.7152f * channel (c.g) + 0.0722f * channel (c.b);
+}
+
+/** WCAG's contrast ratio, 1..21 */
+float contrast (const glm::vec3& a, const glm::vec3& b) {
+    const float la = luminance (a), lb = luminance (b);
+    return (std::max (la, lb) + 0.05f) / (std::min (la, lb) + 0.05f);
+}
+
+struct Palette {
+    glm::vec3 primary, secondary, tertiary, text, highContrast;
+};
+
+/**
+ * MediaThumbnailEvent's colours from the album art: the most common colour (4 bits per channel, averaged), then the
+ * next common ones that differ from those before. WE's own extraction isn't decoded; its documented guarantees are
+ * kept: textColor has enough contrast with the primary colour (WCAG 4.5, else black/white), highContrastColor is
+ * black or white, whichever contrasts more with the primary colour
+ */
+std::optional<Palette> paletteOf (const std::string& path) {
+    int width = 0, height = 0, channels = 0;
+    unsigned char* pixels = stbi_load (path.c_str (), &width, &height, &channels, 3);
+
+    if (pixels == nullptr || width <= 0 || height <= 0) {
+	if (pixels != nullptr) {
+	    stbi_image_free (pixels);
+	}
+	return std::nullopt;
+    }
+
+    struct Bucket {
+	glm::dvec3 sum {0.0};
+	int count = 0;
+    };
+    std::vector<Bucket> buckets (4096);
+    // at most ~128x128 samples
+    const int stepX = std::max (1, width / 128), stepY = std::max (1, height / 128);
+
+    for (int y = 0; y < height; y += stepY) {
+	for (int x = 0; x < width; x += stepX) {
+	    const unsigned char* px = pixels + (static_cast<size_t> (y) * width + x) * 3;
+	    auto& bucket = buckets[((px[0] >> 4) << 8) | ((px[1] >> 4) << 4) | (px[2] >> 4)];
+	    bucket.sum += glm::dvec3 (px[0], px[1], px[2]) / 255.0;
+	    bucket.count++;
+	}
+    }
+
+    stbi_image_free (pixels);
+
+    std::vector<const Bucket*> order;
+
+    for (const auto& bucket : buckets) {
+	if (bucket.count > 0) {
+	    order.push_back (&bucket);
+	}
+    }
+
+    std::ranges::sort (order, [] (const Bucket* a, const Bucket* b) { return a->count > b->count; });
+
+    std::vector<glm::vec3> picked;
+
+    for (const auto* bucket : order) {
+	const glm::vec3 colour = glm::vec3 (bucket->sum / static_cast<double> (bucket->count));
+	const bool distinct = std::ranges::all_of (picked, [&] (const glm::vec3& c) { return glm::distance (c, colour) > 0.25f; });
+
+	if (distinct) {
+	    picked.push_back (colour);
+	}
+	if (picked.size () == 3) {
+	    break;
+	}
+    }
+
+    if (picked.empty ()) {
+	return std::nullopt;
+    }
+
+    Palette palette {};
+    palette.primary = picked[0];
+    // a one-colour image: lighter and darker shades of it
+    palette.secondary = picked.size () > 1 ? picked[1] : glm::clamp (picked[0] * 0.6f, 0.0f, 1.0f);
+    palette.tertiary = picked.size () > 2 ? picked[2] : glm::clamp (picked[0] * 0.6f + 0.4f, 0.0f, 1.0f);
+
+    const glm::vec3 white (1.0f), black (0.0f);
+    palette.highContrast = contrast (white, palette.primary) >= contrast (black, palette.primary) ? white : black;
+    palette.text = palette.highContrast;
+
+    for (const auto& candidate : { palette.secondary, palette.tertiary }) {
+	if (contrast (candidate, palette.primary) >= 4.5f) {
+	    palette.text = candidate;
+	    break;
+	}
+    }
+
+    return palette;
+}
+} // namespace
+
 void ScriptEngine::notifyAlbumArtUrlChange (const std::optional<std::string>& url) {
+    // "every time the thumbnail image changes, not between tracks using the same thumbnail image"
+    if (this->m_thumbnailSent && url == this->m_lastThumbnail) {
+	return;
+    }
+
+    this->m_thumbnailSent = true;
+    this->m_lastThumbnail = url;
 
     JSContext* ctx = this->m_context;
+    std::optional<Palette> palette;
 
-    // TODO: PROCESS THESE COLORS INSTEAD OF HARDCODING THEM
-    JSValue primaryColor = this->newVec (glm::vec3 (0.12f, 0.12f, 0.12f));
-    JSValue secondaryColor = this->newVec (glm::vec3 (0.0f, 0.0f, 0.0f));
-    JSValue tertiaryColor = this->newVec (glm::vec3 (0.25f, 0.25f, 0.25f));
-    JSValue highContrastColor = this->newVec (glm::vec3 (1.0f, 1.0f, 1.0f));
+    if (url.has_value () && url->starts_with ("file://")) {
+	palette = paletteOf (url->substr (7));
+    }
 
-    JSValue mediaThumbnailEvent = JS_NewObject (ctx);
+    JSValue event = JS_NewObject (ctx);
 
-    JS_SetPropertyStr (ctx, mediaThumbnailEvent, "hasThumbnail", JS_NewBool (ctx, url.has_value ()));
-    JS_SetPropertyStr (ctx, mediaThumbnailEvent, "primaryColor", primaryColor);
-    JS_SetPropertyStr (ctx, mediaThumbnailEvent, "secondaryColor", secondaryColor);
-    JS_SetPropertyStr (ctx, mediaThumbnailEvent, "tertiaryColor", tertiaryColor);
-    JS_SetPropertyStr (ctx, mediaThumbnailEvent, "highContrastColor", highContrastColor);
+    // without an image WE's colours are unknown: the greys LWE always sent, and white text
+    const Palette colours = palette.value_or (Palette {
+	.primary = glm::vec3 (0.12f),
+	.secondary = glm::vec3 (0.0f),
+	.tertiary = glm::vec3 (0.25f),
+	.text = glm::vec3 (1.0f),
+	.highContrast = glm::vec3 (1.0f),
+    });
 
-    this->m_queuedEvents.insert_or_assign ("mediaThumbnailChanged", mediaThumbnailEvent);
+    JS_SetPropertyStr (ctx, event, "hasThumbnail", JS_NewBool (ctx, palette.has_value ()));
+    JS_SetPropertyStr (ctx, event, "primaryColor", this->newVec (colours.primary));
+    JS_SetPropertyStr (ctx, event, "secondaryColor", this->newVec (colours.secondary));
+    JS_SetPropertyStr (ctx, event, "tertiaryColor", this->newVec (colours.tertiary));
+    JS_SetPropertyStr (ctx, event, "textColor", this->newVec (colours.text));
+    JS_SetPropertyStr (ctx, event, "highContrastColor", this->newVec (colours.highContrast));
+
+    if (const auto it = this->m_queuedEvents.find ("mediaThumbnailChanged"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (ctx, it->second);
+    }
+    this->m_queuedEvents.insert_or_assign ("mediaThumbnailChanged", event);
 }
 
 void ScriptEngine::notifyPlaybackStateChange (const std::optional<wp_media_playback_state> state) {
@@ -1120,6 +1260,9 @@ void ScriptEngine::notifyPlaybackStateChange (const std::optional<wp_media_playb
 	ctx, playbackEvent, "state", JS_NewInt32 (ctx, state.has_value () ? *state : WP_MEDIA_PLAYBACK_STATE_STOPPED)
     );
 
+    if (const auto it = this->m_queuedEvents.find ("mediaPlaybackChanged"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (ctx, it->second);
+    }
     this->m_queuedEvents.insert_or_assign ("mediaPlaybackChanged", playbackEvent);
 }
 
@@ -1132,5 +1275,8 @@ void ScriptEngine::notifyPlaybackPositionAndDurationChange (
     JS_SetPropertyStr (ctx, mediaTimelineEvent, "position", JS_NewFloat64 (ctx, position.has_value () ? *position : 0));
     JS_SetPropertyStr (ctx, mediaTimelineEvent, "duration", JS_NewFloat64 (ctx, duration.has_value () ? *duration : 0));
 
+    if (const auto it = this->m_queuedEvents.find ("mediaTimelineChanged"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (ctx, it->second);
+    }
     this->m_queuedEvents.insert_or_assign ("mediaTimelineChanged", mediaTimelineEvent);
 }

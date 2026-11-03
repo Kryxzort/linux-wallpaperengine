@@ -116,6 +116,8 @@ struct SceneData {
     std::vector<AnimatedValue> animatedValues = {};
     /** the scene's scripts call `getEffect`: every effect is built, a script may show one hidden at load */
     bool scriptsReachEffects = false;
+    /** the scene's scripts take media events, or a material reads the media thumbnail */
+    bool usesMedia = false;
 };
 
 class Scene final : public Wallpaper, public SceneData {
