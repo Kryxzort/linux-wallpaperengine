@@ -88,6 +88,17 @@ WPENGINE_API bool wp_config_set_assets_dir (wp_configuration* config, const char
 WPENGINE_API bool wp_config_set_backgrounds_dir (wp_configuration* config, const char* dir);
 
 /**
+ * Where scripts' localStorage persists (SceneScript ILocalStorage): one JSON file per project in this directory,
+ * named after its Workshop id (else its title). Unset: localStorage lives only as long as the project
+ *
+ * @param config
+ * @param dir An existing, writable directory
+ *
+ * @return true if the directory was set (it exists), false otherwise
+ */
+WPENGINE_API bool wp_config_set_storage_dir (wp_configuration* config, const char* dir);
+
+/**
  * Updates the steam directory for this configuration.
  *
  * This calls wp_config_set_assets_dir with the default directory for you

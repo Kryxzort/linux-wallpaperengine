@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <algorithm>
 #include <vector>
 
@@ -48,6 +49,16 @@ WPENGINE_API bool wp_config_set_assets_dir (wp_configuration* config, const char
 WPENGINE_API bool wp_config_set_backgrounds_dir (wp_configuration* config, const char* dir) {
     WPENGINE_CONFIG_API_BEGIN
     return static_cast<WallpaperEngine::Configuration*> (config)->setBackgroundsDir (dir);
+    WPENGINE_CONFIG_API_END (false);
+}
+
+WPENGINE_API bool wp_config_set_storage_dir (wp_configuration* config, const char* dir) {
+    WPENGINE_CONFIG_API_BEGIN
+    if (dir == nullptr || !std::filesystem::is_directory (dir)) {
+	return false;
+    }
+    static_cast<WallpaperEngine::Configuration*> (config)->storageDir = std::filesystem::path (dir);
+    return true;
     WPENGINE_CONFIG_API_END (false);
 }
 

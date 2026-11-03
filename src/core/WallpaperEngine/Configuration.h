@@ -51,6 +51,8 @@ public:
     std::optional<wp_audio_output> audioOutput;
     bool disableParticles;
     bool disableParallax;
+    /** where scripts' localStorage persists (wp_config_set_storage_dir); unset: in memory only */
+    std::optional<std::filesystem::path> storageDir;
     int web_fps;
 
     bool baseOnly;

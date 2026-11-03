@@ -6,6 +6,7 @@
 #include "SceneObject.h"
 
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <map>
 #include <memory>
@@ -166,6 +167,9 @@ public:
     /** The layers a cursor event can reach: solid ones with a script that handles one (re-listed as scripts load) */
     [[nodiscard]] const std::vector<ScriptableObject*>& cursorLayers ();
 
+    /** localStorage's file for this project (wp_config_set_storage_dir), or none */
+    [[nodiscard]] std::optional<std::filesystem::path> storagePath () const;
+
     /** engine.userProperties: every user property, colours as Vec3 (a new object) */
     [[nodiscard]] JSValue userProperties ();
 
@@ -218,6 +222,8 @@ private:
     void callModule (LoadedModule& module, const char* name, int argc, JSValueConst argv[], bool writeBack);
     void logModuleError (LoadedModule& module, const char* what);
     void runPendingJobs ();
+    /** writes localStorage's file when a script changed it */
+    void flushStorage ();
 
     // Installs globalThis.__layers and related helpers. Called lazily.
     void ensureLayerRegistry ();

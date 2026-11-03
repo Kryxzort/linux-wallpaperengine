@@ -4,6 +4,7 @@
 #include "ScriptPropertiesObject.h"
 #include "ScriptableObject.h"
 #include "WallpaperEngine/Audio/AudioContext.h"
+#include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Model/Property.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -23,6 +24,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <ctime>
 #include <future>
 #include <optional>
@@ -46,6 +49,58 @@ extern char** environ;
 
 namespace {
 JSValue scriptengine_layer_prop (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+
+// __storage.read () / write (text): localStorage's file (wp_config_set_storage_dir), "" when none
+JSValue scriptengine_storage_read (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* engine = static_cast<ScriptEngine*> (JS_GetContextOpaque (ctx));
+    const auto path = engine == nullptr ? std::optional<std::filesystem::path> () : engine->storagePath ();
+
+    if (!path.has_value ()) {
+	return JS_NewString (ctx, "");
+    }
+
+    std::ifstream in (*path, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf ();
+    return JS_NewString (ctx, text.str ().c_str ());
+}
+
+JSValue scriptengine_storage_write (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* engine = static_cast<ScriptEngine*> (JS_GetContextOpaque (ctx));
+    const auto path = engine == nullptr ? std::optional<std::filesystem::path> () : engine->storagePath ();
+
+    if (!path.has_value () || argc < 1) {
+	return JS_FALSE;
+    }
+
+    const char* text = JS_ToCString (ctx, argv[0]);
+
+    if (text == nullptr) {
+	return JS_FALSE;
+    }
+
+    // written whole, then renamed over the old file: a crash never leaves half a file
+    const std::filesystem::path partial = path->string () + ".part";
+    bool ok = false;
+    {
+	std::ofstream out (partial, std::ios::binary | std::ios::trunc);
+	out << text;
+	ok = out.good ();
+    }
+    JS_FreeCString (ctx, text);
+
+    std::error_code error;
+    if (ok) {
+	std::filesystem::rename (partial, *path, error);
+    }
+    if (!ok || error) {
+	sLog.error ("localStorage: cannot write ", path->string ());
+	std::filesystem::remove (partial, error);
+	return JS_FALSE;
+    }
+
+    return JS_TRUE;
+}
 }
 extern float g_Time;
 extern float g_TimeLast;
@@ -290,6 +345,12 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene) : m_scene (scene) {
 	this->m_context, this->m_globalThis, "__layerProp",
 	JS_NewCFunction (this->m_context, scriptengine_layer_prop, "__layerProp", 2)
     );
+    JSValue storage = JS_NewObject (this->m_context);
+    JS_SetPropertyStr (this->m_context, storage, "read", JS_NewCFunction (this->m_context, scriptengine_storage_read, "read", 0));
+    JS_SetPropertyStr (
+	this->m_context, storage, "write", JS_NewCFunction (this->m_context, scriptengine_storage_write, "write", 1)
+    );
+    JS_SetPropertyStr (this->m_context, this->m_globalThis, "__storage", storage);
     // the rest of the API in JS (engine.is*(), localStorage, …), on top of the globals above
     this->installBuiltins ();
 
@@ -306,6 +367,8 @@ ScriptEngine::ScriptEngine (Wallpapers::CScene& scene) : m_scene (scene) {
 }
 
 ScriptEngine::~ScriptEngine () {
+    this->flushStorage ();
+
     for (auto& unlisten : this->m_propertyListeners) {
 	unlisten ();
     }
@@ -1206,6 +1269,45 @@ void ScriptEngine::tick () {
     }
 
     this->runPendingJobs ();
+    this->flushStorage ();
+}
+
+void ScriptEngine::flushStorage () {
+    JSValue flush = JS_GetPropertyStr (this->m_context, this->m_globalThis, "__storageFlush");
+
+    if (JS_IsFunction (this->m_context, flush)) {
+	JSValue result = JS_Call (this->m_context, flush, JS_UNDEFINED, 0, nullptr);
+	if (JS_IsException (result)) {
+	    logJSException (this->m_context, "localStorage");
+	}
+	JS_FreeValue (this->m_context, result);
+    }
+
+    JS_FreeValue (this->m_context, flush);
+}
+
+std::optional<std::filesystem::path> ScriptEngine::storagePath () const {
+    const auto& dir = this->m_scene.getContext ().getContext ().config.storageDir;
+
+    if (!dir.has_value ()) {
+	return std::nullopt;
+    }
+
+    // the project's Workshop id, else its title, as a file name
+    const auto& project = this->m_scene.getScene ().project;
+    std::string name = !project.workshopId.empty () && project.workshopId[0] != '-' ? project.workshopId : project.title;
+
+    for (auto& c : name) {
+	if (!std::isalnum (static_cast<unsigned char> (c)) && c != '-' && c != '_') {
+	    c = '_';
+	}
+    }
+
+    if (name.empty ()) {
+	name = "untitled";
+    }
+
+    return *dir / (name + ".json");
 }
 
 void ScriptEngine::notifyTrackMetadataChange (const MediaProperties& properties) {
