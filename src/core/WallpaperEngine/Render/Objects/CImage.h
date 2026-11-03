@@ -57,6 +57,12 @@ public:
 
 protected:
     void setupPasses ();
+    /** The passes that run (the effects' while visible), their blending and targets set up for that chain */
+    void updateActivePasses ();
+    /** An effect's `visible` differs from the one the active chain was set up for */
+    [[nodiscard]] bool effectVisibilityChanged () const;
+    /** Visible now, or a property or script can make it visible: it is built */
+    [[nodiscard]] static bool effectCanBeVisible (const ImageEffect& effect);
 
     void updateScreenSpacePosition ();
 
@@ -107,6 +113,15 @@ private:
     const Image& m_image;
 
     std::vector<Effects::CPass*> m_passes = {};
+    /** The effect each of m_passes belongs to, nullptr for a pass that always runs */
+    std::vector<const ImageEffect*> m_passEffects = {};
+    /** The blending each of m_passes was built with */
+    std::vector<BlendingMode> m_passBlending = {};
+    /** The m_passes that run, in order */
+    std::vector<Effects::CPass*> m_activePasses = {};
+    /** Per built effect, its `visible` when m_activePasses was set up */
+    std::vector<bool> m_effectVisibility = {};
+    int m_visibleEffects = 0;
     std::vector<MaterialPassUniquePtr> m_virtualPassess = {};
 
     glm::vec4 m_pos = {};
