@@ -1,5 +1,6 @@
 #include "CParticle.h"
 
+#include "WallpaperEngine/Audio/AudioContext.h"
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Data/Model/Property.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -520,6 +521,11 @@ uint32_t CParticle::emitCount (const ParticleEmitter& emitter, EmitterState& sta
 	rate *= m_particle.instanceOverride.count->value->getFloat ();
     }
 
+    // an audio-responsive emitter's rate follows the music (GH 0x14025cfe0 × GH 0x140250d80)
+    if (emitter.audioProcessingMode != 0) {
+	rate *= this->audioLevel (emitter);
+    }
+
     // random periodic emission (flags bit 2): an "on" window of minperiodicduration..maxperiodicduration, then an
     // "off" one of minperiodicdelay..maxperiodicdelay; each "on" window reloads the instantaneous burst
     if ((emitter.flags & 4) != 0) {
@@ -565,6 +571,44 @@ uint32_t CParticle::emitCount (const ParticleEmitter& emitter, EmitterState& sta
     }
 
     return toEmit;
+}
+
+float CParticle::audioLevel (const ParticleEmitter& emitter) const {
+    // GH 0x140250d80 on the 16-band spectrum: the loudest band of audioprocessingfrequencystart..end (clamped to
+    // 0..15, swapped when reversed; parser GH 0x1401ef740) of the left (mode 1), the right (mode 2) or both
+    // channels' mean (any other mode), through audioprocessingbounds, a smoothstep and the exponent
+    const auto& recorder = getScene ().getAudioContext ().getRecorder ();
+    int start = std::clamp (emitter.audioProcessingFrequencyStart, 0, 15);
+    int end = std::clamp (emitter.audioProcessingFrequencyEnd, 0, 15);
+    if (end < start) {
+	std::swap (start, end);
+    }
+    const float* left = recorder.audio16 [Audio::PlaybackRecorder::Left];
+    const float* right = recorder.audio16 [Audio::PlaybackRecorder::Right];
+    float level = 0.0f;
+    for (int i = start; i <= end; i++) {
+	switch (emitter.audioProcessingMode) {
+	    case 1:
+		level = std::max (level, left [i]);
+		break;
+	    case 2:
+		level = std::max (level, right [i]);
+		break;
+	    default:
+		level = std::max (level, left [i] + right [i]);
+		break;
+	}
+    }
+    if (emitter.audioProcessingMode != 1 && emitter.audioProcessingMode != 2) {
+	level *= 0.5f;
+    }
+    const glm::vec2 bounds = emitter.audioProcessingBounds;
+    const double t = std::clamp (
+	static_cast<double> ((level - bounds.x) / (bounds.y - bounds.x)), 0.0, 1.0
+    );
+    const float s = static_cast<float> (t);
+    const float shaped = std::pow ((3.0f - (s + s)) * s * s, emitter.audioProcessingExponent);
+    return std::isfinite (shaped) ? std::clamp (shaped, 0.0f, 1.0f) : 0.0f;
 }
 
 EmitterFunc CParticle::createBoxEmitter (const ParticleEmitter& emitter) {

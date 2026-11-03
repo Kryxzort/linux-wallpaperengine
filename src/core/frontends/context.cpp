@@ -4,6 +4,8 @@
 #include "WallpaperEngine/Audio/Drivers/SDLAudioDriver.h"
 #include "WallpaperEngine/Context.h"
 #include <SDL.h>
+#include "WallpaperEngine/Audio/AudioContext.h"
+#include <algorithm>
 
 float default_get_time (void* user_parameter) { return SDL_GetTicks () / 1000.0f; }
 
@@ -97,4 +99,27 @@ WPENGINE_API const char* wp_context_audio_driver_name (wp_context* context) {
     WPENGINE_CONTEXT_API_BEGIN
     return host_audio_driver (context) != nullptr ? "host" : "sdl";
     WPENGINE_CONTEXT_API_END (nullptr)
+}
+
+WPENGINE_API void wp_context_audio_input_push (
+    wp_context* context, const float* interleaved, size_t frames, int channels, int sample_rate
+) {
+    WPENGINE_CONTEXT_API_BEGIN
+    static_cast<WallpaperEngine::Context*> (context)->audio->getRecorder ().push (
+	interleaved, frames, channels, sample_rate
+    );
+    WPENGINE_CONTEXT_API_END ();
+}
+
+WPENGINE_API bool wp_context_audio_spectrum (wp_context* context, int resolution, int channel, float* out) {
+    WPENGINE_CONTEXT_API_BEGIN
+    const float* bands = static_cast<WallpaperEngine::Context*> (context)->audio->getRecorder ().bands (
+	resolution, channel
+    );
+    if (bands == nullptr || out == nullptr) {
+	return false;
+    }
+    std::copy (bands, bands + resolution, out);
+    return true;
+    WPENGINE_CONTEXT_API_END (false)
 }

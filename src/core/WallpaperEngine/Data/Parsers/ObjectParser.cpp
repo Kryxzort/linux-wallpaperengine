@@ -634,7 +634,7 @@ ParticleEmitter ObjectParser::parseParticleEmitter (const JSON& it) {
 	    .delay = it.optional ("delay", 0.0f),
 	    .duration = it.optional ("duration", 0.0f),
 	    .audioProcessingBounds = parseVec2 ("audioprocessingbounds", glm::vec2 (0.8f, 1.0f)),
-	    .audioProcessingExponent = it.optional ("audioprocessingexponent", 2),
+	    .audioProcessingExponent = it.optional ("audioprocessingexponent", 2.0f),
 	    .audioProcessingFrequencyStart = it.optional ("audioprocessingfrequencystart", 0),
 	    .audioProcessingFrequencyEnd = it.optional ("audioprocessingfrequencyend", 1),
 	    .audioProcessingMode = it.optional ("audioprocessingmode", 0),

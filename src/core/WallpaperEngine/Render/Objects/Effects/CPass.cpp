@@ -926,12 +926,15 @@ void CPass::setupUniforms () {
     this->addUniform ("g_EffectTextureProjectionMatrixInverse", glm::mat4 (1.0));
     this->addUniform ("g_TexelSize", glm::vec2 (1.0 / scene.getWidth (), 1.0 / scene.getHeight ()));
     this->addUniform ("g_TexelSizeHalf", glm::vec2 (0.5 / scene.getWidth (), 0.5 / scene.getHeight ()));
-    this->addUniform ("g_AudioSpectrum16Left", recorder.audio16, 16);
-    this->addUniform ("g_AudioSpectrum16Right", recorder.audio16, 16);
-    this->addUniform ("g_AudioSpectrum32Left", recorder.audio32, 32);
-    this->addUniform ("g_AudioSpectrum32Right", recorder.audio32, 32);
-    this->addUniform ("g_AudioSpectrum64Left", recorder.audio64, 64);
-    this->addUniform ("g_AudioSpectrum64Right", recorder.audio64, 64);
+    // left and right are their own channels (WE uniforms 0x69-0x6e read the left then the right half of the
+    // 16/32/64-band buffers, GH 0x14010a0e0)
+    using Audio::PlaybackRecorder;
+    this->addUniform ("g_AudioSpectrum16Left", recorder.audio16 [PlaybackRecorder::Left], 16);
+    this->addUniform ("g_AudioSpectrum16Right", recorder.audio16 [PlaybackRecorder::Right], 16);
+    this->addUniform ("g_AudioSpectrum32Left", recorder.audio32 [PlaybackRecorder::Left], 32);
+    this->addUniform ("g_AudioSpectrum32Right", recorder.audio32 [PlaybackRecorder::Right], 32);
+    this->addUniform ("g_AudioSpectrum64Left", recorder.audio64 [PlaybackRecorder::Left], 64);
+    this->addUniform ("g_AudioSpectrum64Right", recorder.audio64 [PlaybackRecorder::Right], 64);
 }
 
 void CPass::addAttribute (const std::string& name, GLint type, GLint elements, const GLuint* value) {

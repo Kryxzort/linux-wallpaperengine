@@ -154,6 +154,35 @@ WPENGINE_API int wp_context_audio_stream_count (wp_context* context);
  */
 WPENGINE_API const char* wp_context_audio_driver_name (wp_context* context);
 
+/**
+ * Feeds what the system plays (the audio the user hears) to the context's audio-responsive wallpapers: the
+ * spectrum behind g_AudioSpectrum{16,32,64}{Left,Right}, engine.registerAudioBuffers and audio-driven particle
+ * emitters, computed the way Wallpaper Engine computes it from its WASAPI loopback capture. Pass every frame
+ * as it is captured, in order (a gap is fine; no input for a second reads as silence). Call it from the
+ * render thread, between frames. A context that is never fed computes nothing.
+ *
+ * @param context
+ * @param interleaved frames * channels f32 samples, -1..1
+ * @param frames The number of frames
+ * @param channels 1 (mono: right = left) or more (the first two are left and right)
+ * @param sample_rate In Hz (WE sizes its FFT by it: max (rate / 44100, 1) * 1920 points)
+ */
+WPENGINE_API void wp_context_audio_input_push (
+    wp_context* context, const float* interleaved, size_t frames, int channels, int sample_rate
+);
+
+/**
+ * The spectrum the context's wallpapers see this frame (updated by wp_render_update_time).
+ *
+ * @param context
+ * @param resolution 16, 32 or 64 bands (index 0 = bass)
+ * @param channel 0 left, 1 right, 2 their average
+ * @param out Room for resolution floats
+ *
+ * @return false for a bad resolution or channel
+ */
+WPENGINE_API bool wp_context_audio_spectrum (wp_context* context, int resolution, int channel, float* out);
+
 #ifdef __cplusplus
 }
 #endif
