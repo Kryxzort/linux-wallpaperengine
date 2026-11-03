@@ -413,7 +413,20 @@ void CScene::updateMouse () {
     // position is already inside the background, convert it to viewport space
     this->m_mousePosition.x = position.x / this->getWidth ();
     this->m_mousePosition.y = position.y / this->getHeight ();
+
+    // the left button: held → xy 1; the frame it went down → z 1 (WE's flags at ctx+0xa4: bit 0 down, bit 1 already
+    // seen, so z marks the press)
+    const wp_mouse_input* handler = this->getMouseInputHandler ();
+    const bool down = handler != nullptr && handler->is_pressed != nullptr
+	&& (handler->is_pressed (handler->user_parameter, WP_MOUSE_INPUT_BUTTON_LEFT) & WP_MOUSE_INPUT_BUTTON_LEFT) != 0;
+
+    this->m_pointerState = glm::vec4 (
+	down ? 1.0f : 0.0f, down ? 1.0f : 0.0f, down && !this->m_pointerWasDown ? 1.0f : 0.0f, 0.0f
+    );
+    this->m_pointerWasDown = down;
 }
+
+const glm::vec4* CScene::getPointerState () const { return &this->m_pointerState; }
 
 const Scene& CScene::getScene () const { return *this->getWallpaperData ().as<Scene> (); }
 

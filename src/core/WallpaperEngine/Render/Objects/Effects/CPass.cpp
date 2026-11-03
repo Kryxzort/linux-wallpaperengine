@@ -870,7 +870,8 @@ void CPass::setupUniforms () {
 	this->addUniform ("g_CompositeColor", &renderable.getCompositeColor ());
     }
     // add some external variables
-    this->addUniform ("g_Time", &this->getContext ().getContext ().renderTime);
+    this->addUniform ("g_Time", &this->getContext ().getContext ().shaderTime);
+    this->addUniform ("g_Frametime", &this->getContext ().getContext ().frameTime);
     this->addUniform ("g_Daytime", &this->getContext ().getContext ().daytime);
     // add model-view-projection matrix
     this->addUniform ("g_ModelViewProjectionMatrixInverse", &this->m_modelViewProjectionMatrixInverse);
@@ -882,6 +883,7 @@ void CPass::setupUniforms () {
     this->addUniform ("g_ViewProjectionMatrix", &this->m_viewProjectionMatrix);
     this->addUniform ("g_PointerPosition", scene.getMousePosition ());
     this->addUniform ("g_PointerPositionLast", scene.getMousePositionLast ());
+    this->addUniform ("g_PointerState", scene.getPointerState ());
     // the smoothed parallax position over the scene size, 0..1 (WE uniform 0x72, GH 0x14010a0e0; written by the
     // camera update GH 0x1401b8af0)
     this->addUniform ("g_ParallaxPosition", scene.getParallaxPosition ());

@@ -46,6 +46,11 @@ public:
     const glm::vec2* getMousePosition () const;
     const glm::vec2* getMousePositionLast () const;
     const glm::vec2* getMousePositionNormalized () const;
+    /**
+     * `g_PointerState` (WE uniform 0x71, GH 0x14010a0e0): xy 1 while the left button is down, z 1 on the frame it went
+     * down, w 0
+     */
+    const glm::vec4* getPointerState () const;
     /** `g_ParallaxPosition`: the smoothed parallax position over the scene size, clamped to 0..1 (0.5 = centre) */
     const glm::vec2* getParallaxPosition () const;
     /**
@@ -92,6 +97,8 @@ private:
     std::mt19937 m_particleRng;
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
+    glm::vec4 m_pointerState = {};
+    bool m_pointerWasDown = false;
     glm::vec2 m_mousePositionNormalized = {};
     /** the smoothed parallax position (WE scene+0x300) in scene units, y up; starts at the centre */
     glm::vec2 m_parallaxPosition = {};

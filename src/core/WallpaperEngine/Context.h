@@ -25,6 +25,14 @@ public:
     bool isRunning;
     float renderTime;
     float renderTimeLast;
+    /** `g_Frametime`: this frame's delta, renderTime − renderTimeLast, never negative (WE: the tick's dt, ctx+0x14c) */
+    float frameTime;
+    /** `g_Time`: renderTime wrapped every 432000 s (5 days) as WE wraps its own (GH 0x1401afbf0, 0x1404d44fc) */
+    float shaderTime;
+    /**
+     * `g_Daytime` and `engine.timeOfDay`: the local time of day in [0, 1), h/24 + m/1440 + s/86400 + ms/86400000
+     * (GH 0x14013f370, written every frame by GH 0x140141520); wall-clock time, not the host's scene clock
+     */
     float daytime;
 
     explicit Context (
