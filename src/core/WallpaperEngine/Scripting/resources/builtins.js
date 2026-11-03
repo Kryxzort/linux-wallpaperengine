@@ -153,3 +153,14 @@ globalThis.MediaPlaybackEvent = globalThis.MediaPlaybackEvent || {
   define('registerAsset', (file) => ({ file: String(file) }));
   define('isObjectValid', (object) => object !== undefined && object !== null);
 })();
+
+// console.warn/info/debug as V8 has them (log/error are native); scripts may also replace them (console.log = …)
+(function () {
+  const c = globalThis.console;
+  if (c === undefined || c === null) {
+    return;
+  }
+  c.warn = c.warn || c.error;
+  c.info = c.info || c.log;
+  c.debug = c.debug || c.log;
+})();
