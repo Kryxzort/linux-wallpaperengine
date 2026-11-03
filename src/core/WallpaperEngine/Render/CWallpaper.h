@@ -2,6 +2,9 @@
 
 #include <glad/glad.h>
 
+#include <map>
+#include <tuple>
+
 #include "linux-wallpaperengine/project.h"
 
 #include "WallpaperEngine/Audio/AudioContext.h"
@@ -81,6 +84,14 @@ public:
     [[nodiscard]] std::shared_ptr<const CFBO> getFBO () const;
 
     /**
+     * A copy of `source` taken now, for a pass that samples the FBO it draws into. WE copies the framebuffer before
+     * a pass samples it (GH 0x140214b50: `_rt_FullFrameBuffer`'s copy runs before an image whose material or blend
+     * mode reads it); sampling the target being drawn is a GL feedback loop. One copy per size and flags, shared.
+     * Leaves the copy bound as the draw framebuffer.
+     */
+    [[nodiscard]] std::shared_ptr<const CFBO> copyForSampling (const CFBO& source) const;
+
+    /**
      * Updates the mouse input handler for this wallpaper
      *
      * @param newMouseInput The new mouse input to use for this wallpaper
@@ -151,6 +162,9 @@ protected:
     GLuint m_vaoBuffer = GL_NONE;
 
 private:
+    /** copyForSampling's copies, by width, height and flags */
+    mutable std::map<std::tuple<uint32_t, uint32_t, uint32_t>, std::shared_ptr<CFBO>> m_samplingCopies = {};
+
     /** The texture used for the scene output */
     GLuint m_texCoordBuffer = GL_NONE;
     GLuint m_positionBuffer = GL_NONE;

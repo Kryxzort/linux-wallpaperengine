@@ -263,6 +263,28 @@ std::shared_ptr<const CFBO> CWallpaper::findFBO (const std::string& name) const 
 
 std::shared_ptr<const CFBO> CWallpaper::getFBO () const { return this->m_sceneFBO; }
 
+std::shared_ptr<const CFBO> CWallpaper::copyForSampling (const CFBO& source) const {
+    const uint32_t width = source.getTextureWidth (0);
+    const uint32_t height = source.getTextureHeight (0);
+    auto& copy = this->m_samplingCopies[{ width, height, source.getFlags () }];
+
+    if (copy == nullptr) {
+	copy = std::make_shared<CFBO> (
+	    "_rt_samplingCopy", source.getFormat (), source.getFlags (), source.getScale (), source.getRealWidth (),
+	    source.getRealHeight (), width, height
+	);
+    }
+
+    glBindFramebuffer (GL_READ_FRAMEBUFFER, source.getFramebuffer ());
+    glBindFramebuffer (GL_DRAW_FRAMEBUFFER, copy->getFramebuffer ());
+    glBlitFramebuffer (
+	0, 0, static_cast<GLint> (width), static_cast<GLint> (height), 0, 0, static_cast<GLint> (width),
+	static_cast<GLint> (height), GL_COLOR_BUFFER_BIT, GL_NEAREST
+    );
+
+    return copy;
+}
+
 glm::dvec2 CWallpaper::getLiveMousePosition () const {
     if (this->m_mouseInput == nullptr) {
 	return { 0, 0 };

@@ -1878,7 +1878,7 @@ void CParticle::setupPass () {
     // black reads on NVIDIA. By placing a copy FBO with the same name in our FBOProvider,
     // CPass resolves g_Texture3 to the copy instead. We blit the scene content before each render.
     if (m_hasRefract) {
-	auto sceneFBO = getScene ().getFBO ();
+	auto sceneFBO = getScene ().getTargetFor (this->getObject ());
 	float w = static_cast<float> (sceneFBO->getRealWidth ());
 	float h = static_cast<float> (sceneFBO->getRealHeight ());
 	m_refractFBO = m_passFBOProvider->create (
@@ -1890,7 +1890,7 @@ void CParticle::setupPass () {
     m_pass = new Effects::CPass (*this, m_passFBOProvider, firstPass, *m_passOverride, m_passBinds, std::nullopt);
 
     // Set destination to scene FBO and input to particle texture
-    m_pass->setDestination (getScene ().getFBO ());
+    m_pass->setDestination (getScene ().getTargetFor (this->getObject ()));
     m_pass->setInput (getTexture ());
 
     // Set matrix pointers - CPass will dereference these each frame
@@ -2289,7 +2289,7 @@ void CParticle::renderSprites () {
     // This gives the shader a snapshot of what's behind the particles for refraction,
     // without a feedback loop (rendering to scene FBO while reading from copy FBO).
     if (m_hasRefract && m_refractFBO) {
-	auto sceneFBO = getScene ().getFBO ();
+	auto sceneFBO = getScene ().getTargetFor (this->getObject ());
 	GLint w = static_cast<GLint> (sceneFBO->getRealWidth ());
 	GLint h = static_cast<GLint> (sceneFBO->getRealHeight ());
 	glBindFramebuffer (GL_READ_FRAMEBUFFER, sceneFBO->getFramebuffer ());
@@ -2525,7 +2525,7 @@ void CParticle::renderRope () {
 
     // For REFRACT: blit current scene content into the copy FBO before rendering
     if (m_hasRefract && m_refractFBO) {
-	auto sceneFBO = getScene ().getFBO ();
+	auto sceneFBO = getScene ().getTargetFor (this->getObject ());
 	GLint w = static_cast<GLint> (sceneFBO->getRealWidth ());
 	GLint h = static_cast<GLint> (sceneFBO->getRealHeight ());
 	glBindFramebuffer (GL_READ_FRAMEBUFFER, sceneFBO->getFramebuffer ());

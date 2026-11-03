@@ -5,6 +5,8 @@
 #include "WallpaperEngine/Render/CWallpaper.h"
 #include "linux-wallpaperengine/project.h"
 
+#include <map>
+#include <optional>
 #include <random>
 
 namespace WallpaperEngine::Scripting {
@@ -65,6 +67,28 @@ public:
      */
     [[nodiscard]] bool isEffectivelyVisible (const Object& object) const;
 
+    /**
+     * The passthrough (compose) layer that draws this object: its nearest ancestor that is a passthrough image. WE
+     * renders a compose layer's subtree into the layer (GH 0x140218260, recursing through GH 0x1402181b0 up to a nested
+     * compose layer, which draws its own), after its background copy or clear, and before the layer's effects run
+     */
+    [[nodiscard]] std::optional<int> composeOwnerOf (const Object& object) const;
+    /** composeOwnerOf, when that layer was built and draws its subtree (else the object draws to the scene) */
+    [[nodiscard]] std::optional<int> drawingOwnerOf (const Object& object) const;
+    /** Whether a passthrough layer draws objects of its own (it has a descendant whose compose owner it is) */
+    [[nodiscard]] bool composesChildren (const Object& image) const;
+    /** The FBO an object draws its last pass into: its compose layer's group target, or the scene's */
+    [[nodiscard]] std::shared_ptr<const CFBO> getTargetFor (const Object& object) const;
+    /**
+     * Whether an object's last draw leaves its target's alpha alone: the scene's, and a compose layer's that starts
+     * from the background (opaque). A compose layer that starts transparent takes its subtree's alpha as coverage
+     */
+    [[nodiscard]] bool targetKeepsAlpha (const Object& object) const;
+    /** A compose layer's group target (scene-sized, made on first use): its background (or transparent) + subtree */
+    [[nodiscard]] std::shared_ptr<const CFBO> getComposeTarget (int id);
+    /** Draws the objects a compose layer owns, in draw order, into `target` */
+    void renderComposed (int ownerId, const CFBO& target);
+
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
     [[nodiscard]] std::mt19937& getParticleRng ();
@@ -104,6 +128,10 @@ private:
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};
     std::mt19937 m_particleRng;
+    /** composeOwnerOf, by object id (built on first use from the scene data) */
+    mutable std::map<int, std::optional<int>> m_composeOwners = {};
+    mutable bool m_composeOwnersBuilt = false;
+    std::map<int, std::shared_ptr<CFBO>> m_composeTargets = {};
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
     glm::vec4 m_pointerState = {};

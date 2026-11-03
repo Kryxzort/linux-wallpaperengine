@@ -125,6 +125,15 @@ struct ImageData {
     UserSettingUniquePtr colorBlendMode;
     /** The brightness of the image */
     UserSettingUniquePtr brightness;
+    /**
+     * A passthrough (compose) layer starts from the background behind it (true, WE's default) or from transparent
+     * (image flag 0x40 at +0x304, default set by the constructor GH 0x140212c50; read in GH 0x1402321d0)
+     */
+    UserSettingUniquePtr copyBackground;
+    /** The layer's composite FBOs clamp (true, WE's default) or wrap (image flag 0x8000; GH 0x140214b50) */
+    UserSettingUniquePtr clampUVs;
+    /** The layer's composite FBOs sample nearest (image flag 0x4000, default false; GH 0x140214b50) */
+    UserSettingUniquePtr noInterpolation;
     /** The material in use for this image */
     ModelUniquePtr model;
     /** The effects applied to this image after the material is rendered */

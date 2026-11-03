@@ -188,6 +188,9 @@ ObjectParser::parseImage (const JSON& it, const Project& project, ObjectData bas
 	    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
 	    .colorBlendMode = it.user ("colorBlendMode", properties, 0),
 	    .brightness = it.user ("brightness", properties, 1.0f),
+	    .copyBackground = it.user ("copybackground", properties, true),
+	    .clampUVs = it.user ("clampuvs", properties, true),
+	    .noInterpolation = it.user ("nointerpolation", properties, false),
 	    .model = ModelParser::load (project, image),
 	    .effects = effects.has_value () ? parseEffects (*effects, project) : std::vector<ImageEffectUniquePtr> {},
 	    .animationLayers = animationLayers.has_value () ? parseAnimationLayers (*animationLayers, project)

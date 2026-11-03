@@ -449,6 +449,9 @@ void CScene::renderFrame () {
     // ensure we render over the whole framebuffer
     glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
 
+    // the last frame's last pass left alpha masked: the clear sets the scene's alpha (opaque) every frame, as a compose
+    // layer's background copy and a blend mode's output alpha read it
+    glColorMask (true, true, true, true);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     for (const auto& cur : this->m_objectsByRenderOrder) {
@@ -460,6 +463,10 @@ void CScene::renderFrame () {
 	    continue;
 	}
 	if (cur == this->m_bloomObject && !this->getScene ().camera.bloom.enabled->value->getBool ()) {
+	    continue;
+	}
+	// a compose layer draws its subtree into itself (renderComposed)
+	if (this->drawingOwnerOf (cur->getObject ()).has_value ()) {
 	    continue;
 	}
 
@@ -583,6 +590,120 @@ glm::vec2 parallaxDepthOf (const Object& object) {
     return object.groupParallaxDepth == nullptr ? glm::vec2 (1.0f) : object.groupParallaxDepth->value->getVec2 ();
 }
 } // namespace
+
+std::optional<int> CScene::composeOwnerOf (const Object& object) const {
+    if (!this->m_composeOwnersBuilt) {
+	this->m_composeOwnersBuilt = true;
+
+	// only an ancestor listed before the object (so built before it: its setup already knows the target)
+	std::map<int, std::pair<const Object*, size_t>> byId;
+	size_t index = 0;
+	for (const auto& cur : this->getScene ().objects) {
+	    byId.emplace (cur->id, std::make_pair (cur.get (), index++));
+	}
+	index = 0;
+
+	for (const auto& cur : this->getScene ().objects) {
+	    std::optional<int> owner = std::nullopt;
+	    const Object* at = cur.get ();
+
+	    for (int depth = 0; at->parent.has_value () && depth < 32; depth++) {
+		const auto parent = byId.find (at->parent.value ());
+		if (parent == byId.end () || parent->second.first == cur.get ()) {
+		    break;
+		}
+		at = parent->second.first;
+		if (at->is<Image> () && at->as<Image> ()->model->passthrough) {
+		    if (parent->second.second < index) {
+			owner = at->id;
+		    }
+		    break;
+		}
+	    }
+
+	    this->m_composeOwners.emplace (cur->id, owner);
+	    index++;
+	}
+    }
+
+    const auto it = this->m_composeOwners.find (object.id);
+    return it == this->m_composeOwners.end () ? std::nullopt : it->second;
+}
+
+bool CScene::composesChildren (const Object& image) const {
+    // builds the map
+    static_cast<void> (this->composeOwnerOf (image));
+
+    return std::ranges::any_of (this->m_composeOwners | std::views::values, [&image] (const auto& owner) {
+	return owner.has_value () && owner.value () == image.id;
+    });
+}
+
+std::optional<int> CScene::drawingOwnerOf (const Object& object) const {
+    const auto owner = this->composeOwnerOf (object);
+
+    if (!owner.has_value ()) {
+	return std::nullopt;
+    }
+
+    // a compose layer that couldn't be built leaves its subtree to the scene
+    const CObject* image = this->getObject (owner.value ());
+    if (image == nullptr || !image->is<Objects::CImage> () || !image->as<Objects::CImage> ()->drawsSubtree ()) {
+	return std::nullopt;
+    }
+
+    return owner;
+}
+
+std::shared_ptr<const CFBO> CScene::getTargetFor (const Object& object) const {
+    const auto owner = this->drawingOwnerOf (object);
+
+    if (!owner.has_value ()) {
+	return this->getFBO ();
+    }
+
+    return const_cast<CScene*> (this)->getComposeTarget (owner.value ());
+}
+
+bool CScene::targetKeepsAlpha (const Object& object) const {
+    const auto owner = this->drawingOwnerOf (object);
+
+    if (!owner.has_value ()) {
+	return true;
+    }
+
+    return this->getObject (owner.value ())->as<Objects::CImage> ()->getImage ().copyBackground->value->getBool ();
+}
+
+std::shared_ptr<const CFBO> CScene::getComposeTarget (int id) {
+    auto& target = this->m_composeTargets[id];
+
+    if (target == nullptr) {
+	const auto& scene = *this->getFBO ();
+	target = std::make_shared<CFBO> (
+	    "_rt_composeLayer_" + std::to_string (id), TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0f,
+	    scene.getRealWidth (), scene.getRealHeight (), scene.getTextureWidth (0), scene.getTextureHeight (0)
+	);
+    }
+
+    return target;
+}
+
+void CScene::renderComposed (int ownerId, const CFBO& target) {
+    for (const auto& cur : this->m_objectsByRenderOrder) {
+	const auto owner = this->drawingOwnerOf (cur->getObject ());
+	if (!owner.has_value () || owner.value () != ownerId) {
+	    continue;
+	}
+
+	// what draws to whatever is bound (text, particles' masks) draws into the layer
+	glBindFramebuffer (GL_FRAMEBUFFER, target.getFramebuffer ());
+	glViewport (0, 0, target.getRealWidth (), target.getRealHeight ());
+	glColorMask (true, true, true, !this->targetKeepsAlpha (cur->getObject ()));
+
+	cur->render ();
+    }
+}
 
 bool CScene::isEffectivelyVisible (const Object& object) const {
     const Object* cur = &object;

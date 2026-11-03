@@ -191,15 +191,24 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     // register both FBOs into the scene
     std::ostringstream nameA, nameB;
 
-    // TODO: determine when _rt_imageLayerComposite and _rt_imageLayerAlbedo is used
+    // which of the two holds what: updateActivePasses (WE's parity)
     nameA << "_rt_imageLayerComposite_" << this->getImage ().id << "_a";
     nameB << "_rt_imageLayerComposite_" << this->getImage ().id << "_b";
 
+    // the composite FBOs' sampling is the layer's, not its texture's (GH 0x140214b50): they clamp unless `clampuvs`
+    // is false (WE's default is true, GH 0x140212c50), and sample nearest with `nointerpolation` or a point-filtered
+    // texture. Wrapping let UV-shifting effects (waterripple, shake, scroll) pull the opposite edge in
+    const uint32_t compositeFlags = (this->m_image.clampUVs->value->getBool () ? TextureFlags_ClampUVs : 0)
+	| ((this->m_image.noInterpolation->value->getBool ()
+	    || (this->m_texture->getFlags () & TextureFlags_NoInterpolation) != 0)
+	       ? TextureFlags_NoInterpolation
+	       : 0);
+
     this->m_currentMainFBO = this->m_mainFBO = scene.create (
-	nameA.str (), TextureFormat_ARGB8888, this->m_texture->getFlags (), 1, { size.x, size.y }, { size.x, size.y }
+	nameA.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
     this->m_currentSubFBO = this->m_subFBO = scene.create (
-	nameB.str (), TextureFormat_ARGB8888, this->m_texture->getFlags (), 1, { size.x, size.y }, { size.x, size.y }
+	nameB.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
 
     // build a list of vertices, these might need some change later (or maybe invert the camera)
@@ -493,7 +502,8 @@ void CImage::setupPuppetGeometryCallback (Effects::CPass* pass) const {
 	[this] () {
 	    GLint currentFramebuffer = 0;
 	    glGetIntegerv (GL_DRAW_FRAMEBUFFER_BINDING, &currentFramebuffer);
-	    if (currentFramebuffer != static_cast<GLint> (this->getScene ().getFBO ()->getFramebuffer ())) {
+	    if (currentFramebuffer
+		!= static_cast<GLint> (this->getScene ().getTargetFor (this->m_image)->getFramebuffer ())) {
 		GLfloat previousClearColor[4] = {};
 		glGetFloatv (GL_COLOR_CLEAR_VALUE, previousClearColor);
 		glClearColor (0.0f, 0.0f, 0.0f, 0.0f);
@@ -529,7 +539,12 @@ void CImage::setup () {
     // TODO: CHECK ORDER OF THINGS, 2419444134'S ID 27 DEPENDS ON 104'S COMPOSITE_A WHEN OUR LAST RENDER IS ON
     // COMPOSITE_B
     // TODO: SUPPORT PASSTHROUGH (IT'S A SHADER)
-    if (this->m_image.model->passthrough) {
+    // a passthrough layer that draws objects of its own, or starts transparent, renders through a group target
+    // (GH 0x1402321d0: the background copy or a clear, then its subtree, GH 0x140218260), effects or none
+    const bool composes = this->m_image.model->passthrough
+	&& (this->getScene ().composesChildren (this->m_image) || !this->m_image.copyBackground->value->getBool ());
+
+    if (this->m_image.model->passthrough && !composes) {
 	// passthrough images without effects are bad, do not draw them
 	if (this->m_image.effects.empty ()) {
 	    return;
@@ -557,6 +572,11 @@ void CImage::setup () {
 	this->m_passes.push_back (
 	    new CPass (*this, std::make_shared<FBOProvider> (this), *cur, std::nullopt, std::nullopt, std::nullopt)
 	);
+    }
+
+    if (composes && !this->m_passes.empty ()) {
+	this->m_composeTarget = this->getScene ().getComposeTarget (this->getId ());
+	this->m_passes.front ()->setTexture (0, this->m_composeTarget);
     }
 
     // prepare the passes list
@@ -725,8 +745,11 @@ void CImage::setup () {
 	}
     }
 
-    // extra render pass if there's any blending to be done
-    if (!debug.baseOnly && this->m_image.colorBlendMode->value->getInt () > 0) {
+    // extra render pass if there's any blending to be done. Mode 31 (A + B·opacity) is plain additive blending in WE:
+    // no BLENDMODE pass, and the layer's last draw blends additively (GH 0x140214b50, 0x1402321d0; the BLENDMODE combo
+    // is 0 for modes 0 and 31, GH 0x140211f90)
+    const int colorBlendMode = this->m_image.colorBlendMode->value->getInt ();
+    if (!debug.baseOnly && colorBlendMode > 0 && colorBlendMode != 31) {
 	this->m_materials.colorBlending.material
 	    = MaterialParser::load (this->getScene ().getScene ().project, "materials/util/effectpassthrough.json");
 	this->m_materials.colorBlending.override = std::make_unique<ImageEffectPassOverride> (ImageEffectPassOverride {
@@ -814,10 +837,32 @@ void CImage::updateActivePasses () {
 	first->setBlendingMode (BlendingMode_Normal);
     }
 
+    // the layer's last draw: additive for colour blend mode 31; translucent for a passthrough layer that doesn't copy
+    // the background (it starts transparent, GH 0x1402321d0)
+    if (!this->m_activePasses.empty ()) {
+	if (this->m_image.colorBlendMode->value->getInt () == 31) {
+	    this->m_activePasses.back ()->setBlendingMode (BlendingMode_Additive);
+	} else if (this->m_image.model->passthrough && !this->m_image.copyBackground->value->getBool ()) {
+	    this->m_activePasses.back ()->setBlendingMode (BlendingMode_Translucent);
+	}
+    }
+
     // the chain starts again from the image's main FBO: which FBO each pass reads and writes, and which pass draws
     // to the scene, follow the passes that run
     this->m_currentMainFBO = this->m_mainFBO;
     this->m_currentSubFBO = this->m_subFBO;
+
+    // WE starts the ping-pong so that the last composite written before the final draw is _a (GH 0x140214b50: the
+    // start index is the parity of the passes that write the composite), so `_rt_imageLayerComposite_<id>_a` is what
+    // the last pass reads and _b the stage before it. Another layer binding one of them gets that stage
+    size_t compositeWrites = 0;
+    for (size_t i = 0; i + 1 < this->m_activePasses.size (); i++) {
+	compositeWrites += this->m_activePasses[i]->getTarget ().has_value () ? 0 : 1;
+    }
+    if (compositeWrites % 2 == 0) {
+	std::swap (this->m_currentMainFBO, this->m_currentSubFBO);
+    }
+
     this->setupPasses ();
 }
 
@@ -860,7 +905,7 @@ void CImage::setupPasses () {
 	// TODO: PROPERLY CHECK IF THIS IS ALL THAT'S NEEDED
 	if (!writesToTarget && this->shouldRenderFinalPass (std::next (cur) == end)) {
 	    spacePosition = this->getSceneSpacePosition ();
-	    drawTo = this->getScene ().getFBO ();
+	    drawTo = this->getScene ().getTargetFor (this->m_image);
 	    projection = &this->m_modelViewProjectionScreen;
 	    inverseProjection = &this->m_modelViewProjectionScreenInverse;
 	}
@@ -945,6 +990,36 @@ void CImage::pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::share
     this->m_currentSubFBO = currentMainFBO;
 }
 
+bool CImage::drawsSubtree () const { return this->m_initialized && this->m_composeTarget != nullptr; }
+
+void CImage::renderComposeTarget (bool copyBackground) {
+    const auto& group = *this->m_composeTarget;
+    const auto background = this->getScene ().getTargetFor (this->m_image);
+
+    glColorMask (true, true, true, true);
+
+    // the background behind the layer, or transparent (`copybackground: false`)
+    if (copyBackground || this->m_image.copyBackground->value->getBool ()) {
+	glBindFramebuffer (GL_READ_FRAMEBUFFER, background->getFramebuffer ());
+	glBindFramebuffer (GL_DRAW_FRAMEBUFFER, group.getFramebuffer ());
+	glBlitFramebuffer (
+	    0, 0, static_cast<GLint> (background->getRealWidth ()), static_cast<GLint> (background->getRealHeight ()), 0,
+	    0, static_cast<GLint> (group.getRealWidth ()), static_cast<GLint> (group.getRealHeight ()),
+	    GL_COLOR_BUFFER_BIT, GL_NEAREST
+	);
+    } else {
+	GLfloat previousClearColor[4] = {};
+	glGetFloatv (GL_COLOR_CLEAR_VALUE, previousClearColor);
+	glBindFramebuffer (GL_FRAMEBUFFER, group.getFramebuffer ());
+	glClearColor (0.0f, 0.0f, 0.0f, 0.0f);
+	glClear (GL_COLOR_BUFFER_BIT);
+	glClearColor (previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
+    }
+
+    // then the objects it owns, in draw order
+    this->getScene ().renderComposed (this->getId (), group);
+}
+
 void CImage::render () {
     // do not try to render something that did not initialize successfully
     if (!this->m_initialized) {
@@ -961,9 +1036,33 @@ void CImage::render () {
 	this->updateActivePasses ();
     }
 
-    // a passthrough layer is only its effects: with none visible it draws nothing (as it isn't built when none can be)
-    if (this->m_image.model->passthrough && this->m_visibleEffects == 0) {
+    // a passthrough layer is only its effects: with none visible it draws nothing (as it isn't built when none can be),
+    // unless it composes: its subtree and background are its picture
+    if (this->m_image.model->passthrough && this->m_visibleEffects == 0 && this->m_composeTarget == nullptr) {
 	return;
+    }
+
+    if (this->m_composeTarget != nullptr) {
+	// with no effect running, the layer's picture is its target: the background with its subtree drawn over it.
+	// (composelayer's base pass covers its whole destination: it only ever draws into the layer's own FBO)
+	const bool bare = this->m_visibleEffects == 0;
+
+	this->renderComposeTarget (bare);
+
+	if (bare) {
+	    const auto& group = *this->m_composeTarget;
+	    const auto target = this->getScene ().getTargetFor (this->m_image);
+
+	    glBindFramebuffer (GL_READ_FRAMEBUFFER, group.getFramebuffer ());
+	    glBindFramebuffer (GL_DRAW_FRAMEBUFFER, target->getFramebuffer ());
+	    glBlitFramebuffer (
+		0, 0, static_cast<GLint> (group.getRealWidth ()), static_cast<GLint> (group.getRealHeight ()), 0, 0,
+		static_cast<GLint> (target->getRealWidth ()), static_cast<GLint> (target->getRealHeight ()),
+		GL_COLOR_BUFFER_BIT, GL_NEAREST
+	    );
+	    glBindFramebuffer (GL_FRAMEBUFFER, target->getFramebuffer ());
+	    return;
+	}
     }
 
     glColorMask (true, true, true, true);
@@ -989,9 +1088,12 @@ void CImage::render () {
 
     auto cur = this->m_activePasses.begin ();
 
+    // the last draw keeps the scene's alpha (a compose layer that starts transparent takes this layer's as coverage)
+    const bool keepAlpha = this->getScene ().targetKeepsAlpha (this->m_image);
+
     for (const auto end = this->m_activePasses.end (); cur != end; ++cur) {
 	if (std::next (cur) == end) {
-	    glColorMask (true, true, true, false);
+	    glColorMask (true, true, true, !keepAlpha);
 	}
 
 	(*cur)->render ();

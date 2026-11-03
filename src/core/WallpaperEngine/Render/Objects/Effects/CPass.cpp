@@ -303,13 +303,42 @@ CPass::resolveTextureAnimationState (const std::shared_ptr<const TextureProvider
     return state;
 }
 
+bool CPass::samplerIsUsed (int index) const {
+    const auto it = this->m_samplerUsed.find (index);
+    if (it != this->m_samplerUsed.end ()) {
+	return it->second;
+    }
+
+    const std::string name = "g_Texture" + std::to_string (index);
+    const bool used = glGetUniformLocation (this->m_programID, name.c_str ()) != -1;
+    this->m_samplerUsed.emplace (index, used);
+    return used;
+}
+
 void CPass::bindTextureUnit (int index, const std::shared_ptr<const TextureProvider>& texture, uint32_t frame) const {
     if (texture == nullptr) {
 	return;
     }
 
+    GLuint id = texture->getTextureID (frame);
+
+    // a unit sampling the FBO this pass draws into (a blend mode's g_Texture4, a compose layer's _rt_FullFrameBuffer
+    // on its last pass) reads a copy taken before the draw, as WE copies the framebuffer before such a pass: sampling
+    // the bound target is a GL feedback loop, undefined (noise or stale texels)
+    // (only a sampler the program uses: genericimage4/genericparticle declare g_Texture3 = _rt_MipMappedFrameBuffer
+    // for REFLECTION/REFRACT, compiled out otherwise; WE copies only for a material that reads it)
+    if (this->m_drawTo != nullptr && id != GL_NONE && id == this->m_drawTo->getTextureID (0)
+	&& this->samplerIsUsed (index)) {
+	if (this->m_drawToCopy == nullptr) {
+	    this->m_drawToCopy = this->m_renderable.getScene ().copyForSampling (*this->m_drawTo);
+	    glBindFramebuffer (GL_FRAMEBUFFER, this->m_drawTo->getFramebuffer ());
+	}
+
+	id = this->m_drawToCopy->getTextureID (0);
+    }
+
     glActiveTexture (GL_TEXTURE0 + index);
-    glBindTexture (GL_TEXTURE_2D, texture->getTextureID (frame));
+    glBindTexture (GL_TEXTURE_2D, id);
 }
 
 void CPass::bindTextureOverrides (uint32_t currentTexture, std::shared_ptr<const TextureProvider>& texture0) const {
@@ -526,6 +555,7 @@ void CPass::render () {
     }
 
     this->setupRenderFramebuffer ();
+    this->m_drawToCopy = nullptr;
     this->setupRenderTexture ();
     this->setupRenderUniforms ();
     this->setupRenderReferenceUniforms ();
@@ -535,6 +565,13 @@ void CPass::render () {
 }
 
 std::shared_ptr<const FBOProvider> CPass::getFBOProvider () const { return this->m_fboProvider; }
+
+void CPass::setTexture (int index, std::shared_ptr<const TextureProvider> texture) {
+    this->m_textures[index] = std::make_shared<TextureChainEntry> (TextureChainEntry {
+	.texture = std::move (texture),
+	.next = nullptr,
+    });
+}
 
 const CRenderable& CPass::getRenderable () const { return this->m_renderable; }
 

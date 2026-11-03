@@ -38,6 +38,8 @@ public:
     void setDestination (std::shared_ptr<const CFBO> drawTo);
     void setInput (std::shared_ptr<const TextureProvider> input);
     void setPreviousInput (std::shared_ptr<const TextureProvider> input);
+    /** Replaces what texture unit `index` samples (a compose layer's base pass reads its group target) */
+    void setTexture (int index, std::shared_ptr<const TextureProvider> texture);
     void setTexCoord (GLuint texcoord);
     void setPosition (GLuint position);
     void setModelViewProjectionMatrix (const glm::mat4* projection);
@@ -165,6 +167,8 @@ private:
     [[nodiscard]] TextureAnimationState
     resolveTextureAnimationState (const std::shared_ptr<const TextureProvider>& texture) const;
     void bindTextureUnit (int index, const std::shared_ptr<const TextureProvider>& texture, uint32_t frame) const;
+    /** The program samples g_Texture<index> (it's active: not compiled out by a combo) */
+    [[nodiscard]] bool samplerIsUsed (int index) const;
     void bindTextureOverrides (uint32_t currentTexture, std::shared_ptr<const TextureProvider>& texture0) const;
     void setupRenderUniforms ();
     void setupRenderReferenceUniforms ();
@@ -202,6 +206,10 @@ private:
     Render::Shaders::Shader* m_shader = nullptr;
 
     std::shared_ptr<const CFBO> m_drawTo = nullptr;
+    /** this render's copy of m_drawTo, for a texture unit that samples it (taken once per render) */
+    mutable std::shared_ptr<const CFBO> m_drawToCopy = nullptr;
+    /** samplerIsUsed, by unit */
+    mutable std::map<int, bool> m_samplerUsed = {};
     std::shared_ptr<const TextureProvider> m_input = nullptr;
     std::shared_ptr<const TextureProvider> m_previousInput = nullptr;
     glm::vec4 m_texture0Resolution = {};

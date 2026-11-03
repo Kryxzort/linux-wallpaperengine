@@ -32,6 +32,8 @@ public:
     void render () override;
 
     [[nodiscard]] const Image& getImage () const;
+    /** A passthrough (compose) layer built with a group target: it draws its subtree into it (CScene::renderComposed) */
+    [[nodiscard]] bool drawsSubtree () const;
     [[nodiscard]] glm::vec2 getSize () const;
 
     /**
@@ -63,6 +65,11 @@ public:
     void pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::shared_ptr<const TextureProvider>* asInput);
 
 protected:
+    /**
+     * Fills the group target: the background (copybackground, or `copyBackground`; else transparent), then the
+     * objects this layer owns
+     */
+    void renderComposeTarget (bool copyBackground);
     void setupPasses ();
     /** The passes that run (the effects' while visible), their blending and targets set up for that chain */
     void updateActivePasses ();
@@ -112,6 +119,11 @@ private:
     glm::mat4 m_modelMatrix = {};
     glm::mat4 m_viewProjectionMatrix = {};
 
+    /**
+     * A passthrough layer's group target: the background behind it (copybackground, WE's default) or transparent, then
+     * the objects it owns; its base pass reads this instead of _rt_FullFrameBuffer. Null for every other layer
+     */
+    std::shared_ptr<const CFBO> m_composeTarget = nullptr;
     std::shared_ptr<const CFBO> m_mainFBO = nullptr;
     std::shared_ptr<const CFBO> m_subFBO = nullptr;
     std::shared_ptr<const CFBO> m_currentMainFBO = nullptr;
