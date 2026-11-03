@@ -155,13 +155,15 @@ public:
     struct CursorHit {
 	ScriptableObject* object;
 	glm::vec2 local;
+	/** drawn now: only a shown layer takes a press, a release and a click */
+	bool visible;
     };
     /**
      * One frame of the cursor (SceneScript's cursor events): `hits` are the solid layers with cursor handlers under
      * it, `world` where it is (scene pixels, y up), `down` the left button. Sends cursorEnter/Leave as layers come
-     * and go under it, cursorMove when it moved (to the layers under it and the one it was pressed on),
-     * cursorDown on a press, cursorUp on a release over a layer and cursorClick after it on the layer it was
-     * pressed on
+     * and go under it (shown or hidden), cursorMove when it moved (to the layers under it and the one it was pressed
+     * on), cursorDown on a press, cursorUp on a release and cursorClick after it to the shown layers under it (a
+     * click: the ones it was also pressed on)
      */
     void cursorFrame (const std::vector<CursorHit>& hits, const glm::vec2& world, bool down);
     /** The layers a cursor event can reach: solid ones with a script that handles one (re-listed as scripts load) */

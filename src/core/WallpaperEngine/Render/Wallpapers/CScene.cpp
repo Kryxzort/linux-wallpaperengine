@@ -508,15 +508,17 @@ void CScene::updateCursorEvents () {
     );
     std::vector<Scripting::ScriptEngine::CursorHit> hits;
 
-    // every solid layer under the cursor gets its events, shown or hidden (WE's scenes guard on thisLayer.visible in
-    // their handlers, and a trigger layer that hides itself on cursorEnter must not get cursorLeave the next frame)
+    // every solid layer under the cursor gets enter/leave/move, shown or hidden (a trigger layer that hides itself on
+    // cursorEnter must not get cursorLeave the next frame); presses and clicks go to the shown ones (cursorFrame)
     for (auto* object : layers) {
 	if (!object->isSolid ()) {
 	    continue;
 	}
 	glm::vec2 local {};
 	if (const auto* image = object->asOrNull<Objects::CImage> (); image != nullptr && image->hitTest (world, local)) {
-	    hits.push_back ({ .object = object, .local = local });
+	    hits.push_back (
+		{ .object = object, .local = local, .visible = this->isEffectivelyVisible (object->getObject ()) }
+	    );
 	}
     }
 

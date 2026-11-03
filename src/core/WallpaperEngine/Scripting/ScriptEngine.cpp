@@ -37,6 +37,7 @@
 #include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace WallpaperEngine::Render::Objects {
@@ -1158,10 +1159,14 @@ void ScriptEngine::cursorFrame (const std::vector<CursorHit>& hits, const glm::v
     this->m_cursorDown = down;
 
     std::set<ScriptableObject*> under;
+    std::set<ScriptableObject*> shown;
     std::map<ScriptableObject*, glm::vec2> local;
 
     for (const auto& hit : hits) {
 	under.insert (hit.object);
+	if (hit.visible) {
+	    shown.insert (hit.object);
+	}
 	local[hit.object] = hit.local;
     }
 
@@ -1193,24 +1198,26 @@ void ScriptEngine::cursorFrame (const std::vector<CursorHit>& hits, const glm::v
 	}
     }
 
+    // presses, releases and clicks go to the shown layers only: 2325974975's "Hide" button shows a hidden full-width
+    // trigger layer on its click, whose own click handler (shown → show the UI again) must not take the same click
     if (pressed) {
-	this->m_pressed = under;
-	for (auto* object : under) {
+	this->m_pressed = shown;
+	for (auto* object : shown) {
 	    send ("cursorDown", object);
 	}
     }
 
     if (released) {
-	for (auto* object : under) {
+	const auto pressedOn = std::exchange (this->m_pressed, {});
+	for (auto* object : shown) {
 	    send ("cursorUp", object);
 	}
 	// "pressed and released on the same object", after cursorUp
-	for (auto* object : under) {
-	    if (this->m_pressed.contains (object)) {
+	for (auto* object : shown) {
+	    if (pressedOn.contains (object)) {
 		send ("cursorClick", object);
 	    }
 	}
-	this->m_pressed.clear ();
     }
 }
 
