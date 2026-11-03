@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "../Data/Model/DynamicValue.h"
+#include <glm/vec2.hpp>
 #include "WallpaperEngine/Data/Model/Types.h"
 #include "linux-wallpaperengine/context.h"
 
@@ -149,6 +150,22 @@ public:
     void dispatchEvent (const char* name, JSValueConst arg, const ScriptableObject* only = nullptr);
     /** A script of `object` exports `name` (a property script's or its text-layer script's) */
     [[nodiscard]] bool handlesEvent (const ScriptableObject& object, const char* name);
+    /** A layer under the cursor this frame, and where on it (0..size, y up) */
+    struct CursorHit {
+	ScriptableObject* object;
+	glm::vec2 local;
+    };
+    /**
+     * One frame of the cursor (SceneScript's cursor events): `hits` are the solid layers with cursor handlers under
+     * it, `world` where it is (scene pixels, y up), `down` the left button. Sends cursorEnter/Leave as layers come
+     * and go under it, cursorMove when it moved (to the layers under it and the one it was pressed on),
+     * cursorDown on a press, cursorUp on a release over a layer and cursorClick after it on the layer it was
+     * pressed on
+     */
+    void cursorFrame (const std::vector<CursorHit>& hits, const glm::vec2& world, bool down);
+    /** The layers a cursor event can reach: solid ones with a script that handles one (re-listed as scripts load) */
+    [[nodiscard]] const std::vector<ScriptableObject*>& cursorLayers ();
+
     /** engine.userProperties: every user property, colours as Vec3 (a new object) */
     [[nodiscard]] JSValue userProperties ();
 
@@ -232,6 +249,15 @@ private:
     /** each text-layer script's layer and its script properties (live) */
     std::map<ScriptLayerHandle, ScriptableObject*> m_layerObjects;
     std::map<ScriptLayerHandle, std::map<std::string, UserSettingUniquePtr>*> m_layerProps;
+    /** the cursor's state between frames */
+    std::set<ScriptableObject*> m_hovered;
+    std::set<ScriptableObject*> m_pressed;
+    glm::vec2 m_cursorWorld = {};
+    bool m_cursorDown = false;
+    bool m_cursorSeen = false;
+    std::vector<ScriptableObject*> m_cursorLayers;
+    size_t m_cursorLayersFor = static_cast<size_t> (-1);
+    JSValue cursorEvent (const glm::vec2& world, const glm::vec2& local);
     /** the user properties changed since the last tick (applyUserProperties gets them) */
     std::set<std::string> m_changedProperties;
     std::vector<std::function<void ()>> m_propertyListeners;

@@ -10,8 +10,13 @@ JSValue get_cursor_world_position (JSContext* ctx, JSValueConst this_val, int ar
     JSClassID classId;
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
 
-    // TODO: PROPERLY IMPLEMENT THIS
-    return input->getScene ().getScriptEngine ().newVec (glm::vec3 (0.0f));
+    // the cursor in WE's world: scene pixels, x right, y up
+    const auto& scene = input->getScene ();
+    const glm::vec2 position = *scene.getMousePositionNormalized ();
+    return scene.getScriptEngine ().newVec (glm::vec3 (
+	position.x * static_cast<float> (scene.getWidth ()), (1.0f - position.y) * static_cast<float> (scene.getHeight ()),
+	0.0f
+    ));
 }
 
 JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -23,8 +28,9 @@ JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int a
 }
 
 JSValue get_cursor_left_down (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    // TODO: IMPLEMENT THIS
-    return JS_NewBool (ctx, false);
+    JSClassID classId;
+    auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
+    return JS_NewBool (ctx, input->getScene ().getPointerState ()->x > 0.5f);
 }
 
 JSValue input_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }

@@ -401,6 +401,9 @@ void CScene::renderFrame () {
     // run a tick in the javascript logic
     this->getScriptEngine ().tick ();
 
+    // the cursor's events for the scripts (after their tick: their init has run)
+    this->updateCursorEvents ();
+
     // advance the sound objects' playlists (next file, `random`'s silence) on the host's clock
     const double soundDt = std::max (
 	0.0,
@@ -475,6 +478,8 @@ void CScene::updateMouse () {
     // position is already inside the background, convert it to viewport space
     this->m_mousePosition.x = position.x / this->getWidth ();
     this->m_mousePosition.y = position.y / this->getHeight ();
+    // input.cursorScreenPosition read this, never written (always 0 0)
+    this->m_mousePositionNormalized = this->m_mousePosition;
 
     // the left button: held → xy 1; the frame it went down → z 1 (WE's flags at ctx+0xa4: bit 0 down, bit 1 already
     // seen, so z marks the press)
@@ -486,6 +491,36 @@ void CScene::updateMouse () {
 	down ? 1.0f : 0.0f, down ? 1.0f : 0.0f, down && !this->m_pointerWasDown ? 1.0f : 0.0f, 0.0f
     );
     this->m_pointerWasDown = down;
+}
+
+void CScene::updateCursorEvents () {
+    auto& scripts = this->getScriptEngine ();
+    const auto& layers = scripts.cursorLayers ();
+
+    if (layers.empty () || this->getMouseInputHandler () == nullptr) {
+	return;
+    }
+
+    // WE's world: x right, y up, scene pixels (the host's pointer is y down)
+    const glm::vec2 world (
+	this->m_mousePosition.x * static_cast<float> (this->getWidth ()),
+	(1.0f - this->m_mousePosition.y) * static_cast<float> (this->getHeight ())
+    );
+    std::vector<Scripting::ScriptEngine::CursorHit> hits;
+
+    // every solid layer under the cursor gets its events, shown or hidden (WE's scenes guard on thisLayer.visible in
+    // their handlers, and a trigger layer that hides itself on cursorEnter must not get cursorLeave the next frame)
+    for (auto* object : layers) {
+	if (!object->isSolid ()) {
+	    continue;
+	}
+	glm::vec2 local {};
+	if (const auto* image = object->asOrNull<Objects::CImage> (); image != nullptr && image->hitTest (world, local)) {
+	    hits.push_back ({ .object = object, .local = local });
+	}
+    }
+
+    scripts.cursorFrame (hits, world, this->m_pointerState.x > 0.5f);
 }
 
 const glm::vec4* CScene::getPointerState () const { return &this->m_pointerState; }

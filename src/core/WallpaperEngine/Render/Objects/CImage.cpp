@@ -1,5 +1,8 @@
 #include "CImage.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "CRenderable.h"
 #include "WallpaperEngine/Context.h"
 
@@ -1178,6 +1181,38 @@ void CImage::updateScreenSpacePosition () {
 }
 
 const Image& CImage::getImage () const { return this->m_image; }
+
+bool CImage::hitTest (const glm::vec2& world, glm::vec2& local) const {
+    const float sceneWidth = static_cast<float> (this->getScene ().getWidth ());
+    const float sceneHeight = static_cast<float> (this->getScene ().getHeight ());
+    // the drawing's space (m_pos): x from the centre, y down
+    glm::vec2 point (world.x - sceneWidth / 2.0f, sceneHeight / 2.0f - world.y);
+
+    // undo the mouse parallax and the rotation about the pivot (updateScreenSpacePosition: translate (p.x, -p.y),
+    // rotate (-angle) about the pivot)
+    const glm::vec2 parallax = this->getScene ().getParallaxOffset (this->getImage ());
+    point -= glm::vec2 (parallax.x, -parallax.y);
+
+    const float angle = this->resolveTransform (this->getImage ()).angle;
+
+    if (angle != 0.0f) {
+	const glm::vec2 pivot (this->m_scenePivot);
+	const glm::vec2 d = point - pivot;
+	const float c = std::cos (angle), sn = std::sin (angle);
+	point = pivot + glm::vec2 (c * d.x - sn * d.y, sn * d.x + c * d.y);
+    }
+
+    const float left = std::min (this->m_pos.x, this->m_pos.z), right = std::max (this->m_pos.x, this->m_pos.z);
+    const float top = std::min (this->m_pos.y, this->m_pos.w), bottom = std::max (this->m_pos.y, this->m_pos.w);
+
+    if (point.x < left || point.x > right || point.y < top || point.y > bottom || right <= left || bottom <= top) {
+	return false;
+    }
+
+    const glm::vec2 size = this->getSize ();
+    local = glm::vec2 ((point.x - left) / (right - left) * size.x, (bottom - point.y) / (bottom - top) * size.y);
+    return true;
+}
 
 glm::vec2 CImage::getSize () const {
     if (this->m_size.x > 0.0f && this->m_size.y > 0.0f) {

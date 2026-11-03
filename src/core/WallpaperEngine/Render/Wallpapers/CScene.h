@@ -79,6 +79,8 @@ public:
 protected:
     void renderFrame () override;
     void updateMouse ();
+    /** Hit-tests the cursor against the layers with cursor handlers and sends their events (SceneScript) */
+    void updateCursorEvents ();
     /** Advances every keyframe animation by this frame's dt and writes their values (G01/G02) */
     void advanceAnimations ();
     /** The camera update (WE GH 0x1401b8af0): shake, the active camera object's zoom, general.zoom, the parallax */

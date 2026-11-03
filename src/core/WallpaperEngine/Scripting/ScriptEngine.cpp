@@ -1042,6 +1042,115 @@ bool ScriptEngine::handlesEvent (const ScriptableObject& object, const char* nam
     return false;
 }
 
+const std::vector<ScriptableObject*>& ScriptEngine::cursorLayers () {
+    const size_t scripts = this->m_scriptModules.size () + this->m_layerObjects.size ();
+
+    if (scripts == this->m_cursorLayersFor) {
+	return this->m_cursorLayers;
+    }
+
+    this->m_cursorLayersFor = scripts;
+    this->m_cursorLayers.clear ();
+
+    constexpr const char* kCursorEvents[]
+	= { "cursorEnter", "cursorLeave", "cursorMove", "cursorDown", "cursorUp", "cursorClick" };
+    std::set<ScriptableObject*> seen;
+    auto consider = [&] (ScriptableObject* object) {
+	if (!seen.insert (object).second) {
+	    return;
+	}
+	for (const char* name : kCursorEvents) {
+	    if (this->handlesEvent (*object, name)) {
+		this->m_cursorLayers.push_back (object);
+		return;
+	    }
+	}
+    };
+
+    for (const auto& module : this->m_scriptModules) {
+	consider (&module->object);
+    }
+    for (const auto& object : this->m_layerObjects | std::views::values) {
+	consider (object);
+    }
+
+    return this->m_cursorLayers;
+}
+
+JSValue ScriptEngine::cursorEvent (const glm::vec2& world, const glm::vec2& local) {
+    JSValue event = JS_NewObject (this->m_context);
+    // CursorEvent: worldPosition (absolute), localPosition (0..size on the layer), hitBox (puppet warp only: null)
+    JS_SetPropertyStr (this->m_context, event, "worldPosition", this->newVec (glm::vec3 (world, 0.0f)));
+    JS_SetPropertyStr (this->m_context, event, "localPosition", this->newVec (glm::vec3 (local, 0.0f)));
+    JS_SetPropertyStr (this->m_context, event, "hitBox", JS_NULL);
+    return event;
+}
+
+void ScriptEngine::cursorFrame (const std::vector<CursorHit>& hits, const glm::vec2& world, bool down) {
+    const bool moved = !this->m_cursorSeen || world != this->m_cursorWorld;
+    const bool pressed = down && !this->m_cursorDown;
+    const bool released = !down && this->m_cursorDown;
+    this->m_cursorSeen = true;
+    this->m_cursorWorld = world;
+    this->m_cursorDown = down;
+
+    std::set<ScriptableObject*> under;
+    std::map<ScriptableObject*, glm::vec2> local;
+
+    for (const auto& hit : hits) {
+	under.insert (hit.object);
+	local[hit.object] = hit.local;
+    }
+
+    auto send = [&] (const char* name, ScriptableObject* object) {
+	const auto at = local.find (object);
+	JSValue event = this->cursorEvent (world, at == local.end () ? glm::vec2 (0.0f) : at->second);
+	this->dispatchEvent (name, event, object);
+	JS_FreeValue (this->m_context, event);
+    };
+
+    // the layers it left, then the ones it entered
+    for (auto* object : std::vector (this->m_hovered.begin (), this->m_hovered.end ())) {
+	if (!under.contains (object)) {
+	    send ("cursorLeave", object);
+	}
+    }
+    for (auto* object : under) {
+	if (!this->m_hovered.contains (object)) {
+	    send ("cursorEnter", object);
+	}
+    }
+    this->m_hovered = under;
+
+    if (moved) {
+	std::set<ScriptableObject*> targets = under;
+	targets.insert (this->m_pressed.begin (), this->m_pressed.end ());
+	for (auto* object : targets) {
+	    send ("cursorMove", object);
+	}
+    }
+
+    if (pressed) {
+	this->m_pressed = under;
+	for (auto* object : under) {
+	    send ("cursorDown", object);
+	}
+    }
+
+    if (released) {
+	for (auto* object : under) {
+	    send ("cursorUp", object);
+	}
+	// "pressed and released on the same object", after cursorUp
+	for (auto* object : under) {
+	    if (this->m_pressed.contains (object)) {
+		send ("cursorClick", object);
+	    }
+	}
+	this->m_pressed.clear ();
+    }
+}
+
 void ScriptEngine::tick () {
     this->startPendingScripts ();
 

@@ -34,6 +34,13 @@ public:
     [[nodiscard]] const Image& getImage () const;
     [[nodiscard]] glm::vec2 getSize () const;
 
+    /**
+     * Whether a point of the scene (WE's world: x right, y up, scene pixels) is on this layer as it was last drawn:
+     * its quad with its parents' transform, rotation and mouse parallax (the camera's zoom is not undone).
+     * `local` gets the point in the layer, 0..size (CursorEvent.localPosition), y up
+     */
+    [[nodiscard]] bool hitTest (const glm::vec2& world, glm::vec2& local) const;
+
     [[nodiscard]] GLuint getSceneSpacePosition () const;
     [[nodiscard]] GLuint getCopySpacePosition () const;
     [[nodiscard]] GLuint getPassSpacePosition () const;
