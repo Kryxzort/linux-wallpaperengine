@@ -130,6 +130,35 @@ float PropertyAnimation::evaluate (const Curve& curve, int frame) {
     return s * s * s * a.value + 3.0f * s * s * t * y1 + 3.0f * s * t * t * y2 + t * t * t * b.value;
 }
 
+void PropertyAnimation::play () {
+    if ((this->m_flags & Finished) != 0) {
+	this->m_time = 0.0f;
+    }
+    this->m_flags &= ~(StartPaused | Finished);
+}
+
+void PropertyAnimation::pause () { this->m_flags |= StartPaused; }
+
+void PropertyAnimation::stop () {
+    this->m_time = 0.0f;
+    this->m_flags &= ~(Finished | Reverse);
+    this->m_flags |= StartPaused;
+}
+
+bool PropertyAnimation::isPlaying () const { return (this->m_flags & (StartPaused | Finished)) == 0; }
+
+int PropertyAnimation::getFrame () const {
+    return static_cast<int> (std::floor (this->m_time / this->m_secondsPerFrame + 1e-4f));
+}
+
+void PropertyAnimation::setFrame (int frame) {
+    this->m_time = std::clamp (static_cast<float> (frame) * this->m_secondsPerFrame, 0.0f, this->m_duration);
+}
+
+int PropertyAnimation::getLength () const { return this->m_length; }
+
+float PropertyAnimation::getFps () const { return 1.0f / this->m_secondsPerFrame; }
+
 void PropertyAnimation::advance (float dt) {
     if ((this->m_flags & (StartPaused | Finished)) != 0) {
 	return;

@@ -4,6 +4,7 @@
 #include <ranges>
 #include <utility>
 
+#include "WallpaperEngine/Data/Model/PropertyAnimation.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
 #include "WallpaperEngine/Render/Objects/CText.h"
@@ -34,6 +35,11 @@ struct OpaqueScriptableObjectAdapter {
 struct OpaqueEffect {
     ScriptableObjectAdapter& adapter;
     const ImageEffect& effect;
+};
+
+/** an IAnimation: the keyframe animation of one property */
+struct OpaqueAnimation {
+    DynamicValue& value;
 };
 
 /** an ITextureAnimation: the texture animation of an image layer */
@@ -82,6 +88,7 @@ enum LayerMethod {
     Method_Stop,
     Method_Pause,
     Method_IsPlaying,
+    Method_GetAnimation,
 };
 
 constexpr std::pair<const char*, LayerMethod> kMethods[] = {
@@ -90,6 +97,7 @@ constexpr std::pair<const char*, LayerMethod> kMethods[] = {
     { "getParent", Method_GetParent },	 { "getChildren", Method_GetChildren },
     { "play", Method_Play },		 { "stop", Method_Stop },
     { "pause", Method_Pause },		 { "isPlaying", Method_IsPlaying },
+    { "getAnimation", Method_GetAnimation },
 };
 
 JSValue newEffect (JSContext* ctx, ScriptableObjectAdapter& adapter, const ImageEffect& effect) {
@@ -198,6 +206,48 @@ JSValue layer_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 	    return JS_UNDEFINED;
 	case Method_IsPlaying:
 	    return JS_NewBool (ctx, sound != nullptr && sound->isPlaying ());
+	case Method_GetAnimation: {
+	    // getAnimation (name?): the keyframe animation of the property whose script runs now (a script's own:
+	    // `thisObject.getAnimation ()`), else of a property of this layer, by name when one is given
+	    std::string name;
+	    if (argc > 0 && JS_IsString (argv[0])) {
+		const char* str = JS_ToCString (ctx, argv[0]);
+		name = str == nullptr ? "" : str;
+		JS_FreeCString (ctx, str);
+	    }
+	    auto matches = [&] (DynamicValue& value) {
+		const auto& animation = value.getAnimation ();
+		return animation != nullptr && (name.empty () || animation->getName () == name);
+	    };
+	    DynamicValue* found = nullptr;
+	    if (const auto* running = adapter.getEngine ().getRunningModule ();
+		running != nullptr && &running->object == &object && matches (running->value)) {
+		found = &running->value;
+	    }
+	    for (const auto& entry : object.getProperties () | std::views::values) {
+		if (found == nullptr && matches (entry.value)) {
+		    found = &entry.value;
+		}
+	    }
+	    if (found == nullptr && image != nullptr) {
+		for (const auto& effect : image->getImage ().effects) {
+		    for (const auto& pass : effect->passOverrides) {
+			for (const auto& constant : pass->constants | std::views::values) {
+			    if (found == nullptr && constant != nullptr && constant->value != nullptr
+				&& matches (*constant->value)) {
+				found = constant->value.get ();
+			    }
+			}
+		    }
+		}
+	    }
+	    if (found == nullptr) {
+		return JS_UNDEFINED;
+	    }
+	    JSValue result = JS_NewObjectClass (ctx, static_cast<int> (adapter.getAnimationClassId ()));
+	    JS_SetOpaque (result, new OpaqueAnimation { .value = *found });
+	    return result;
+	}
     }
 
     return JS_UNDEFINED;
@@ -478,6 +528,92 @@ int texture_animation_property_set (
     return 1;
 }
 
+namespace {
+enum AnimationMethod { Anim_Play, Anim_Stop, Anim_Pause, Anim_IsPlaying, Anim_GetFrame, Anim_SetFrame };
+
+constexpr std::pair<const char*, AnimationMethod> kAnimationMethods[] = {
+    { "play", Anim_Play },	   { "stop", Anim_Stop },	  { "pause", Anim_Pause },
+    { "isPlaying", Anim_IsPlaying }, { "getFrame", Anim_GetFrame }, { "setFrame", Anim_SetFrame },
+};
+
+JSValue animation_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {
+    JSClassID classId = 0;
+    auto* opaque = static_cast<OpaqueAnimation*> (JS_GetAnyOpaque (this_val, &classId));
+
+    if (opaque == nullptr || opaque->value.getAnimation () == nullptr) {
+	return JS_ThrowTypeError (ctx, "not an animation");
+    }
+
+    auto& animation = *opaque->value.getAnimation ();
+
+    switch (static_cast<AnimationMethod> (magic)) {
+	case Anim_Play:
+	    animation.play ();
+	    break;
+	case Anim_Stop:
+	    animation.stop ();
+	    break;
+	case Anim_Pause:
+	    animation.pause ();
+	    break;
+	case Anim_IsPlaying:
+	    return JS_NewBool (ctx, animation.isPlaying ());
+	case Anim_GetFrame:
+	    return JS_NewInt32 (ctx, animation.getFrame ());
+	case Anim_SetFrame: {
+	    double frame = 0.0;
+	    if (argc > 0) {
+		JS_ToFloat64 (ctx, &frame, argv[0]);
+	    }
+	    animation.setFrame (static_cast<int> (frame));
+	    break;
+	}
+    }
+
+    // the property shows the change on this frame (the scene applies animations before scripts run)
+    animation.apply (opaque->value);
+    return JS_UNDEFINED;
+}
+} // namespace
+
+JSValue animation_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst receiver) {
+    JSClassID classId = 0;
+    auto* opaque = static_cast<OpaqueAnimation*> (JS_GetAnyOpaque (obj_val, &classId));
+    const AtomName name (ctx, atom);
+
+    if (opaque == nullptr || name.str == nullptr || opaque->value.getAnimation () == nullptr) {
+	return JS_EXCEPTION;
+    }
+
+    const auto& animation = *opaque->value.getAnimation ();
+
+    if (strcmp (name.str, "name") == 0) {
+	return JS_NewString (ctx, animation.getName ().c_str ());
+    }
+    if (strcmp (name.str, "frameCount") == 0) {
+	return JS_NewInt32 (ctx, animation.getLength ());
+    }
+    if (strcmp (name.str, "fps") == 0) {
+	return JS_NewFloat64 (ctx, animation.getFps ());
+    }
+    if (strcmp (name.str, "duration") == 0) {
+	return JS_NewFloat64 (ctx, animation.getLength () / animation.getFps ());
+    }
+
+    for (const auto& [method, id] : kAnimationMethods) {
+	if (strcmp (name.str, method) == 0) {
+	    return JS_NewCFunctionMagic (ctx, animation_method, method, 1, JS_CFUNC_generic_magic, id);
+	}
+    }
+
+    return JS_UNDEFINED;
+}
+
+void animation_finalizer (JSRuntime* rt, JSValueConst val) {
+    JSClassID classId = 0;
+    delete static_cast<OpaqueAnimation*> (JS_GetAnyOpaque (val, &classId));
+}
+
 void texture_animation_finalizer (JSRuntime* rt, JSValueConst val) {
     JSClassID classId = 0;
     delete static_cast<OpaqueTextureAnimation*> (JS_GetAnyOpaque (val, &classId));
@@ -519,6 +655,15 @@ ScriptableObjectAdapter::ScriptableObjectAdapter (ScriptEngine& engine, std::str
     JS_NewClassID (rt, &this->m_textureAnimationClassId);
     JS_NewClass (rt, this->m_textureAnimationClassId, &this->m_textureAnimationDefinition);
 
+    this->m_animationExoticMethods.get_property = animation_property_get;
+    this->m_animationDefinition = {
+	.class_name = "IAnimation",
+	.finalizer = animation_finalizer,
+	.exotic = &m_animationExoticMethods,
+    };
+    JS_NewClassID (rt, &this->m_animationClassId);
+    JS_NewClass (rt, this->m_animationClassId, &this->m_animationDefinition);
+
     JSContext* ctx = engine.getContext ();
 
     for (const auto& [method, id] : kMethods) {
@@ -558,6 +703,10 @@ JSValue ScriptableObjectAdapter::instantiate (ScriptableObject& object) {
     this->m_instances.emplace (&object, JS_DupValue (ctx, result));
 
     return result;
+}
+
+JSValue ScriptableObjectAdapter::effect (const ImageEffect& effect) {
+    return newEffect (this->m_engine.getContext (), *this, effect);
 }
 
 ScriptableObject* ScriptableObjectAdapter::fromValue (JSValueConst value) const {

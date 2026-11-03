@@ -63,6 +63,17 @@ public:
     /** Writes the animated value into `value`, keeping its type; components without a curve keep their value */
     void apply (DynamicValue& value) const;
 
+    /** SceneScript's IAnimation: play (from where it is; a finished `single` one from the start), pause, stop (to the
+     *  start, paused), and the frame it is at */
+    void play ();
+    void pause ();
+    void stop ();
+    [[nodiscard]] bool isPlaying () const;
+    [[nodiscard]] int getFrame () const;
+    void setFrame (int frame);
+    [[nodiscard]] int getLength () const;
+    [[nodiscard]] float getFps () const;
+
     [[nodiscard]] const std::string& getName () const;
     [[nodiscard]] size_t getComponentCount () const;
     [[nodiscard]] float getTime () const;

@@ -56,6 +56,8 @@ public:
 	std::string source;
 	DynamicValue& value;
 	ScriptableObject& object;
+	/** a script on an effect's `visible`: thisObject is that effect (IEffect), not the layer */
+	const ImageEffect* effect = nullptr;
 	/** the module namespace once evaluated (JS_UNDEFINED before, or when it failed to load) */
 	JSValue ns = JS_UNDEFINED;
 	bool evaluated = false;
@@ -94,7 +96,9 @@ public:
      * module only; then `init(value)` runs once and `update(value)` every tick, their non-undefined
      * returns written to `currentValue`
      */
-    void queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object);
+    void queueScript (
+	const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect = nullptr
+    );
 
     /**
      * Runs a frame tick in the javascript engine. Dispatches any pending events,

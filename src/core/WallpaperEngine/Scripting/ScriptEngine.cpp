@@ -757,7 +757,9 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
     this->m_layerProps.erase (handle);
 }
 
-void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object) {
+void ScriptEngine::queueScript (
+    const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect
+) {
     const auto source = currentValue.getScriptSource ();
 
     if (!source.has_value () || !this->m_scriptKeys.insert (key).second) {
@@ -767,7 +769,7 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
     // evaluated on the next tick: objects queue their scripts while the scene is still being built, and a script's
     // top level may already look up other layers (thisScene.getLayer) or this layer's other properties
     this->m_scriptModules.emplace_back (
-	new LoadedModule { .key = key, .source = *source, .value = currentValue, .object = object }
+	new LoadedModule { .key = key, .source = *source, .value = currentValue, .object = object, .effect = effect }
     );
     this->m_pendingModules = true;
 }
@@ -823,7 +825,9 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
     // `thisLayer` and `thisObject` are the object the script is attached to, for this module alone: module-scope
     // bindings, so its event handlers and timer callbacks see them too. Prepended on the first line so that
     // error line numbers stay those of the script
-    const std::string source = "const thisLayer = globalThis.__thisLayerBinding, thisObject = thisLayer; " + module.source;
+    // (thisObject is the effect for a script on an effect's `visible`)
+    const std::string source
+	= "const thisLayer = globalThis.__thisLayerBinding, thisObject = globalThis.__thisObjectBinding; " + module.source;
 
     JSValue function = JS_Eval (
 	ctx, source.c_str (), source.size (), module.key.c_str (), JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
@@ -837,12 +841,18 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
     auto* definition = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (function));
 
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding", this->m_adapters.object->instantiate (module.object));
+    JS_SetPropertyStr (
+	ctx, this->m_globalThis, "__thisObjectBinding",
+	module.effect != nullptr ? this->m_adapters.object->effect (*module.effect)
+				 : this->m_adapters.object->instantiate (module.object)
+    );
     // createScriptProperties().finish() binds the stored script properties of the module being evaluated
     this->m_runningModule = &module;
     JSValue promise = JS_EvalFunction (ctx, function);
     this->runPendingJobs ();
     this->m_runningModule = nullptr;
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding", JS_UNDEFINED);
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", JS_UNDEFINED);
 
     if (JS_IsException (promise)) {
 	this->logModuleError (module, "load");
@@ -1058,6 +1068,19 @@ void ScriptEngine::tick () {
     if (!this->m_queuedEvents.empty ()) {
 	auto events = std::move (this->m_queuedEvents);
 	this->m_queuedEvents.clear ();
+
+	// in the order a session reports them: on, what plays, its picture, playing or not, where it is (a script
+	// handling the state may print the title it was just given)
+	constexpr const char* kOrder[] = { "mediaStatusChanged", "mediaPropertiesChanged", "mediaThumbnailChanged",
+					   "mediaPlaybackChanged", "mediaTimelineChanged" };
+
+	for (const char* name : kOrder) {
+	    if (const auto it = events.find (name); it != events.end ()) {
+		this->dispatchEvent (name, it->second);
+		JS_FreeValue (this->m_context, it->second);
+		events.erase (it);
+	    }
+	}
 
 	for (auto& [name, value] : events) {
 	    this->dispatchEvent (name.c_str (), value);

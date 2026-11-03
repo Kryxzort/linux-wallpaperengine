@@ -579,8 +579,24 @@ void CImage::setup () {
 		this->getScene ().getScriptEngine ().queueScript (
 		    "effect_" + std::to_string (cur->id) + "_" + std::to_string (effectIndex) + "_visible_"
 			+ std::to_string (this->getId ()),
-		    *cur->visible->value, *this
+		    *cur->visible->value, *this, cur.get ()
 		);
+	    }
+
+	    // scripts on the effect's shader constants (a fade, an audio pulse) run like a layer property's; their
+	    // thisObject is this image, and getAnimation () reaches the constant's own keyframe animation
+	    int passIndex = 0;
+	    for (const auto& pass : cur->passOverrides) {
+		for (const auto& [name, constant] : pass->constants) {
+		    if (constant != nullptr && constant->value != nullptr && constant->value->getScriptSource ().has_value ()) {
+			this->getScene ().getScriptEngine ().queueScript (
+			    "effect_" + std::to_string (cur->id) + "_" + std::to_string (effectIndex) + "_pass_"
+				+ std::to_string (passIndex) + "_" + name + "_" + std::to_string (this->getId ()),
+			    *constant->value, *this
+			);
+		    }
+		}
+		passIndex++;
 	    }
 
 	    const auto fboProvider = std::make_shared<FBOProvider> (this);

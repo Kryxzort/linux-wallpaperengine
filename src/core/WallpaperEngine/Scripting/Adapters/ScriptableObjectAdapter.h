@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ObjectAdapter.h"
+#include "WallpaperEngine/Data/Model/Types.h"
 
 #include <map>
 #include <string>
@@ -22,6 +23,9 @@ public:
     JSValue instantiate (ScriptableObject& object) override;
     JSValue instantiate (Data::Model::DynamicValue& value) override;
 
+    /** An IEffect for one effect of an image layer (a new object) */
+    [[nodiscard]] JSValue effect (const Data::Model::ImageEffect& effect);
+
     /** The layer behind a JS value this adapter made, or nullptr */
     [[nodiscard]] ScriptableObject* fromValue (JSValueConst value) const;
 
@@ -30,6 +34,7 @@ public:
 
     [[nodiscard]] JSClassID getEffectClassId () const { return m_effectClassId; }
     [[nodiscard]] JSClassID getTextureAnimationClassId () const { return m_textureAnimationClassId; }
+    [[nodiscard]] JSClassID getAnimationClassId () const { return m_animationClassId; }
 
 private:
     JSClassExoticMethods m_exoticMethods;
@@ -39,6 +44,9 @@ private:
     JSClassDef m_textureAnimationDefinition;
     JSClassID m_effectClassId = 0;
     JSClassID m_textureAnimationClassId = 0;
+    JSClassExoticMethods m_animationExoticMethods {};
+    JSClassDef m_animationDefinition {};
+    JSClassID m_animationClassId = 0;
     std::string m_name;
     std::unordered_map<ScriptableObject*, JSValue> m_instances;
     std::map<std::string, JSValue> m_methods;
