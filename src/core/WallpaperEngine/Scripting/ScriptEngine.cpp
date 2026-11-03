@@ -912,8 +912,10 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
     );
     // createScriptProperties().finish() binds the stored script properties of the module being evaluated
     this->m_runningModule = &module;
+    this->m_evaluatingModule = true;
     JSValue promise = JS_EvalFunction (ctx, function);
     this->runPendingJobs ();
+    this->m_evaluatingModule = false;
     this->m_runningModule = nullptr;
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding", JS_UNDEFINED);
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", JS_UNDEFINED);

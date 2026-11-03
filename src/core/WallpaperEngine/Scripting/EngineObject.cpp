@@ -198,7 +198,8 @@ JSValue engine_register_audio_buffers (JSContext* ctx, JSValueConst this_val, in
 	return JS_EXCEPTION;
     }
 
-    if (it->second.getEngine ().getRunningModule () == nullptr) {
+    // the running module is also set while its update () runs: only its evaluation is the global scope
+    if (!it->second.getEngine ().isEvaluatingModule ()) {
 	return JS_ThrowSyntaxError (ctx, "registerAudioBuffers can only be called from global scope.");
     }
 

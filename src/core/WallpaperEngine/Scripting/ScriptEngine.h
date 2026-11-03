@@ -79,6 +79,8 @@ public:
     JSContext* getContext () const { return m_context; }
     JSValue getGlobalThis () const { return m_globalThis; }
     LoadedModule* getRunningModule () const { return m_runningModule; }
+    /** A module's top level is being evaluated (not one of its exported functions) */
+    bool isEvaluatingModule () const { return m_evaluatingModule; }
     JSValue dynamicToJs (DynamicValue& value) const;
     /**
      * Writes a script value into `target` (numbers, booleans, strings, Vec2/3/4); undefined/null write nothing
@@ -250,6 +252,7 @@ private:
     JSValue m_vecCtors[3] = { JS_UNDEFINED, JS_UNDEFINED, JS_UNDEFINED };
 
     LoadedModule* m_runningModule = nullptr;
+    bool m_evaluatingModule = false;
 
     ScriptLayerHandle m_nextLayerId = 1;
     bool m_layerRegistryReady = false;
