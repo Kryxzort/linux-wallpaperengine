@@ -63,6 +63,8 @@ struct SceneData {
 	    UserSettingUniquePtr strength;
 	    /** Bloom's threshold to pass onto the shader */
 	    UserSettingUniquePtr threshold;
+	    /** Bloom's tint (`g_BloomTint` of the LDR chain, WE's default 1 1 1) */
+	    UserSettingUniquePtr tint;
 	} bloom;
 	/**
 	 * Parallax effect configuration

@@ -133,6 +133,14 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     const auto bloomOrigin = glm::vec3 { sceneWidth / 2, sceneHeight / 2, 0.0f };
     const auto bloomSize = glm::vec2 { sceneWidth, sceneHeight };
 
+    // the bloom passes' constants follow general.bloomstrength/bloomthreshold/bloomtint live (GH 0x1401b42b0 re-applies
+    // them to the materials; they were literals taken at load) — connected to the scene's values below
+    const glm::vec3 tint = this->getScene ().camera.bloom.tint->value->getVec3 ();
+    const JSON constants = {
+	{ "bloomstrength", this->getScene ().camera.bloom.strength->value->getFloat () },
+	{ "bloomthreshold", this->getScene ().camera.bloom.threshold->value->getFloat () },
+	{ "bloomtint", std::to_string (tint.x) + " " + std::to_string (tint.y) + " " + std::to_string (tint.z) },
+    };
     const JSON bloom
 	= { { "image", "models/wpenginelinux.json" },
 	    { "name", "bloomimagewpenginelinux" },
@@ -151,27 +159,46 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 		      { "name", "" },
 		      { "passes",
 			JSON::array (
-			    { { { "constantshadervalues",
-				  { { "bloomstrength", this->getScene ().camera.bloom.strength->value->getFloat () },
-				    { "bloomthreshold",
-				      this->getScene ().camera.bloom.threshold->value->getFloat () } } } },
-			      { { "constantshadervalues",
-				  { { "bloomstrength", this->getScene ().camera.bloom.strength->value->getFloat () },
-				    { "bloomthreshold",
-				      this->getScene ().camera.bloom.threshold->value->getFloat () } } } },
-			      { { "constantshadervalues",
-				  { { "bloomstrength", this->getScene ().camera.bloom.strength->value->getFloat () },
-				    { "bloomthreshold",
-				      this->getScene ().camera.bloom.threshold->value->getFloat () } } } } }
+			    { { { "constantshadervalues", constants } },
+			      { { "constantshadervalues", constants } },
+			      { { "constantshadervalues", constants } } }
 			) } } }
 	      ) } };
 
-    // create image for bloom passes
-    if (scene->camera.bloom.enabled->value->getBool ()) {
-	this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
-	this->m_bloomObject = this->createObject (*this->m_bloomObjectData);
+    // the image for the bloom passes, built when bloom is on or a user property can turn it on: `bloom` is read every
+    // frame (renderFrame). A scene whose bloom is a plain false never builds it (nor needs WE's bloom materials)
+    const auto& bloomEnabled = scene->camera.bloom.enabled;
+    if (bloomEnabled->value->getBool () || bloomEnabled->property != nullptr) {
+	try {
+	    this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
 
-	this->m_objectsByRenderOrder.push_back (this->m_bloomObject);
+	    if (this->m_bloomObjectData->is<Image> ()) {
+		for (const auto& effect : this->m_bloomObjectData->as<Image> ()->effects) {
+		    for (const auto& pass : effect->passOverrides) {
+			const std::pair<const char*, DynamicValue*> live[] = {
+			    { "bloomstrength", this->getScene ().camera.bloom.strength->value.get () },
+			    { "bloomthreshold", this->getScene ().camera.bloom.threshold->value.get () },
+			    { "bloomtint", this->getScene ().camera.bloom.tint->value.get () },
+			};
+
+			for (const auto& [name, source] : live) {
+			    if (const auto constant = pass->constants.find (name); constant != pass->constants.end ()) {
+				constant->second->value->connect (source);
+			    }
+			}
+		    }
+		}
+	    }
+
+	    this->m_bloomObject = this->createObject (*this->m_bloomObjectData);
+	} catch (const std::exception& e) {
+	    sLog.error ("Cannot build the bloom passes, the scene renders without bloom: ", e.what ());
+	    this->m_bloomObject = nullptr;
+	}
+
+	if (this->m_bloomObject != nullptr) {
+	    this->m_objectsByRenderOrder.push_back (this->m_bloomObject);
+	}
     }
 }
 
@@ -395,6 +422,9 @@ void CScene::renderFrame () {
 	    continue;
 	}
 	if (std::ranges::find (debug.skipObjects, cur->getId ()) != debug.skipObjects.end ()) {
+	    continue;
+	}
+	if (cur == this->m_bloomObject && !this->getScene ().camera.bloom.enabled->value->getBool ()) {
 	    continue;
 	}
 
