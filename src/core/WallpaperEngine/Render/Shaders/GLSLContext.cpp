@@ -1,4 +1,5 @@
 #include "GLSLContext.h"
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 
 #include <cassert>
@@ -187,6 +188,7 @@ std::string dropUnmatchedEndifs (const std::string& source) {
 	} else if (std::regex_search (line, closes)) {
 	    if (depth == 0) {
 		sLog.out ("Dropping an #endif with no #if: ", line);
+		WPENGINE_HEALTH ("compat", { { "what", "glslang: unmatched #endif dropped" } });
 		out += line.back () == '\n' ? "\n" : "";
 		begin = end;
 		continue;
@@ -261,6 +263,7 @@ bool truncateWiderOperands (std::string& source, const std::string& log) {
 
     rebuilt += text.substr (at);
     sLog.out ("Truncating to vec", narrower, " as HLSL does, line ", line, ": ", rebuilt);
+    WPENGINE_HEALTH ("compat", { { "what", "glslang: wider vector truncated as HLSL does" } });
     source.replace (begin, end - begin, rebuilt);
     return true;
 }
@@ -286,6 +289,7 @@ std::unique_ptr<glslang::TShader> parseUnit (EShLanguage stage, std::string& sou
 	shader.reset ();
 	if (attempt >= 16 || !truncateWiderOperands (source, log)) {
 	    sLog.error ("GLSL ", what, " unit parsing Failed: ", log);
+	    WPENGINE_HEALTH ("shader_error", { { "stage", "glslang" }, { "unit", what }, { "message", WallpaperEngine::Health::brief (log) } });
 	    return nullptr;
 	}
     }
@@ -295,6 +299,10 @@ std::unique_ptr<glslang::TShader> parseUnit (EShLanguage stage, std::string& sou
 std::pair<std::string, std::string> GLSLContext::toGlsl (const std::string& vertexIn, const std::string& fragmentIn) {
     std::string vertex = dropUnmatchedEndifs (spliceLines (vertexIn));
     std::string fragment = dropUnmatchedEndifs (spliceLines (fragmentIn));
+    if (WallpaperEngine::Health::enabled () && (vertex.size () != vertexIn.size () || fragment.size () != fragmentIn.size ())
+	&& (spliceLines (vertexIn) != vertexIn || spliceLines (fragmentIn) != fragmentIn)) {
+	WallpaperEngine::Health::report ("compat", { { "what", "glslang: backslash line continuation spliced" } });
+    }
     const auto vertexShader = parseUnit (EShLangVertex, vertex, "vertex");
 
     if (vertexShader == nullptr) {
@@ -312,6 +320,7 @@ std::pair<std::string, std::string> GLSLContext::toGlsl (const std::string& vert
 
     if (!program.link (EShMsgDefault)) {
 	sLog.error ("Program Linking Failed: ", program.getInfoLog ());
+	WPENGINE_HEALTH ("shader_error", { { "stage", "glslang" }, { "unit", "link" }, { "message", WallpaperEngine::Health::brief (program.getInfoLog ()) } });
 	return { "", "" };
     }
 

@@ -104,6 +104,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Scripting/ScriptEngine.cpp
 
     WallpaperEngine/Configuration.cpp
+    WallpaperEngine/Health.cpp
     WallpaperEngine/Context.cpp
     WallpaperEngine/Project.cpp)
 set(TARGET_LIBRARIES

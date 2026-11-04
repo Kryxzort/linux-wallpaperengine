@@ -147,6 +147,10 @@ private:
     void addObjectToRenderOrder (const Object& object);
     /** Builds the bloom image: WE's LDR chain, or the HDR chain of `m_hdrLevels` levels when rendersHDR */
     void setupBloom (const Scene& scene, uint32_t sceneWidth, uint32_t sceneHeight);
+    /** WPENGINE_HEALTH: the scene and one `object` record per scene object (built or not), after the build */
+    void reportHealthBuild () const;
+    /** WPENGINE_HEALTH: one `layers` record per drawable object (visibility, alpha, canvas bbox, finite transform) */
+    void reportHealthLayers (int frame) const;
     /** Points the HDR bloom image's passes at their inputs (tap offsets, strength, knee, tint, scatter) */
     void connectHDRBloom (Objects::CImage& image);
     /** The HDR chain's live inputs (GH 0x1401b42b0), from general's bloomhdr* values */
@@ -166,6 +170,8 @@ private:
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};
     std::mt19937 m_particleRng;
+    /** frames rendered while WPENGINE_HEALTH is on (layers are reported on the 1st and the 31st) */
+    int m_healthFrames = 0;
     /** composeOwnerOf, by object id (built on first use from the scene data) */
     mutable std::map<int, std::optional<int>> m_composeOwners = {};
     mutable bool m_composeOwnersBuilt = false;

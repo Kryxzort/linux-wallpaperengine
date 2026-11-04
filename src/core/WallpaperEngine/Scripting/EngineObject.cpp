@@ -1,4 +1,5 @@
 #include "EngineObject.h"
+#include "WallpaperEngine/Health.h"
 #include "ScriptEngine.h"
 #include "WallpaperEngine/Audio/AudioContext.h"
 #include "WallpaperEngine/Context.h"
@@ -388,6 +389,7 @@ void EngineObject::call (JSValue callback) {
 	JSValue exception = JS_GetException (ctx);
 	const char* message = JS_ToCString (ctx, exception);
 	sLog.error ("ScriptEngine [timer]: ", message ? message : "<exception>");
+	WPENGINE_HEALTH ("script_error", { { "object", -1 }, { "property", "timer" }, { "phase", "timer" }, { "message", WallpaperEngine::Health::brief (message ? message : "<exception>", 300) } });
 	JS_FreeCString (ctx, message);
 	JS_FreeValue (ctx, exception);
     }

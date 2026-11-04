@@ -1,4 +1,5 @@
 #include "CText.h"
+#include "WallpaperEngine/Health.h"
 
 #include <algorithm>
 #include <cmath>
@@ -93,9 +94,11 @@ void CText::setup () {
 		from = font;
 	    } else {
 		sLog.error ("CText: cannot open font '", font, "' of '", this->m_text.name, "', using systemfont_arial");
+		WPENGINE_HEALTH ("missing_asset", { { "kind", "font" }, { "path", font }, { "message", "cannot open (not a font FreeType reads); arial used" } });
 	    }
 	} catch (const std::exception& e) {
 	    sLog.error ("CText: cannot read font '", font, "' of '", this->m_text.name, "': ", e.what (), ", using systemfont_arial");
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "font" }, { "path", font }, { "message", WallpaperEngine::Health::brief (e.what ()) + "; arial used" } });
 	}
     }
 
@@ -109,8 +112,10 @@ void CText::setup () {
     this->m_hasFont = this->m_fonts.loaded ();
     if (this->m_hasFont) {
 	sLog.out ("CText: '", this->m_text.name, "' (", this->m_text.id, ") font ", font.empty () ? "(none)" : font, " -> ", from);
+	WPENGINE_HEALTH ("font", { { "requested", font }, { "used", from }, { "system", systemFont } });
     } else {
 	sLog.error ("CText: no usable font for '", this->m_text.name, "' (", font, "): fontconfig found none");
+	WPENGINE_HEALTH ("missing_asset", { { "kind", "font" }, { "path", font }, { "message", "no usable font (fontconfig found none): the text draws nothing" } });
     }
 
     // laid out before the passes are built: the effects' FBOs take the layer's size
@@ -140,6 +145,7 @@ void CText::initScriptLayer () {
 
     if (this->m_layerHandle == Scripting::kInvalidLayerHandle) {
 	sLog.error ("CText: createLayerScript failed for '", this->m_text.name, "'");
+	WPENGINE_HEALTH ("script_error", { { "object", this->m_text.id }, { "property", "text" }, { "phase", "create" }, { "message", "createLayerScript failed" } });
     }
 }
 

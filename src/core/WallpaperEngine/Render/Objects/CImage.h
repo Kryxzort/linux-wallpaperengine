@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include <nlohmann/json.hpp>
+
 #include "CRenderable.h"
 #include "WallpaperEngine/Render/CObject.h"
 #include "WallpaperEngine/Render/Objects/Effects/CPass.h"
@@ -47,6 +49,11 @@ public:
      * `local` gets the point in the layer, 0..size (CursorEvent.localPosition), y up
      */
     [[nodiscard]] bool hitTest (const glm::vec2& world, glm::vec2& local) const;
+    /**
+     * WPENGINE_HEALTH: where the layer's quad lands this frame — its canvas bbox (scene px, x right, y down, from the
+     * quad's corners through the screen MVP), the part of it on the canvas, alpha, and whether the transform is finite
+     */
+    [[nodiscard]] nlohmann::json healthLayer () const;
 
     [[nodiscard]] GLuint getSceneSpacePosition () const;
     [[nodiscard]] GLuint getCopySpacePosition () const;

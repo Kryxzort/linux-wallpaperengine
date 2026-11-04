@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #include "CSound.h"
+#include "WallpaperEngine/Health.h"
 
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/FileSystem/Container.h"
@@ -138,6 +139,7 @@ void CSound::start () {
 	stream = new Audio::AudioStream (this->getScene ().getAudioContext (), this->getAssetLocator ().read (file));
     } catch (const std::exception& e) {
 	sLog.error ("Cannot play sound ", file, " of object ", this->getId (), ": ", e.what ());
+	WPENGINE_HEALTH ("missing_asset", { { "kind", "sound" }, { "object", this->getId () }, { "path", file }, { "message", WallpaperEngine::Health::brief (e.what ()) } });
 	this->swapStream (nullptr);
 	this->m_gap = -1.0;
 	return;

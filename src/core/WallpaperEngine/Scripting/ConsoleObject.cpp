@@ -1,4 +1,5 @@
 #include "ConsoleObject.h"
+#include "WallpaperEngine/Health.h"
 
 #include "EngineObject.h"
 #include "ScriptEngine.h"
@@ -41,6 +42,7 @@ JSValue console_error (JSContext* ctx, JSValueConst this_val, int argc, JSValueC
     }
 
     sLog.error (stream.str ());
+WPENGINE_HEALTH ("script_console_error", { { "message", WallpaperEngine::Health::brief (stream.str (), 300) } });
 
     return JS_UNDEFINED;
 }

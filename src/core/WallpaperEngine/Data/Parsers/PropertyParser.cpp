@@ -1,4 +1,5 @@
 #include "PropertyParser.h"
+#include "WallpaperEngine/Health.h"
 #include "../Model/Property.h"
 
 using namespace WallpaperEngine::Data::Parsers;
@@ -55,6 +56,7 @@ PropertySharedPtr PropertyParser::parse (const JSON& it, const std::string& name
     if (type.has_value () && type != "group") {
 	// show the error and ignore this property
 	sLog.error ("Unexpected type for property: ", type);
+	WPENGINE_HEALTH ("unsupported", { { "what", "user property type " + (type->is_string () ? type->get<std::string> () : type->dump ()) }, { "property", name } });
 	sLog.error (it.dump ());
     }
 

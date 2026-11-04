@@ -1,4 +1,5 @@
 #include "CParticle.h"
+#include "WallpaperEngine/Health.h"
 
 #include "WallpaperEngine/Audio/AudioContext.h"
 #include "WallpaperEngine/Context.h"
@@ -289,6 +290,7 @@ std::unique_ptr<CParticle> CParticle::makeChild (ChildSet& set, const glm::vec3&
 	instance->setup ();
     } catch (const std::exception& e) {
 	sLog.error ("Cannot create child particle system ", set.child->particleFile, ": ", e.what ());
+	WPENGINE_HEALTH ("asset_error", { { "kind", "particle" }, { "path", set.child->particleFile }, { "message", "child system not created: " + WallpaperEngine::Health::brief (e.what ()) } });
 	instance.reset ();
     }
     return instance;
@@ -854,6 +856,7 @@ void CParticle::setupEmitters () {
 	    func = createSphereEmitter (emitter);
 	} else {
 	    sLog.out ("Unknown emitter type: ", emitter.name);
+	    WPENGINE_HEALTH ("unsupported", { { "what", "particle emitter " + emitter.name } });
 	    continue;
 	}
 
@@ -2117,6 +2120,7 @@ OperatorFunc CParticle::createOscillatePositionOperator (const OscillatePosition
 void CParticle::setupPass () {
     if (!m_particle.material || !m_particle.material->material || m_particle.material->material->passes.empty ()) {
 	sLog.error ("No valid material for particle ", m_particle.name);
+	WPENGINE_HEALTH ("asset_error", { { "kind", "material" }, { "message", "particle without a valid material: not drawn" } });
 	return;
     }
 

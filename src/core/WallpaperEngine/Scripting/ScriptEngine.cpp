@@ -1,4 +1,5 @@
 #include "ScriptEngine.h"
+#include "WallpaperEngine/Health.h"
 
 #include "Adapters/ScriptableObjectAdapter.h"
 #include "ScriptPropertiesObject.h"
@@ -450,6 +451,7 @@ static void logJSException (JSContext* ctx, const char* context) {
 	const char* str = JS_ToCString (ctx, exc);
 	if (str) {
 	    sLog.error ("ScriptEngine [", context, "]: ", str);
+	    WPENGINE_HEALTH ("script_error", { { "object", -1 }, { "property", context }, { "phase", "engine" }, { "message", WallpaperEngine::Health::brief (str, 300) } });
 	    JS_FreeCString (ctx, str);
 	}
     }
@@ -507,6 +509,7 @@ void ScriptEngine::installPrelude () {
 
     if (prelude.empty ()) {
 	sLog.error ("ScriptEngine: no ", path, " in the assets; scripts get bare Vec2/Vec3/Vec4 classes");
+	WPENGINE_HEALTH ("missing_asset", { { "kind", "script" }, { "path", path }, { "message", "WE script classes missing from the assets" } });
     } else {
 	JSValue result = JS_Eval (ctx, prelude.c_str (), prelude.size (), path.c_str (), JS_EVAL_TYPE_GLOBAL);
 	ok = !JS_IsException (result);
@@ -901,6 +904,17 @@ void ScriptEngine::logModuleError (LoadedModule& module, const char* what) {
 
 	// a native call that returned JS_EXCEPTION without throwing leaves no error object behind
 	const bool silent = JS_VALUE_GET_TAG (exception) == JS_TAG_UNINITIALIZED;
+	if (WallpaperEngine::Health::enabled ()) {
+	    const auto cut = module.key.rfind ('_');
+	    WallpaperEngine::Health::report (
+		"script_error",
+		{ { "object", module.object.getId () }, { "object_name", module.object.getObject ().name },
+		  { "property", cut == std::string::npos ? module.key : module.key.substr (0, cut) }, { "phase", what },
+		  { "message", silent ? std::string ("a native call failed without an error (an API LWE doesn't implement?)")
+				      : WallpaperEngine::Health::brief (message ? message : "<exception>", 300) },
+		  { "stack", WallpaperEngine::Health::brief (stack, 300) } }
+	    );
+	}
 	sLog.error (
 	    "ScriptEngine [", module.key, ".", what, "]: ",
 	    silent ? "a native call failed without an error (an API LWE doesn't implement?)"

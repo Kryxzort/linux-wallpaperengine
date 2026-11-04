@@ -1,4 +1,5 @@
 #include "MaterialParser.h"
+#include "WallpaperEngine/Health.h"
 
 #include "../Model/Material.h"
 #include "../Model/Project.h"
@@ -84,6 +85,7 @@ BlendingMode MaterialParser::parseBlendMode (const std::string& mode) {
     }
 
     sLog.error ("Unknown blending mode: ", mode, " defaulting to normal");
+    WPENGINE_HEALTH ("unsupported", { { "what", "material blending mode " + std::string (mode) + " (as normal)" } });
     return BlendingMode_Normal;
 }
 
@@ -97,6 +99,7 @@ CullingMode MaterialParser::parseCullMode (const std::string& mode) {
     }
 
     sLog.error ("Unknown culling mode: ", mode, " defaulting to nocull");
+    WPENGINE_HEALTH ("unsupported", { { "what", "material culling mode " + std::string (mode) + " (as nocull)" } });
     return CullingMode_Disable;
 }
 
@@ -110,6 +113,7 @@ DepthtestMode MaterialParser::parseDepthtestMode (const std::string& mode) {
     }
 
     sLog.error ("Unknown depthtest mode: ", mode, " defaulting to disabled");
+    WPENGINE_HEALTH ("unsupported", { { "what", "material depthtest mode " + std::string (mode) + " (as disabled)" } });
     return DepthtestMode_Disabled;
 }
 
@@ -123,5 +127,6 @@ DepthwriteMode MaterialParser::parseDepthwriteMode (const std::string& mode) {
     }
 
     sLog.error ("Unknown depthwrite mode: ", mode, " defaulting to disabled");
+    WPENGINE_HEALTH ("unsupported", { { "what", "material depthwrite mode " + std::string (mode) + " (as disabled)" } });
     return DepthwriteMode_Disabled;
 }

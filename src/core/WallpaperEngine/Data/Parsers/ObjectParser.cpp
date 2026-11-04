@@ -9,6 +9,7 @@
 #include "TextureParser.h"
 #include "UserSettingParser.h"
 #include "WallpaperEngine/Data/Builders/ColorBuilder.h"
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 
 #include <algorithm>
@@ -56,6 +57,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	};
     } catch (const std::exception& e) {
 	sLog.error ("Error parsing object base data: ", e.what ());
+	WPENGINE_HEALTH ("parse_error", { { "message", std::string ("object base data: ") + e.what () } });
 	const auto idIt = it.find ("id");
 	const auto nameIt = it.find ("name");
 	int id = (idIt != it.end () && idIt->is_number ()) ? idIt->get<int> () : -1;
@@ -83,6 +85,10 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	};
     }
 
+    // WPENGINE_HEALTH: what the parse of this object reports names it
+    const WallpaperEngine::Health::Scope healthObject ("object", basedata.id);
+    const WallpaperEngine::Health::Scope healthName ("object_name", basedata.name);
+
     if (isCamera && it.find ("fov") != it.end ()) {
 	basedata.cameraFov = it.user ("fov", project.properties, 50.0f);
     }
@@ -105,6 +111,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	return parseLight (it, project, std::move (basedata));
     } else if (shapeIt != it.end ()) {
 	sLog.error ("VolumeLight objects are not supported yet");
+	WPENGINE_HEALTH ("unsupported", { { "what", "VolumeLight (shape) object" } });
     } else if (isCamera) {
 	// a camera object: plain object data, read by CScene::updateCamera
     } else {
@@ -113,6 +120,13 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    // TODO: RE-EVALUATE IF THIS MAKES SENSE, THERE'S OBJECTS THAT CONTAIN OTHER OBJECTS AND THUS AREN'T REALLY
 	    // ANYTHING SPECIAL
 	    sLog.error ("Unknown object type found: ", it.dump ());
+	    if (WallpaperEngine::Health::enabled ()) {
+		nlohmann::json keys = nlohmann::json::array ();
+		for (const auto& [key, value] : it.items ()) {
+		    keys.push_back (key);
+		}
+		WallpaperEngine::Health::report ("unknown_object", { { "keys", keys } });
+	    }
 	}
     }
 
@@ -419,6 +433,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 
 	if (particleIt == it.end ()) {
 	    sLog.error ("Particle object must have a particle definition");
+	    WPENGINE_HEALTH ("parse_error", { { "message", "particle object without a particle definition" } });
 	    return std::make_unique<Particle> (
 		std::move (base),
 		ParticleData {
@@ -467,6 +482,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 		    = WallpaperEngine::Data::JSON::JSON::parse (project.assetLocator->readString (particleFile));
 	    } catch (std::runtime_error& e) {
 		sLog.error ("Cannot load particle file: ", particleFile, " - ", e.what ());
+		WPENGINE_HEALTH ("missing_asset", { { "kind", "particle" }, { "path", particleFile }, { "message", WallpaperEngine::Health::brief (e.what ()) } });
 	    }
 	} else if (particleIt->is_object ()) {
 	    particleJson = *particleIt;
@@ -593,6 +609,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 		});
 	    } catch (std::runtime_error& e) {
 		sLog.error ("Cannot load particle material: ", materialIt->get<std::string> (), " - ", e.what ());
+		WPENGINE_HEALTH ("missing_asset", { { "kind", "material" }, { "path", materialIt->get<std::string> () }, { "message", WallpaperEngine::Health::brief (e.what ()) } });
 	    }
 	}
 
@@ -654,6 +671,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 	);
     } catch (nlohmann::json::exception& e) {
 	sLog.error ("Error parsing particle '", base.name, "': ", e.what ());
+	WPENGINE_HEALTH ("parse_error", { { "message", std::string ("particle: ") + e.what () } });
 	sLog.error ("Particle JSON: ", it.dump ());
 	throw;
     }
@@ -742,6 +760,7 @@ ParticleEmitter ObjectParser::parseParticleEmitter (const JSON& it) {
 	};
     } catch (nlohmann::json::exception& e) {
 	sLog.error ("Error parsing emitter: ", e.what ());
+	WPENGINE_HEALTH ("parse_error", { { "message", std::string ("particle emitter: ") + e.what () } });
 	sLog.error ("Emitter JSON: ", it.dump ());
 	throw;
     }
@@ -801,6 +820,7 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
 	);
     }
 
+    WPENGINE_HEALTH ("unsupported", { { "what", "particle initializer " + (name.empty () ? std::string ("(unnamed)") : name) } });
     return nullptr;
 }
 
@@ -888,6 +908,7 @@ ParticleOperatorUniquePtr ObjectParser::parseParticleOperator (const JSON& it, c
 	);
     }
 
+    WPENGINE_HEALTH ("unsupported", { { "what", "particle operator " + (name.empty () ? std::string ("(unnamed)") : name) } });
     return nullptr;
 }
 
@@ -896,6 +917,10 @@ ParticleRenderer ObjectParser::parseParticleRenderer (const JSON& it) {
     const auto nameIt = it.find ("name");
     if (nameIt != it.end () && nameIt->is_string ()) {
 	name = nameIt->get<std::string> ();
+    }
+
+    if (name != "sprite" && name != "spritetrail" && name != "rope" && name != "ropetrail") {
+	WPENGINE_HEALTH ("unsupported", { { "what", "particle renderer " + name + " (drawn as sprite)" } });
     }
 
     // Renderer-type-specific defaults
@@ -1018,6 +1043,7 @@ ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& p
 	    }
 	} catch (const std::exception& e) {
 	    sLog.error ("Cannot load child particle system ", particleFile, ": ", e.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "particle" }, { "path", particleFile }, { "message", "child system: " + WallpaperEngine::Health::brief (e.what ()) } });
 	}
 	depth--;
     }

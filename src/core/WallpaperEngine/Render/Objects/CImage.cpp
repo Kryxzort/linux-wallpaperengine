@@ -13,6 +13,7 @@
 #include "WallpaperEngine/Data/Model/Material.h"
 #include "WallpaperEngine/Data/Model/Object.h"
 #include "WallpaperEngine/Data/Parsers/MaterialParser.h"
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 
 using namespace WallpaperEngine;
@@ -347,10 +348,12 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	std::string error;
 	if (!Puppet::parse (data.data (), data.size (), this->m_puppet, error)) {
 	    sLog.error ("Could not load puppet ", file, ": ", error);
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "puppet" }, { "path", file }, { "message", error } });
 	    return false;
 	}
 	if (!error.empty ()) {
 	    sLog.error ("Puppet ", file, " partly loaded: ", error);
+	    WPENGINE_HEALTH ("asset_error", { { "kind", "puppet" }, { "path", file }, { "message", "partly loaded: " + error } });
 	}
 
 	std::vector<GLfloat> texcoords;
@@ -369,6 +372,7 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	}
 	if (this->m_puppetVertices.empty () || indices.empty ()) {
 	    sLog.error ("Puppet ", file, " has no triangles");
+	    WPENGINE_HEALTH ("asset_error", { { "kind", "puppet" }, { "path", file }, { "message", "no triangles" } });
 	    return false;
 	}
 
@@ -412,6 +416,7 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	return true;
     } catch (const std::exception& ex) {
 	sLog.error ("Could not load puppet mesh ", file, ": ", ex.what ());
+	WPENGINE_HEALTH ("missing_asset", { { "kind", "puppet" }, { "path", file }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	return false;
     }
 }
@@ -655,6 +660,9 @@ void CImage::setup () {
 	int effectIndex = -1;
 	for (const auto& cur : this->m_image.effects) {
 	    effectIndex++;
+	    // WPENGINE_HEALTH: what fails while this effect builds (its shaders, textures) names it
+	    const WallpaperEngine::Health::Scope healthEffect ("effect", cur->id);
+	    const WallpaperEngine::Health::Scope healthEffectName ("effect_name", cur->effect != nullptr && !cur->effect->name.empty () ? cur->effect->name : cur->name);
 	    if (std::find (debug.skipEffects.begin (), debug.skipEffects.end (), static_cast<int> (cur->id))
 		!= debug.skipEffects.end ()) {
 		continue;
@@ -716,21 +724,25 @@ void CImage::setup () {
 		if (!(*curEffect)->material.has_value ()) {
 		    if (!(*curEffect)->command.has_value ()) {
 			sLog.error ("Pass without material and command not supported");
+			WPENGINE_HEALTH ("unsupported", { { "what", "effect pass without material and command" } });
 			continue;
 		    }
 
 		    if (!(*curEffect)->source.has_value ()) {
 			sLog.error ("Pass without material and source not supported");
+			WPENGINE_HEALTH ("unsupported", { { "what", "effect pass without material and source" } });
 			continue;
 		    }
 
 		    if (!(*curEffect)->target.has_value ()) {
 			sLog.error ("Pass without material and target not supported");
+			WPENGINE_HEALTH ("unsupported", { { "what", "effect pass without material and target" } });
 			continue;
 		    }
 
 		    if ((*curEffect)->command != Command_Copy) {
 			sLog.error ("Only copy command is supported for pass without material");
+			WPENGINE_HEALTH ("unsupported", { { "what", "effect pass command other than copy" } });
 			continue;
 		    }
 
@@ -773,10 +785,12 @@ void CImage::setup () {
 		// a passthrough/fullscreen layer exists only to post-process what's below it: part of its effect
 		// chain is an arbitrary picture (measured: a black screen over 3432999904), so it still goes whole
 		if (this->m_image.model->passthrough || this->m_image.model->fullscreen) {
+		    WPENGINE_HEALTH ("effect_dropped", { { "reason", WallpaperEngine::Health::brief (e.what ()) }, { "takes_layer", true } });
 		    throw;
 		}
 
 		sLog.error ("Leaving out effect ", cur->id, " (", cur->name, ") of object ", this->m_image.id, ": ", e.what ());
+		WPENGINE_HEALTH ("effect_dropped", { { "reason", WallpaperEngine::Health::brief (e.what ()) }, { "takes_layer", false } });
 
 		while (this->m_passes.size () > passesBefore) {
 		    delete this->m_passes.back ();
@@ -1035,6 +1049,10 @@ bool CImage::configurePassTarget (
 	sLog.error (
 	    "Pass target FBO '", target, "' could not be resolved for object ", pass->getRenderable ().getId (),
 	    " shader=", pass->getPass ().shader
+	);
+	WPENGINE_HEALTH (
+	    "pass_error", { { "object", pass->getRenderable ().getId () }, { "shader", pass->getPass ().shader },
+			    { "message", "target FBO '" + target + "' not resolved" } }
 	);
 	return false;
     }
@@ -1440,6 +1458,86 @@ void CImage::updateScreenSpacePosition () {
 }
 
 const Image& CImage::getImage () const { return this->m_image; }
+
+nlohmann::json CImage::healthLayer () const {
+    const float width = static_cast<float> (this->getScene ().getWidth ());
+    const float height = static_cast<float> (this->getScene ().getHeight ());
+    const auto transform = this->resolveTransform (this->getImage ());
+    const glm::vec2 size = this->m_size;
+    bool finite = std::isfinite (transform.origin.x) && std::isfinite (transform.origin.y)
+	&& std::isfinite (transform.origin.z) && std::isfinite (transform.scale.x) && std::isfinite (transform.scale.y)
+	&& std::isfinite (transform.angle) && std::isfinite (size.x) && std::isfinite (size.y);
+    for (int col = 0; col < 4; col++) {
+	for (int row = 0; row < 4; row++) {
+	    finite = finite && std::isfinite (this->m_modelViewProjectionScreen[col][row]);
+	}
+    }
+
+    // the quad the screen MVP takes: the drawing space's corners (2D), or the layer's own pixels (a 3D scene's world)
+    glm::vec2 corners[4];
+    if (this->isWorldPlaced ()) {
+	glm::vec2 centre = this->m_localOffset.value_or (glm::vec2 (0.0f));
+	if (!this->m_localOffset.has_value ()) {
+	    const std::string& alignment = this->getImage ().alignment;
+	    centre.y = alignment.find ("top") != std::string::npos ? -size.y / 2.0f
+		: alignment.find ("bottom") != std::string::npos   ? size.y / 2.0f
+								   : 0.0f;
+	    centre.x = alignment.find ("left") != std::string::npos ? size.x / 2.0f
+		: alignment.find ("right") != std::string::npos    ? -size.x / 2.0f
+								   : 0.0f;
+	}
+	corners[0] = centre - size / 2.0f;
+	corners[1] = { centre.x - size.x / 2.0f, centre.y + size.y / 2.0f };
+	corners[2] = { centre.x + size.x / 2.0f, centre.y - size.y / 2.0f };
+	corners[3] = centre + size / 2.0f;
+    } else {
+	corners[0] = { this->m_pos.x, this->m_pos.y };
+	corners[1] = { this->m_pos.x, this->m_pos.w };
+	corners[2] = { this->m_pos.z, this->m_pos.y };
+	corners[3] = { this->m_pos.z, this->m_pos.w };
+    }
+
+    glm::vec4 box (INFINITY, INFINITY, -INFINITY, -INFINITY);
+    bool behind = false;
+    for (const auto& corner : corners) {
+	const glm::vec4 clip = this->m_modelViewProjectionScreen * glm::vec4 (corner, 0.0f, 1.0f);
+	if (!(clip.w > 0.0f)) {
+	    behind = true;
+	    continue;
+	}
+	// NDC → canvas pixels, y down (the PNG's rows): the scene draws upside down into its target (the host flips
+	// it), so NDC +y is the canvas's bottom
+	const float x = (clip.x / clip.w + 1.0f) * 0.5f * width;
+	const float y = (1.0f + clip.y / clip.w) * 0.5f * height;
+	box = { std::min (box.x, x), std::min (box.y, y), std::max (box.z, x), std::max (box.w, y) };
+    }
+    if (this->getImage ().model->fullscreen) {
+	box = { 0.0f, 0.0f, width, height };
+    }
+
+    nlohmann::json out = {
+	{ "alpha", this->getImage ().alpha->value->getFloat () },
+	{ "size", { size.x, size.y } },
+	{ "finite", finite },
+	{ "passthrough", this->getImage ().model->passthrough },
+	{ "fullscreen", this->getImage ().model->fullscreen },
+	{ "passes", this->m_passes.size () },
+    };
+    if (behind) {
+	out["behind_camera"] = true;
+    }
+    if (std::isfinite (box.x) && std::isfinite (box.y) && std::isfinite (box.z) && std::isfinite (box.w)) {
+	const float area = (box.z - box.x) * (box.w - box.y);
+	const float onW = std::max (0.0f, std::min (box.z, width) - std::max (box.x, 0.0f));
+	const float onH = std::max (0.0f, std::min (box.w, height) - std::max (box.y, 0.0f));
+	out["bbox"] = { box.x, box.y, box.z, box.w };
+	out["area_px"] = area;
+	out["on_canvas_px"] = onW * onH;
+    } else {
+	out["bbox"] = nullptr;
+    }
+    return out;
+}
 
 bool CImage::hitTest (const glm::vec2& world, glm::vec2& local) const {
     // a layer in a 3D scene's world isn't hit-tested (the cursor would have to be cast into the world)

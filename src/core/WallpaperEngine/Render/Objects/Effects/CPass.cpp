@@ -1,4 +1,5 @@
 #include "CPass.h"
+#include "WallpaperEngine/Health.h"
 
 #include "WallpaperEngine/Context.h"
 
@@ -546,11 +547,13 @@ void CPass::render () {
 
     if (this->m_drawTo == nullptr) {
 	sLog.error ("Skipping render pass for object ", this->m_renderable.getId (), ": no destination FBO set");
+	WPENGINE_HEALTH ("pass_error", { { "object", this->m_renderable.getId () }, { "shader", this->m_pass.shader }, { "message", "render pass skipped: no destination FBO set" } });
 	return;
     }
 
     if (this->m_input == nullptr) {
 	sLog.error ("Skipping render pass for object ", this->m_renderable.getId (), ": no input texture set");
+	WPENGINE_HEALTH ("pass_error", { { "object", this->m_renderable.getId () }, { "shader", this->m_pass.shader }, { "message", "render pass skipped: no input texture set" } });
 	return;
     }
 
@@ -646,6 +649,10 @@ GLuint CPass::compileShader (const char* shader, GLuint type) {
 	delete[] logBuffer;
 
 	if (result == GL_FALSE) {
+	    WPENGINE_HEALTH (
+		"shader_error", { { "stage", "gl" }, { "unit", type == GL_VERTEX_SHADER ? "vertex" : "fragment" },
+				  { "message", WallpaperEngine::Health::brief (buffer.str ()) } }
+	    );
 	    // shader compilation failed completely, throw an exception
 	    sLog.exception (buffer.str ());
 	} else {
@@ -690,6 +697,8 @@ void CPass::setupShaders () {
 	this->m_override.textures, this->m_override.constants
     );
 
+    // WPENGINE_HEALTH: a compile error names the shader
+    const WallpaperEngine::Health::Scope healthShader ("shader", shaderName);
     const auto [vertex, fragment]
 	= Shaders::GLSLContext::get ().toGlsl (this->m_shader->vertex (), this->m_shader->fragment ());
 
@@ -720,6 +729,7 @@ void CPass::setupShaders () {
 	// free the buffer
 	delete[] logBuffer;
 	if (result == GL_FALSE) {
+	    WPENGINE_HEALTH ("shader_error", { { "stage", "gl" }, { "unit", "link" }, { "message", WallpaperEngine::Health::brief (message) } });
 	    // shader compilation failed completely, throw an exception
 	    sLog.exception (message);
 	} else {
@@ -776,6 +786,7 @@ void CPass::setupTextureUniforms () {
 	    });
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve texture ", textureName, " for fragment shader ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "texture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 
@@ -794,6 +805,7 @@ void CPass::setupTextureUniforms () {
 	    this->m_textures[index] = chain;
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve texture ", textureName, " for fragment shader ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "texture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 
@@ -812,6 +824,7 @@ void CPass::setupTextureUniforms () {
 	    this->m_textures[index] = chain;
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve texture ", textureName, " for pass ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "texture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 
@@ -835,6 +848,7 @@ void CPass::setupTextureUniforms () {
 	    this->m_textures[index] = chain;
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve user texture ", textureName, " for pass ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "usertexture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 
@@ -854,6 +868,7 @@ void CPass::setupTextureUniforms () {
 	    this->m_textures[index] = chain;
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve texture ", textureName, " for override ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "texture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 
@@ -877,6 +892,7 @@ void CPass::setupTextureUniforms () {
 	    this->m_textures[index] = chain;
 	} catch (std::runtime_error& ex) {
 	    sLog.error ("Cannot resolve user texture ", textureName, " for override ", ex.what ());
+	    WPENGINE_HEALTH ("missing_asset", { { "kind", "usertexture" }, { "path", textureName }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 

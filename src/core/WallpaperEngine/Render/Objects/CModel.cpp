@@ -1,4 +1,5 @@
 #include "CModel.h"
+#include "WallpaperEngine/Health.h"
 
 #include <iterator>
 
@@ -233,6 +234,7 @@ void CModel::setup () {
     if (!this->getScene ().getCamera ().isPerspective ()) {
 	// (a model in a 2D scene: none in the corpus; there's no depth buffer to draw it against)
 	sLog.error ("Model ", file, " is in a 2D scene: not drawn");
+	WPENGINE_HEALTH ("unsupported", { { "what", "model object in a 2D scene (not drawn)" }, { "path", file } });
 	return;
     }
 
@@ -243,13 +245,16 @@ void CModel::setup () {
 
 	if (!Puppet::parse (data.data (), data.size (), this->m_model, error)) {
 	    sLog.error ("Could not load model ", file, ": ", error);
+WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "message", error } });
 	    return;
 	}
 	if (!error.empty ()) {
 	    sLog.error ("Model ", file, " partly loaded: ", error);
+	    WPENGINE_HEALTH ("asset_error", { { "kind", "model" }, { "path", file }, { "message", "partly loaded: " + error } });
 	}
     } catch (const std::exception& ex) {
 	sLog.error ("Could not load model ", file, ": ", ex.what ());
+	WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
 	return;
     }
 
@@ -296,6 +301,7 @@ void CModel::setup () {
 	    }
 	} catch (const std::exception& ex) {
 	    sLog.error ("Leaving out mesh ", mesh.material, " of model ", file, ": ", ex.what ());
+	    WPENGINE_HEALTH ("asset_error", { { "kind", "material" }, { "path", mesh.material }, { "message", "mesh left out: " + WallpaperEngine::Health::brief (ex.what ()) } });
 	}
     }
 

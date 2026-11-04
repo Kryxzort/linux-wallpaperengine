@@ -14,6 +14,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "WallpaperEngine/Context.h"
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
@@ -140,6 +141,132 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     }
 
     this->setupBloom (*scene, sceneWidth, sceneHeight);
+
+    if (WallpaperEngine::Health::enabled ()) {
+	this->reportHealthBuild ();
+    }
+}
+
+namespace {
+const char* healthType (const Object& object) {
+    if (object.is<Text> ()) {
+	return "text";
+    }
+    if (object.is<Image> ()) {
+	return object.as<Image> ()->model != nullptr && object.as<Image> ()->model->passthrough ? "compose" : "image";
+    }
+    if (object.is<Sound> ()) {
+	return "sound";
+    }
+    if (object.is<Particle> ()) {
+	return "particle";
+    }
+    if (object.is<MeshObject> ()) {
+	return "model";
+    }
+    if (object.is<Light> ()) {
+	return "light";
+    }
+    if (object.cameraZoom != nullptr) {
+	return "camera";
+    }
+    return "group";
+}
+
+bool healthFinite (const glm::vec3& v) { return std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z); }
+} // namespace
+
+void CScene::reportHealthBuild () const {
+    const auto& scene = this->getScene ();
+    const float width = static_cast<float> (this->getWidth ());
+    const float height = static_cast<float> (this->getHeight ());
+
+    WallpaperEngine::Health::report (
+	"scene", { { "width", this->getWidth () }, { "height", this->getHeight () }, { "objects", scene.objects.size () },
+		   { "built", this->m_objects.size () - (this->m_bloomObject != nullptr ? 1 : 0) },
+		   { "perspective", this->m_camera->isPerspective () }, { "hdr", this->m_hdr } }
+    );
+
+    for (const auto& object : scene.objects) {
+	const bool built = this->m_objects.contains (object->id);
+	nlohmann::json record = { { "object", object->id }, { "object_name", object->name },
+				  { "type", healthType (*object) }, { "built", built } };
+	if (object->parent.has_value ()) {
+	    record["parent"] = *object->parent;
+	}
+	if (object->is<Image> ()) {
+	    const auto* image = object->as<Image> ();
+	    record["visible"] = image->visible->value->getBool ();
+	    record["alpha"] = image->alpha->value->getFloat ();
+	    record["effects"] = image->effects.size ();
+	} else if (object->groupVisible != nullptr) {
+	    record["visible"] = object->groupVisible->value->getBool ();
+	}
+	record["effectively_visible"] = this->isEffectivelyVisible (*object);
+
+	// a layer that wasn't built: where it would have been, from the scene data (its size × scale about its origin,
+	// parents included, unrotated) — how much of the picture it takes with it
+	if (!built && object->is<Image> ()) {
+	    const auto* image = object->as<Image> ();
+	    const CObject probe (const_cast<CScene&> (*this), *object);
+	    const auto transform = probe.resolveTransform (*object);
+	    glm::vec2 size = image->size;
+	    if ((size.x == 0.0f || size.y == 0.0f) && image->model != nullptr && image->model->width.has_value ()
+		&& image->model->height.has_value ()) {
+		size = { static_cast<float> (*image->model->width), static_cast<float> (*image->model->height) };
+	    }
+	    glm::vec4 box;
+	    if (image->model != nullptr && (image->model->fullscreen || image->model->passthrough)) {
+		box = { 0.0f, 0.0f, width, height };
+	    } else {
+		const glm::vec2 half = glm::abs (size * glm::vec2 (transform.scale)) / 2.0f;
+		// WE's world is y up: the canvas row is height − y
+		box = { transform.origin.x - half.x, height - transform.origin.y - half.y, transform.origin.x + half.x,
+			height - transform.origin.y + half.y };
+	    }
+	    const float onW = std::max (0.0f, std::min (box.z, width) - std::max (box.x, 0.0f));
+	    const float onH = std::max (0.0f, std::min (box.w, height) - std::max (box.y, 0.0f));
+	    record["estimated_bbox"] = { box.x, box.y, box.z, box.w };
+	    record["estimated_on_canvas_px"] = std::isfinite (onW * onH) ? onW * onH : 0.0f;
+	}
+	WallpaperEngine::Health::report ("object", record);
+    }
+}
+
+void CScene::reportHealthLayers (int frame) const {
+    const float width = static_cast<float> (this->getWidth ());
+    const float height = static_cast<float> (this->getHeight ());
+
+    for (const auto& [id, cur] : this->m_objects) {
+	if (cur == this->m_bloomObject) {
+	    continue;
+	}
+	const Object& object = cur->getObject ();
+	nlohmann::json record;
+
+	if (cur->is<Objects::CImage> ()) {
+	    record = cur->as<Objects::CImage> ()->healthLayer ();
+	} else if (cur->is<Objects::CParticle> () || cur->is<Objects::CModel> ()) {
+	    const auto transform = cur->resolveTransform (object);
+	    const bool finite = healthFinite (transform.origin) && healthFinite (transform.scale) && std::isfinite (transform.angle);
+	    record = { { "finite", finite } };
+	    if (!this->m_camera->isPerspective ()) {
+		// a 2D scene: where the system's origin is on the canvas (y down)
+		const float x = transform.origin.x, y = height - transform.origin.y;
+		record["origin_px"] = { x, y };
+		record["origin_on_canvas"] = x >= 0.0f && x <= width && y >= 0.0f && y <= height;
+	    }
+	} else {
+	    continue;
+	}
+	record["object"] = id;
+	record["object_name"] = object.name;
+	record["type"] = healthType (object);
+	record["frame"] = frame;
+	record["effectively_visible"] = this->isEffectivelyVisible (object);
+	record["drawn_by"] = this->drawingOwnerOf (object).has_value () ? nlohmann::json (*this->drawingOwnerOf (object)) : nlohmann::json ("scene");
+	WallpaperEngine::Health::report ("layers", record);
+    }
 }
 
 void CScene::setupBloom (const Scene& scene, const uint32_t sceneWidth, const uint32_t sceneHeight) {
@@ -261,6 +388,7 @@ void CScene::setupBloom (const Scene& scene, const uint32_t sceneWidth, const ui
 	    }
 	} catch (const std::exception& e) {
 	    sLog.error ("Cannot build the bloom passes, the scene renders without bloom: ", e.what ());
+	    WPENGINE_HEALTH ("effect_dropped", { { "object", -1 }, { "object_name", "bloom" }, { "reason", WallpaperEngine::Health::brief (e.what ()) }, { "takes_layer", false } });
 	    this->m_bloomObject = nullptr;
 	}
 
@@ -403,6 +531,9 @@ Render::CObject* CScene::createObject (const Object& object) {
 
 Render::CObject* CScene::dispatchObjectType (const Object& object) {
     Render::CObject* renderObject = nullptr;
+    // WPENGINE_HEALTH: what fails while this object builds (its textures, shaders, fonts) names it
+    const WallpaperEngine::Health::Scope healthObject ("object", object.id);
+    const WallpaperEngine::Health::Scope healthName ("object_name", object.name);
 
     // a text object is an image layer too (WE's text class extends its image class): test it first
     if (object.is<Text> ()) {
@@ -421,6 +552,7 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 
 	if (particleData.material == nullptr || particleData.material->material == nullptr) {
 	    sLog.error ("Ignoring particle system without a material: ", particleData.name);
+	    WPENGINE_HEALTH ("dropped", { { "object", object.id }, { "object_name", object.name }, { "reason", "particle system without a material" } });
 	    return nullptr;
 	}
 
@@ -439,6 +571,7 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	renderObject->setup ();
     } catch (const std::exception& e) {
 	sLog.error ("Failed to setup object ", object.id, ": ", e.what ());
+	WPENGINE_HEALTH ("dropped", { { "object", object.id }, { "object_name", object.name }, { "reason", WallpaperEngine::Health::brief (e.what ()) } });
 	delete renderObject;
 	renderObject = nullptr;
     }
@@ -599,6 +732,13 @@ void CScene::renderFrame () {
 	}
 
 	cur->render ();
+    }
+
+    if (WallpaperEngine::Health::enabled ()) {
+	this->m_healthFrames++;
+	if (this->m_healthFrames == 1 || this->m_healthFrames == 31) {
+	    this->reportHealthLayers (this->m_healthFrames);
+	}
     }
 }
 

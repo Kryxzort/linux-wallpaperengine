@@ -1,5 +1,6 @@
 #include "ShaderUnit.h"
 
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include <cstdlib>
 #include <regex>
@@ -361,6 +362,7 @@ std::string ShaderUnit::resolveRequireModule (const std::string& moduleName) con
     }
 
     sLog.error ("Unknown #require module: ", moduleName, " in shader ", this->m_file);
+    WPENGINE_HEALTH ("missing_asset", { { "kind", "shader_module" }, { "path", moduleName }, { "file", this->m_file } });
     return "";
 }
 
@@ -468,6 +470,7 @@ std::string ShaderUnit::applyFragmentVaryingDeclarations (std::string source) co
     }
 
     sLog.out ("Declaring in the fragment unit of ", this->m_file, " the varyings only its vertex unit has: ", missing);
+    WPENGINE_HEALTH ("compat", { { "what", "shader: vertex-only varyings declared in the fragment" } });
     return missing + source;
 }
 
@@ -491,6 +494,7 @@ std::string ShaderUnit::applyFragmentTexCoordCompatibility (std::string source) 
 
     if (source != original) {
 	sLog.out ("Applied fragment TexCoord vec2 compatibility in ", this->m_file);
+	WPENGINE_HEALTH ("compat", { { "what", "shader: fragment TexCoord vec2 compatibility" } });
     }
 
     return source;
@@ -550,6 +554,7 @@ std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const
     }
 
     sLog.out ("Copying the varyings the fragment unit of ", this->m_file, " writes to:", fill);
+    WPENGINE_HEALTH ("compat", { { "what", "shader: fragment writes to varyings (copied to globals)" } });
     return head + fill + body;
 }
 
@@ -560,6 +565,7 @@ void ShaderUnit::parseComboConfiguration (const std::string& content, const int 
 	data = JSON::parse (content);
     } catch (const std::exception& e) {
 	sLog.error ("Cannot parse combo metadata in shader ", this->m_file, ": ", e.what ());
+	WPENGINE_HEALTH ("shader_warning", { { "file", this->m_file }, { "message", std::string ("combo metadata unparsable: ") + e.what () } });
 	return;
     }
     const auto combo = data.require<std::string> ("combo", "cannot parse combo information");
@@ -639,6 +645,7 @@ void ShaderUnit::parseParameterConfiguration (
 	data = JSON::parse (content);
     } catch (const std::exception& e) {
 	sLog.error ("Cannot parse parameter metadata for ", name, " in shader ", this->m_file, ": ", e.what ());
+	WPENGINE_HEALTH ("shader_warning", { { "file", this->m_file }, { "message", std::string ("parameter metadata unparsable: ") + e.what () } });
 	return;
     }
     const auto material = data.optional ("material");
@@ -772,6 +779,7 @@ void ShaderUnit::parseParameterConfiguration (
 	return;
     } else {
 	sLog.error ("Unknown parameter type: ", type, " for ", name, " in shader ", this->m_file);
+	WPENGINE_HEALTH ("unsupported", { { "what", "shader parameter type " + type }, { "file", this->m_file } });
 	return;
     }
 

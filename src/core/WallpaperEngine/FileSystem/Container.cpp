@@ -2,6 +2,7 @@
 #include <memory>
 
 #include "Container.h"
+#include "WallpaperEngine/Health.h"
 
 #include "../../../common/WallpaperEngine/Logging/Log.h"
 #include "Adapters/Directory.h"
@@ -148,6 +149,7 @@ std::pair<Adapter&, std::filesystem::path> Container::resolve (const std::filesy
 	    const auto corrected = addRoot ? found.string ().substr (1) : found.string ();
 
 	    sLog.out ("Found ", normalized, " as ", corrected, " (case differs)");
+	    WPENGINE_HEALTH ("compat", { { "what", "file found ignoring case" }, { "path", normalized } });
 
 	    return { *adapter, corrected };
 	}

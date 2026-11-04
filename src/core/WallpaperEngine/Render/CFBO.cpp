@@ -1,4 +1,5 @@
 #include "CFBO.h"
+#include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 
 using namespace WallpaperEngine::Render;
@@ -182,6 +183,7 @@ void CFBO::attachDepthBuffer () const {
 
     if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 	sLog.error ("The depth buffer of ", this->m_name, " left the framebuffer incomplete, drawing without depth");
+	WPENGINE_HEALTH ("pass_error", { { "message", "depth buffer of " + this->m_name + " left its framebuffer incomplete" } });
 	glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
 	glDeleteRenderbuffers (1, &this->m_depthbuffer);
 	this->m_depthbuffer = GL_NONE;

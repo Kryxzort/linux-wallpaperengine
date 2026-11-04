@@ -1,4 +1,5 @@
 #include "AssetLocator.h"
+#include "WallpaperEngine/Health.h"
 
 #include "AssetLoadException.h"
 
@@ -23,6 +24,7 @@ std::string AssetLocator::shader (const std::filesystem::path& filename) const {
 		    std::string contents = this->m_filesystem->readString (shader);
 
 		    sLog.out ("Replaced ", filename, " with compat ", shader);
+		    WPENGINE_HEALTH ("compat", { { "what", "shader replaced by its zcompat copy" }, { "path", shader.string () } });
 
 		    return contents;
 		} catch (std::filesystem::filesystem_error&) {

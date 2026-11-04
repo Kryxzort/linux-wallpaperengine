@@ -1,5 +1,6 @@
 #include "Project.h"
 #include "Context.h"
+#include "Health.h"
 #include "Data/Dumpers/StringPrinter.h"
 #include "Data/Model/Property.h"
 #include "Data/Parsers/ProjectParser.h"
@@ -196,6 +197,8 @@ AssetLocatorUniquePtr wp_setup_asset_locator (
 WallpaperEngine::Project::Project (
     Context* context, wp_mouse_input* mouse_input, const std::filesystem::path& project
 ) : context (*context), framebuffer (GL_NONE) {
+    // WPENGINE_HEALTH is read per project: a host (or a test) can turn it on for one load
+    WallpaperEngine::Health::configure ();
     if (!std::filesystem::exists (project) || !std::filesystem::is_directory (project)) {
 	sLog.exception ("Cannot find project file");
     }
@@ -273,9 +276,14 @@ void WallpaperEngine::Project::render () {
     if (this->renderContext == nullptr) {
 	// initialize render if not available
 	this->renderContext = std::make_unique<RenderContext> (this->context, *this->ref->assetLocator);
-	this->wallpaper = CWallpaper::fromWallpaper (
-	    *this->ref->wallpaper, *this->renderContext, *this->context.audio, this->mouse_input
-	);
+	try {
+	    this->wallpaper = CWallpaper::fromWallpaper (
+		*this->ref->wallpaper, *this->renderContext, *this->context.audio, this->mouse_input
+	    );
+	} catch (const std::exception& e) {
+	    WPENGINE_HEALTH ("renderer_failed", { { "message", WallpaperEngine::Health::brief (e.what ()) } });
+	    throw;
+	}
 	this->wallpaper->setDestinationFramebuffer (this->framebuffer);
 	// give hint about size to the wallpaper only if web
 	if (this->wallpaper->is<Wallpapers::CWeb> ()) {
@@ -613,5 +621,10 @@ WallpaperEngine::Project::loadId (Context* context, wp_mouse_input* mouse_input,
 
 WallpaperEngine::Project*
 WallpaperEngine::Project::loadFolder (Context* context, wp_mouse_input* mouse_input, const char* folder) {
-    return new Project (context, mouse_input, folder);
+    try {
+	return new Project (context, mouse_input, folder);
+    } catch (const std::exception& e) {
+	WPENGINE_HEALTH ("load_failed", { { "message", WallpaperEngine::Health::brief (e.what ()) } });
+	throw;
+    }
 }
