@@ -124,7 +124,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	if (shapeIt->get<std::string> () == "quad") {
 	    return parseShape (it, project, std::move (basedata));
 	}
-	// WE's factory takes any string `shape` (GH 0x1401bec50) and its mesh builder only ever builds the quad
+	// WE's factory takes any string `shape` (GH 0x1401be650) and its mesh builder only ever builds the quad
 	sLog.error ("Shape '", shapeIt->get<std::string> (), "' is not supported");
 	WPENGINE_HEALTH ("unsupported", { { "what", "shape object '" + shapeIt->get<std::string> () + "'" } });
     } else if (isCamera) {

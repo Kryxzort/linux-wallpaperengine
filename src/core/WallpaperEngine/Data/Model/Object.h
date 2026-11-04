@@ -171,7 +171,7 @@ struct ImageData {
     std::vector<ImageAnimationLayerUniquePtr> animationLayers;
     /**
      * A `shape` object (`"shape": "quad"`, WE's class with vtable 0x1404d36e8, built by the object factory
-     * GH 0x1401bec50's `shape` branch): no picture of its own, a square of the scene's height whose corners are its
+     * GH 0x1401be650's `shape` branch): no picture of its own, a square of the scene's height whose corners are its
      * first effect's point0..point3 (GH 0x1402861b0); its last effect's passes draw straight into the scene with
      * DIRECTDRAW 1 (GH 0x140285f40, GH 0x140285b70), the last one additively (GH 0x1402866d0). Empty for any other
      * image
@@ -256,7 +256,7 @@ struct LightData {
     /**
      * Volumetrics (GH 0x140283df0's table): `castvolumetrics` sets bit 2 of the flags at +0x2c4; `density` +0x2f8
      * (2), `volumetricsscattering` +0x2fc (0.5), `volumetricsexponent` +0x300 (1) — the defaults the factory sets
-     * (GH 0x1401bec50). The volumetrics pass (GH 0x1401c56e0) marches the light's volume with them
+     * (GH 0x1401be650). The volumetrics pass (GH 0x1401c56e0) marches the light's volume with them
      */
     UserSettingUniquePtr castVolumetrics = nullptr;
     float density = 2.0f;
