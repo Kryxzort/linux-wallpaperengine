@@ -25,7 +25,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     const auto particleIt = it.find ("particle");
     const auto textIt = it.find ("text");
     const auto lightIt = it.find ("light");
-    // use shape to refer to VolumeLight
+    // a shape object (WE's "shape": "quad"; upstream took it for a VolumeLight, which is a light's castvolumetrics)
     const auto shapeIt = it.find ("shape");
     // a camera object ("camera": "default"): its zoom frames the scene (CScene::updateCamera)
     const auto cameraIt = it.find ("camera");
@@ -120,9 +120,13 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	return parseText (it, project, std::move (basedata));
     } else if (lightIt != it.end () && lightIt->is_string ()) {
 	return parseLight (it, project, std::move (basedata));
-    } else if (shapeIt != it.end ()) {
-	sLog.error ("VolumeLight objects are not supported yet");
-	WPENGINE_HEALTH ("unsupported", { { "what", "VolumeLight (shape) object" } });
+    } else if (shapeIt != it.end () && shapeIt->is_string ()) {
+	if (shapeIt->get<std::string> () == "quad") {
+	    return parseShape (it, project, std::move (basedata));
+	}
+	// WE's factory takes any string `shape` (GH 0x1401bec50) and its mesh builder only ever builds the quad
+	sLog.error ("Shape '", shapeIt->get<std::string> (), "' is not supported");
+	WPENGINE_HEALTH ("unsupported", { { "what", "shape object '" + shapeIt->get<std::string> () + "'" } });
     } else if (isCamera) {
 	// a camera object: plain object data, read by CScene::updateCamera
     } else {
@@ -340,6 +344,80 @@ ObjectParser::parseImage (const JSON& it, const Project& project, ObjectData bas
 	}
     }
 
+    return result;
+}
+
+ImageUniquePtr ObjectParser::parseShape (const JSON& it, const Project& project, ObjectData base) {
+    const auto& properties = project.properties;
+    const auto& effects = it.optional ("effects");
+    const std::string target = "_rt_shape_" + std::to_string (base.id);
+
+    // no picture: the base pass is never drawn (CImage builds only the effects' passes for a shape), it only names
+    // the layer's (transparent) texture
+    auto material = std::make_unique<Material> (Material { .filename = target, .passes = {} });
+    material->passes.push_back (std::make_unique<MaterialPass> (MaterialPass {
+	.blending = BlendingMode_Normal,
+	.cullmode = CullingMode_Disable,
+	.depthtest = DepthtestMode_Disabled,
+	.depthwrite = DepthwriteMode_Disabled,
+	.shader = "genericimage2",
+	.textures = {},
+	.usertextures = {},
+	.combos = {},
+	.constants = {},
+    }));
+    auto model = std::make_unique<ModelStruct> (ModelStruct {
+	.filename = target,
+	.material = std::move (material),
+	.solidlayer = false,
+	.fullscreen = false,
+	.passthrough = false,
+	.autosize = false,
+	.nopadding = false,
+	.width = std::nullopt,
+	.height = std::nullopt,
+	.puppet = std::nullopt,
+    });
+
+    auto parsedEffects = effects.has_value () ? parseEffects (*effects, project) : std::vector<ImageEffectUniquePtr> {};
+    // every pass of a shape's effects compiles with DIRECTDRAW 1 (GH 0x140285f40 sets combos.DIRECTDRAW in the pass):
+    // the stock lightshafts then reads no layer picture and maps the quad's corners back to its unit square
+    for (const auto& effect : parsedEffects) {
+	const size_t passes = effect->effect != nullptr ? effect->effect->passes.size () : 0;
+	while (effect->passOverrides.size () < std::max<size_t> (passes, 1)) {
+	    effect->passOverrides.push_back (std::make_unique<ImageEffectPassOverride> (ImageEffectPassOverride {
+		.id = -1, .combos = {}, .constants = {}, .textures = {}, .usertextures = {} }));
+	}
+	for (const auto& pass : effect->passOverrides) {
+	    pass->combos.insert_or_assign ("DIRECTDRAW", 1);
+	}
+    }
+
+    auto result = std::make_unique<Image> (
+	std::move (base),
+	ImageData {
+	    .scale = it.user ("scale", properties, glm::vec3 (1.0f)),
+	    .angles = it.user ("angles", properties, glm::vec3 (0.0f)),
+	    .visible = it.user ("visible", properties, true),
+	    .alpha = it.user ("alpha", properties, 1.0f),
+	    .color = it.color ("color", properties, Builders::ColorBuilder::White),
+	    .alignment = "center",
+	    // the shape's square is the scene's height (GH 0x140285b40: both sides from the scene's ortho height);
+	    // CImage sizes it, as the scene knows that height
+	    .size = glm::vec2 (0.0f),
+	    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
+	    .perspective = it.user ("perspective", properties, false),
+	    .colorBlendMode = it.user ("colorBlendMode", properties, 0),
+	    .brightness = it.user ("brightness", properties, 1.0f),
+	    .copyBackground = it.user ("copybackground", properties, true),
+	    .clampUVs = it.user ("clampuvs", properties, true),
+	    .noInterpolation = it.user ("nointerpolation", properties, false),
+	    .model = std::move (model),
+	    .effects = std::move (parsedEffects),
+	    .animationLayers = {},
+	    .shape = it.optional ("shape", std::string ("quad")),
+	}
+    );
     return result;
 }
 

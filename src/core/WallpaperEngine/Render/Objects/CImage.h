@@ -177,6 +177,11 @@ private:
     /** `toScene`: the pass draws to the scene (no effects), with the mesh in the layer's scene rectangle */
     void setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) const;
     void updatePuppetScenePositionBuffer ();
+    /**
+     * A shape (ImageData::shape): its quad's corners in the scene, this frame — the first effect's point0..point3
+     * (GH 0x1402861b0; the unit square without them) on the layer's square, as two triangles (0 2 1, 0 3 2)
+     */
+    void updateShapeBuffers ();
     ResolvedTransform updateGeometryBuffers ();
     [[nodiscard]] glm::vec2 resolveGeometrySize (float sceneWidth, float sceneHeight, glm::vec3& origin) const;
     void updateScenePosition (
@@ -195,6 +200,9 @@ private:
     GLuint m_passSpacePosition;
     GLuint m_texcoordCopy;
     GLuint m_texcoordPass;
+    /** a shape's quad: scene positions and its corners as texture coordinates (6 vertices) */
+    GLuint m_shapeScenePosition = GL_NONE;
+    GLuint m_shapeTexCoord = GL_NONE;
     GLuint m_puppetSpacePosition = GL_NONE;
     GLuint m_puppetScenePosition = GL_NONE;
     GLuint m_puppetTexCoord = GL_NONE;

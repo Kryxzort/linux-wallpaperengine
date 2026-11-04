@@ -169,6 +169,14 @@ struct ImageData {
     std::vector<ImageEffectUniquePtr> effects;
     /** The animation layers used in the puppet warp */
     std::vector<ImageAnimationLayerUniquePtr> animationLayers;
+    /**
+     * A `shape` object (`"shape": "quad"`, WE's class with vtable 0x1404d36e8, built by the object factory
+     * GH 0x1401bec50's `shape` branch): no picture of its own, a square of the scene's height whose corners are its
+     * first effect's point0..point3 (GH 0x1402861b0); its last effect's passes draw straight into the scene with
+     * DIRECTDRAW 1 (GH 0x140285f40, GH 0x140285b70), the last one additively (GH 0x1402866d0). Empty for any other
+     * image
+     */
+    std::string shape = {};
 };
 
 class Image : public Object, public ImageData {

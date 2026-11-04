@@ -91,6 +91,12 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     glm::vec3 origin = transform.origin;
     glm::vec2 size = this->getSize ();
     glm::vec3 scale = transform.scale;
+    const bool isShape = !this->m_image.shape.empty ();
+
+    // a shape is a square of the scene's (orthographic) height, both sides (GH 0x140285b40 reads the height twice)
+    if (isShape) {
+	size = { scene_height, scene_height };
+    }
 
     this->detectTexture ();
 
@@ -199,11 +205,13 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
 	       : 0);
 
     // WE's composites are half float in an HDR scene (GH 0x140216080: format 0xe when the renderer's flag 0x2000)
+    // a shape draws its passes straight into the scene: its composites are never drawn to (1 x 1, not the square)
+    const glm::vec2 compositeSize = isShape ? glm::vec2 (1.0f) : size;
     const auto mainFBO = scene.create (
-	nameA.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
+	nameA.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, compositeSize, compositeSize
     );
     const auto subFBO = scene.create (
-	nameB.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
+	nameB.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, compositeSize, compositeSize
     );
     this->m_currentMainFBO = this->m_mainFBO = mainFBO;
     this->m_currentSubFBO = this->m_subFBO = subFBO;
@@ -345,6 +353,12 @@ CImage::~CImage () {
     glDeleteBuffers (1, &this->m_texcoordPass);
     if (this->m_puppetScenePosition != GL_NONE) {
 	glDeleteBuffers (1, &this->m_puppetScenePosition);
+    }
+    if (this->m_shapeScenePosition != GL_NONE) {
+	glDeleteBuffers (1, &this->m_shapeScenePosition);
+    }
+    if (this->m_shapeTexCoord != GL_NONE) {
+	glDeleteBuffers (1, &this->m_shapeTexCoord);
     }
     if (this->m_puppetSpacePosition != GL_NONE) {
 	glDeleteBuffers (1, &this->m_puppetSpacePosition);
@@ -783,6 +797,53 @@ void CImage::updatePuppetScenePositionBuffer () {
     glBufferData (GL_ARRAY_BUFFER, positions.size () * sizeof (GLfloat), positions.data (), GL_DYNAMIC_DRAW);
 }
 
+void CImage::updateShapeBuffers () {
+    const glm::vec2 size = this->getSize ();
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+	return;
+    }
+    // the corners: the first effect's first pass's point0..point3, all four or none (GH 0x1402861b0 falls back to the
+    // plain quad, GH 0x140219570)
+    glm::vec2 points[4] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+    if (!this->m_image.effects.empty () && !this->m_image.effects.front ()->passOverrides.empty ()) {
+	const auto& constants = this->m_image.effects.front ()->passOverrides.front ()->constants;
+	glm::vec2 found[4];
+	bool all = true;
+	for (int i = 0; i < 4 && all; i++) {
+	    const auto it = constants.find ("point" + std::to_string (i));
+	    if (it == constants.end () || it->second == nullptr || it->second->value == nullptr) {
+		all = false;
+	    } else {
+		found[i] = it->second->value->getVec2 ();
+	    }
+	}
+	if (all) {
+	    std::copy (std::begin (found), std::end (found), std::begin (points));
+	}
+    }
+    // WE's vertices: (S · (p.x − 0.5), S · (0.5 − p.y)) about the origin, y up, uv = p; here the layer pixel (p · S)
+    // (y down) on the layer's scene rectangle, as the puppet's mesh (updatePuppetScenePositionBuffer)
+    constexpr int order[6] = { 0, 2, 1, 0, 3, 2 };
+    GLfloat positions[18];
+    GLfloat texcoords[12];
+    for (int i = 0; i < 6; i++) {
+	const glm::vec2& p = points[order[i]];
+	positions[i * 3 + 0] = this->m_pos.x + p.x * (this->m_pos.z - this->m_pos.x);
+	positions[i * 3 + 1] = this->m_pos.w + p.y * (this->m_pos.y - this->m_pos.w);
+	positions[i * 3 + 2] = 0.0f;
+	texcoords[i * 2 + 0] = p.x;
+	texcoords[i * 2 + 1] = p.y;
+    }
+    if (this->m_shapeScenePosition == GL_NONE) {
+	glGenBuffers (1, &this->m_shapeScenePosition);
+	glGenBuffers (1, &this->m_shapeTexCoord);
+    }
+    glBindBuffer (GL_ARRAY_BUFFER, this->m_shapeScenePosition);
+    glBufferData (GL_ARRAY_BUFFER, sizeof (positions), positions, GL_DYNAMIC_DRAW);
+    glBindBuffer (GL_ARRAY_BUFFER, this->m_shapeTexCoord);
+    glBufferData (GL_ARRAY_BUFFER, sizeof (texcoords), texcoords, GL_DYNAMIC_DRAW);
+}
+
 void CImage::setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) const {
     pass->setGeometryCallback (
 	[this, pass, toScene] () {
@@ -890,8 +951,13 @@ void CImage::setup () {
 	}
     }
 
-    // copy pass to the composite layer
+    const bool isShape = !this->m_image.shape.empty ();
+
+    // copy pass to the composite layer (a shape has none: only its effects draw)
     for (const auto& cur : this->getImage ().model->material->passes) {
+	if (isShape) {
+	    break;
+	}
 	this->m_passes.push_back (
 	    new CPass (*this, std::make_shared<FBOProvider> (this), *cur, std::nullopt, std::nullopt, std::nullopt)
 	);
@@ -909,6 +975,10 @@ void CImage::setup () {
 	int effectIndex = -1;
 	for (const auto& cur : this->m_image.effects) {
 	    effectIndex++;
+	    // a shape draws its last effect only (GH 0x140285b70 takes the effect list's back ())
+	    if (isShape && cur != this->m_image.effects.back ()) {
+		continue;
+	    }
 	    // WPENGINE_HEALTH: what fails while this effect builds (its shaders, textures) names it
 	    const WallpaperEngine::Health::Scope healthEffect ("effect", cur->id);
 	    const WallpaperEngine::Health::Scope healthEffectName ("effect_name", cur->effect != nullptr && !cur->effect->name.empty () ? cur->effect->name : cur->name);
@@ -1054,7 +1124,7 @@ void CImage::setup () {
 	}
     }
 
-    if (!debug.baseOnly) {
+    if (!debug.baseOnly && !isShape) {
 	const auto magentaCompositeTint = findMagentaCompositeTint (this->m_image, debug.skipEffects);
 	if (magentaCompositeTint.has_value ()) {
 	    auto tintOverride = std::make_unique<ImageEffectPassOverride> (ImageEffectPassOverride {
@@ -1085,7 +1155,7 @@ void CImage::setup () {
     // no BLENDMODE pass, and the layer's last draw blends additively (GH 0x140214b50, 0x1402321d0; the BLENDMODE combo
     // is 0 for modes 0 and 31, GH 0x140211f90)
     const int colorBlendMode = this->m_image.colorBlendMode->value->getInt ();
-    if (!debug.baseOnly && colorBlendMode > 0 && colorBlendMode != 31) {
+    if (!debug.baseOnly && !isShape && colorBlendMode > 0 && colorBlendMode != 31) {
 	this->m_materials.colorBlending.material
 	    = MaterialParser::load (this->getScene ().getScene ().project, "materials/util/effectpassthrough.json");
 	this->m_materials.colorBlending.override = std::make_unique<ImageEffectPassOverride> (ImageEffectPassOverride {
@@ -1110,6 +1180,11 @@ void CImage::setup () {
     }
 
     CRenderable::setup ();
+
+    // a shape's quad buffers exist before its passes take them
+    if (isShape) {
+	this->updateShapeBuffers ();
+    }
 
     this->updateActivePasses ();
     this->m_initialized = true;
@@ -1172,12 +1247,19 @@ void CImage::updateActivePasses () {
 
     // if there's more than one pass the blendmode has to be moved from the beginning to the end (of the passes that
     // run: a hidden last effect hands the layer's blending to the pass before it)
-    if (this->m_activePasses.size () > 1) {
+    // (a shape's passes each draw into the scene with their own blending, GH 0x1402176a0 per pass)
+    if (this->m_activePasses.size () > 1 && this->m_image.shape.empty ()) {
 	const auto first = this->m_activePasses.front ();
 	const auto last = this->m_activePasses.back ();
 
 	last->setBlendingMode (first->getBlendingMode ());
 	first->setBlendingMode (BlendingMode_Normal);
+    }
+
+    // a shape's last pass draws additively (GH 0x1402176a0 calls the shape's vtable +0x108, GH 0x1402866d0, which sets
+    // the pass's blending to 2 = additive, GH 0x140182410's names): its rays add to the scene
+    if (!this->m_image.shape.empty () && !this->m_activePasses.empty ()) {
+	this->m_activePasses.back ()->setBlendingMode (BlendingMode_Additive);
     }
 
     // the layer's last draw: additive for colour blend mode 31; translucent for a passthrough layer that doesn't copy
@@ -1247,6 +1329,24 @@ void CImage::setupPasses () {
 	    drawTo = this->getScene ().getTargetFor (this->m_image);
 	    projection = &this->m_modelViewProjectionScreen;
 	    inverseProjection = &this->m_modelViewProjectionScreenInverse;
+	}
+
+	// a shape: every pass draws its quad straight into the scene (GH 0x140285b70), reading no layer picture
+	if (!this->m_image.shape.empty ()) {
+	    writesToTarget = false;
+	    spacePosition = this->m_shapeScenePosition;
+	    drawTo = this->getScene ().getTargetFor (this->m_image);
+	    projection = &this->m_modelViewProjectionScreen;
+	    inverseProjection = &this->m_modelViewProjectionScreenInverse;
+	    pass->setDestination (drawTo);
+	    pass->setInput (this->getTexture ());
+	    pass->setPreviousInput (nullptr);
+	    pass->setPosition (spacePosition);
+	    pass->setTexCoord (this->m_shapeTexCoord);
+	    pass->setModelViewProjectionMatrix (projection);
+	    pass->setModelViewProjectionMatrixInverse (inverseProjection);
+	    drawTo = prevDrawTo;
+	    continue;
 	}
 
 	// the puppet mesh replaces the first pass's quad; a puppet without effects draws it straight to the scene, in
@@ -1442,6 +1542,9 @@ void CImage::render () {
     this->updateScreenSpacePosition ();
     if (this->m_hasPuppetMesh) {
 	this->updatePuppetScenePositionBuffer ();
+    }
+    if (!this->m_image.shape.empty ()) {
+	this->updateShapeBuffers ();
     }
 
 #if !NDEBUG
