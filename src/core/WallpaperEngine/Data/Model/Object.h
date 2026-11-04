@@ -447,7 +447,9 @@ public:
 	audioProcessingMode (std::move (audioProcessingMode)),
 	audioProcessingBounds (std::move (audioProcessingBounds)) { }
     int controlPoint;
-    int flags; // 1 = infinite axis, 2 = maintain distance to center, 4 = ring shape
+    /** `vortex_v2` (ring, centre force); plain `vortex` reads only bit 1 of the flags (GH 0x1401fb56f) */
+    bool v2 = false;
+    int flags; // 1 = infinite axis; v2 only: 2 = maintain distance to center, 4 = ring shape
     UserSettingUniquePtr axis;
     UserSettingUniquePtr offset;
     UserSettingUniquePtr distanceInner; // Standard vortex inner radius
@@ -466,14 +468,19 @@ public:
 class ControlPointAttractOperator : public ParticleOperatorBase {
 public:
     ControlPointAttractOperator (
-	int controlPoint, UserSettingUniquePtr origin, UserSettingUniquePtr scale, UserSettingUniquePtr threshold
+	int controlPoint, int flags, UserSettingUniquePtr offset, UserSettingUniquePtr scale,
+	UserSettingUniquePtr threshold, UserSettingUniquePtr deleteThreshold
     ) :
-	controlPoint (controlPoint), origin (std::move (origin)), scale (std::move (scale)),
-	threshold (std::move (threshold)) { }
+	controlPoint (controlPoint), flags (flags), offset (std::move (offset)), scale (std::move (scale)),
+	threshold (std::move (threshold)), deleteThreshold (std::move (deleteThreshold)) { }
     int controlPoint;
-    UserSettingUniquePtr origin;
+    /** 1: particles within `deletethreshold` of the point die; 2: a step never passes the point (GH 0x140265800) */
+    int flags;
+    /** WE reads `offset` (GH 0x1401eb290); the `origin` many systems write is not read */
+    UserSettingUniquePtr offset;
     UserSettingUniquePtr scale;
     UserSettingUniquePtr threshold;
+    UserSettingUniquePtr deleteThreshold;
 };
 
 class OscillateAlphaOperator : public ParticleOperatorBase {

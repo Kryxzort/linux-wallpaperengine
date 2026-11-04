@@ -11,6 +11,7 @@
 #include "WallpaperEngine/Data/Builders/ColorBuilder.h"
 #include "WallpaperEngine/Logging/Log.h"
 
+#include <algorithm>
 #include <glm/gtc/constants.hpp>
 #include <sstream>
 
@@ -808,7 +809,7 @@ ParticleOperatorUniquePtr ObjectParser::parseParticleOperator (const JSON& it, c
 	    it.user ("audioprocessingfrequencyend", properties, 15)
 	);
     } else if (name == "vortex" || name == "vortex_v2") {
-	return std::make_unique<VortexOperator> (
+	auto vortex = std::make_unique<VortexOperator> (
 	    it.optional ("controlpoint", 0),
 	    it.optional ("flags", 0), // 1 = infinite axis, 2 = maintain distance, 4 = ring shape
 	    it.user ("axis", properties, glm::vec3 (0.0f, 0.0f, 1.0f)),
@@ -820,10 +821,14 @@ ParticleOperatorUniquePtr ObjectParser::parseParticleOperator (const JSON& it, c
 	    it.user ("audioprocessingmode", properties, 0),
 	    it.user ("audioprocessingbounds", properties, glm::vec2 (0.0f, 1.0f))
 	);
+	vortex->v2 = name == "vortex_v2";
+	return vortex;
     } else if (name == "controlpointattract") {
+	// WE's keys and defaults (GH 0x1401eb290, parser 0x1401fa6a1): `offset`, not `origin`; the full threshold
 	return std::make_unique<ControlPointAttractOperator> (
-	    it.optional ("controlpoint", 0), it.user ("origin", properties, glm::vec3 (0.0f)),
-	    it.user ("scale", properties, 100.0f), it.user ("threshold", properties, 1000.0f)
+	    std::clamp (it.optional ("controlpoint", 0), 0, 7), it.optional ("flags", 0),
+	    it.user ("offset", properties, glm::vec3 (0.0f)), it.user ("scale", properties, 100.0f),
+	    it.user ("threshold", properties, 1000.0f), it.user ("deletethreshold", properties, 0.0f)
 	);
     } else if (name == "oscillatealpha") {
 	return std::make_unique<OscillateAlphaOperator> (

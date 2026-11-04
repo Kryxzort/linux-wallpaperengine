@@ -148,4 +148,60 @@ inline glm::vec3 curlNoise (const glm::vec3& p) {
     return glm::vec3 (x, y, z) / (2.0f * e);
 }
 
+
+// 3D simplex noise in about [-1, 1] (Gustavson's, on the Perlin permutation). WE's turbulence operator samples a 3D
+// simplex noise once per masked axis (the SSE noise object's slot 2, GH 0x14012b830 → 0x14012c280, behind
+// GH 0x140265800 case 0xe); its own gradient hash isn't ported, so the field differs while its character doesn't
+inline float simplexNoise (float xin, float yin, float zin) {
+    static const int grad3[12][3] = { { 1, 1, 0 }, { -1, 1, 0 }, { 1, -1, 0 }, { -1, -1, 0 }, { 1, 0, 1 }, { -1, 0, 1 },
+				      { 1, 0, -1 }, { -1, 0, -1 }, { 0, 1, 1 }, { 0, -1, 1 }, { 0, 1, -1 }, { 0, -1, -1 } };
+    const float F3 = 1.0f / 3.0f;
+    const float G3 = 1.0f / 6.0f;
+    const float s = (xin + yin + zin) * F3;
+    const int i = static_cast<int> (std::floor (xin + s));
+    const int j = static_cast<int> (std::floor (yin + s));
+    const int k = static_cast<int> (std::floor (zin + s));
+    const float t = static_cast<float> (i + j + k) * G3;
+    const float x0 = xin - (static_cast<float> (i) - t);
+    const float y0 = yin - (static_cast<float> (j) - t);
+    const float z0 = zin - (static_cast<float> (k) - t);
+    int i1, j1, k1, i2, j2, k2;
+    if (x0 >= y0) {
+	if (y0 >= z0) {
+	    i1 = 1, j1 = 0, k1 = 0, i2 = 1, j2 = 1, k2 = 0;
+	} else if (x0 >= z0) {
+	    i1 = 1, j1 = 0, k1 = 0, i2 = 1, j2 = 0, k2 = 1;
+	} else {
+	    i1 = 0, j1 = 0, k1 = 1, i2 = 1, j2 = 0, k2 = 1;
+	}
+    } else {
+	if (y0 < z0) {
+	    i1 = 0, j1 = 0, k1 = 1, i2 = 0, j2 = 1, k2 = 1;
+	} else if (x0 < z0) {
+	    i1 = 0, j1 = 1, k1 = 0, i2 = 0, j2 = 1, k2 = 1;
+	} else {
+	    i1 = 0, j1 = 1, k1 = 0, i2 = 1, j2 = 1, k2 = 0;
+	}
+    }
+    const float x1 = x0 - static_cast<float> (i1) + G3, y1 = y0 - static_cast<float> (j1) + G3,
+		z1 = z0 - static_cast<float> (k1) + G3;
+    const float x2 = x0 - static_cast<float> (i2) + 2.0f * G3, y2 = y0 - static_cast<float> (j2) + 2.0f * G3,
+		z2 = z0 - static_cast<float> (k2) + 2.0f * G3;
+    const float x3 = x0 - 1.0f + 3.0f * G3, y3 = y0 - 1.0f + 3.0f * G3, z3 = z0 - 1.0f + 3.0f * G3;
+    const int ii = i & 255, jj = j & 255, kk = k & 255;
+    auto corner = [] (int g, float x, float y, float z) {
+	float t0 = 0.6f - x * x - y * y - z * z;
+	if (t0 < 0.0f) {
+	    return 0.0f;
+	}
+	t0 *= t0;
+	return t0 * t0 * (grad3[g][0] * x + grad3[g][1] * y + grad3[g][2] * z);
+    };
+    const int g0 = PERLIN_PERM[ii + PERLIN_PERM[jj + PERLIN_PERM[kk]]] % 12;
+    const int g1 = PERLIN_PERM[ii + i1 + PERLIN_PERM[jj + j1 + PERLIN_PERM[kk + k1]]] % 12;
+    const int g2 = PERLIN_PERM[ii + i2 + PERLIN_PERM[jj + j2 + PERLIN_PERM[kk + k2]]] % 12;
+    const int g3 = PERLIN_PERM[ii + 1 + PERLIN_PERM[jj + 1 + PERLIN_PERM[kk + 1]]] % 12;
+    return 32.0f * (corner (g0, x0, y0, z0) + corner (g1, x1, y1, z1) + corner (g2, x2, y2, z2) + corner (g3, x3, y3, z3));
+}
+
 } // namespace WallpaperEngine::Render::Utils

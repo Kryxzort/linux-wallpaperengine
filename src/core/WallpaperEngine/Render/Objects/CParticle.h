@@ -46,22 +46,8 @@ struct ParticleInstance {
     float lifetime { 1.0f }; // Total lifetime in seconds
     float age { 0.0f }; // Current age in seconds
 
-    // Oscillator state (per-particle random values)
-    // base is updated by alphafade/sizechange operators so oscillation combines properly
-    struct {
-	float frequency { 0.0f };
-	float scale { 1.0f };
-	float phase { 0.0f };
-	float base { 1.0f };
-	bool initialized { false };
-    } oscillateAlpha, oscillateSize;
-
-    struct {
-	glm::vec3 frequency { 0.0f };
-	glm::vec3 scale { 1.0f };
-	glm::vec3 phase { 0.0f };
-	bool initialized { false };
-    } oscillatePosition;
+    /** one random value in [0, 1) per particle, drawn at spawn: oscillate* and turbulence read it (WE: system +0x338) */
+    float random { 0.0f };
 
     // Initial values for resets/multipliers
     struct {
@@ -168,6 +154,12 @@ protected:
     InitializerFunc createRotationRandomInitializer (const RotationRandomInitializer& init);
     InitializerFunc createAngularVelocityRandomInitializer (const AngularVelocityRandomInitializer& init);
     InitializerFunc createTurbulentVelocityRandomInitializer (const TurbulentVelocityRandomInitializer& init);
+    /** a spawned particle's common start (WE's spawn head) and its initializers */
+    void spawnParticle (ParticleInstance& p, const glm::vec3& velocity);
+    /** the overrides as the parser binds them, 1 where the particle flags opt out (0x10 speed, 0x40 lifetime, 0x80 size) */
+    [[nodiscard]] float speedOverride () const;
+    [[nodiscard]] float sizeOverride () const;
+    [[nodiscard]] float lifetimeOverride () const;
     InitializerFunc
     createMapSequenceAroundControlPointInitializer (const MapSequenceAroundControlPointInitializer& init);
 
@@ -180,6 +172,7 @@ protected:
     OperatorFunc createColorChangeOperator (const ColorChangeOperator& op);
     OperatorFunc createTurbulenceOperator (const TurbulenceOperator& op);
     OperatorFunc createVortexOperator (const VortexOperator& op);
+    OperatorFunc createVortexV2Operator (const VortexOperator& op);
     OperatorFunc createControlPointAttractOperator (const ControlPointAttractOperator& op);
     OperatorFunc createOscillateAlphaOperator (const OscillateAlphaOperator& op);
     OperatorFunc createOscillateSizeOperator (const OscillateSizeOperator& op);
@@ -218,6 +211,9 @@ private:
     double m_time { 0.0 };
     /** the system's own clock: the sum of its (rate-scaled) steps, prewarm included (WE: system+0x3f0) */
     float m_simTime { 0.0f };
+    /** this step's force dt (drag, attraction, vortex, turbulence) and the last real frame time (prewarm: 1/60 s) */
+    float m_forceDt { 0.0f };
+    float m_frameTime { 1.0f / 60.0f };
 
     // colorn (P5): the system's reference colour comes from its first colorrandom (the mid-point of min and
     // max) or else its first colorchange (startvalue); without either it is white and `m_hasColor` is false
