@@ -854,6 +854,15 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
 	);
     }
 
+    // F6: the stock presets' initializers (their runtime in CParticle::createGenericInitializer)
+    for (const char* generic : { "hsvcolorrandom", "colorlist", "positionoffsetrandom", "remapinitialvalue",
+				 "inheritcontrolpointvelocity", "inheritinitialvaluefromevent",
+				 "mapsequencebetweencontrolpoints" }) {
+	if (name == generic) {
+	    return std::make_unique<GenericParticleInitializer> (name, nlohmann::json::parse (it.dump ()));
+	}
+    }
+
     WPENGINE_HEALTH ("unsupported", { { "what", "particle initializer " + (name.empty () ? std::string ("(unnamed)") : name) } });
     return nullptr;
 }
@@ -940,6 +949,20 @@ ParticleOperatorUniquePtr ObjectParser::parseParticleOperator (const JSON& it, c
 	    it.user ("phasemin", properties, 0.0f), it.user ("phasemax", properties, glm::two_pi<float> ()),
 	    it.user ("mask", properties, glm::vec3 (1.0f, 1.0f, 0.0f))
 	);
+    }
+
+    // F6: the stock presets' operators (their runtime in CParticle::createGenericOperator). collisionmodel needs a
+    // model's triangles: parsed, reported, not run
+    for (const char* generic : { "maintaindistancetocontrolpoint", "maintaindistancebetweencontrolpoints",
+				 "reducemovementnearcontrolpoint", "boids", "capvelocity", "remapvalue",
+				 "inheritvaluefromevent", "collisionplane", "collisionsphere", "collisionbox",
+				 "collisionbounds", "collisionquad", "collisionmodel" }) {
+	if (name == generic) {
+	    if (name == "collisionmodel") {
+		WPENGINE_HEALTH ("unsupported", { { "what", "particle operator collisionmodel (not run)" } });
+	    }
+	    return std::make_unique<GenericParticleOperator> (name, nlohmann::json::parse (it.dump ()));
+	}
     }
 
     WPENGINE_HEALTH ("unsupported", { { "what", "particle operator " + (name.empty () ? std::string ("(unnamed)") : name) } });

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <optional>
+
 #include "CRenderable.h"
 #include "WallpaperEngine/Data/Model/Object.h"
 #include "WallpaperEngine/Render/Objects/Effects/CPass.h"
@@ -182,7 +185,7 @@ protected:
     };
     std::unique_ptr<CParticle> makeChild (ChildSet& set, const glm::vec3& at);
     /** the event children of a particle event: 3 = spawned (follow and spawn children), 4 = died */
-    void spawnEventChildren (int type, uint32_t id, const glm::vec3& at);
+    void spawnEventChildren (int type, const ParticleInstance& source);
     void updateChildren (float dt);
     void drawChildren ();
     /** draws these instances' particles with this system's pass */
@@ -232,6 +235,16 @@ protected:
     OperatorFunc createOscillateAlphaOperator (const OscillateAlphaOperator& op);
     OperatorFunc createOscillateSizeOperator (const OscillateSizeOperator& op);
     OperatorFunc createOscillatePositionOperator (const OscillatePositionOperator& op);
+    /** F6 (CParticleStock.cpp): the stock presets' operators and initializers */
+    OperatorFunc createGenericOperator (const GenericParticleOperator& op);
+    InitializerFunc createGenericInitializer (const GenericParticleInitializer& init);
+    /** a stock key's default: WE's parsers take the second (pixel) value for a 2D system (inferred: the flag the
+     *  parser passes, [rbp+0x2238], read as an orthographic scene) */
+    [[nodiscard]] float stockDefault (float world, float pixels) const;
+    /** remapvalue / remapinitialvalue on one particle (`remap`: CParticleStock.cpp's parsed record) */
+    void applyRemap (const void* remap, ParticleInstance& p, const std::vector<ControlPointData>& points, float time) const;
+    /** inherit*fromevent: `what` of GH 0x140287030's table from the event's particle */
+    void inheritFrom (const ParticleInstance& source, ParticleInstance& p, const std::string& what) const;
 
     // Rendering
     void renderSprites ();
@@ -274,7 +287,13 @@ private:
     std::vector<ChildSet> m_children;
     bool m_hasEventChildren { false };
     /** this step's spawned particles (id, position), for the event children */
-    std::vector<std::pair<uint32_t, glm::vec3>> m_spawned;
+    std::vector<ParticleInstance> m_spawned;
+    /** an event child's particle (as it spawned, or died; a follow child's every step): inherit*fromevent read it */
+    std::optional<ParticleInstance> m_eventSource;
+    /** the operators' control points' last positions and velocities (inheritcontrolpointvelocity, the constraints) */
+    std::array<glm::vec3, 8> m_controlPointLast {};
+    std::array<glm::vec3, 8> m_controlPointVelocity {};
+    bool m_controlPointsSeen { false };
     uint32_t m_nextParticleId { 0 };
     /** a child instance's parent and definition, its offset (origin + its particle) and turn/scale */
     CParticle* m_parentSystem { nullptr };

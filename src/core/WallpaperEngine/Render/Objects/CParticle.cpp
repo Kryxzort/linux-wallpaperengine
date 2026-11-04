@@ -335,7 +335,9 @@ void CParticle::stopEmitters () {
     }
 }
 
-void CParticle::spawnEventChildren (int type, uint32_t id, const glm::vec3& at) {
+void CParticle::spawnEventChildren (int type, const ParticleInstance& source) {
+    const uint32_t id = source.id;
+    const glm::vec3& at = source.position;
     // per particle event, each event child of that type under its maxcount: a probability roll, then an instance
     // (GH 0x14025cfe0 for follow / spawn, GH 0x14025c2e0 for death)
     for (auto& set : m_children) {
@@ -355,6 +357,7 @@ void CParticle::spawnEventChildren (int type, uint32_t id, const glm::vec3& at) 
 	if (set.type == 2) {
 	    instance->m_boundId = id;
 	}
+	instance->m_eventSource = source;
 	set.active.push_back (std::move (instance));
     }
 }
@@ -382,6 +385,7 @@ void CParticle::updateChildren (float dt) {
 		const auto it = where.find (static_cast<uint32_t> (instance->m_boundId));
 		if (it != where.end ()) {
 		    instance->m_childOffset = m_particles[it->second].position + instance->m_childOrigin;
+		    instance->m_eventSource = m_particles[it->second];
 		} else {
 		    // its particle died: it stops emitting and lives out its particles (GH 0x14025c2e0, type 2)
 		    instance->m_boundId = -1;
@@ -728,6 +732,11 @@ void CParticle::update (float dt) {
     } else {
 	m_opControlPoints = m_controlPoints;
     }
+    // the control points' velocities this step (inheritcontrolpointvelocity) and last positions (the constraints)
+    for (int i = 0; i < 8; i++) {
+	const glm::vec3 now = m_opControlPoints[i].position;
+	m_controlPointVelocity[i] = m_controlPointsSeen && dt > 0.0f ? (now - m_controlPointLast[i]) / dt : glm::vec3 (0.0f);
+    }
 
     // Emit particles
     for (auto& emitter : m_emitters) {
@@ -735,8 +744,8 @@ void CParticle::update (float dt) {
     }
     // the spawned particles' follow and spawn children (GH 0x14025cfe0)
     if (m_hasEventChildren) {
-	for (const auto& [id, at] : m_spawned) {
-	    spawnEventChildren (3, id, at);
+	for (const auto& source : m_spawned) {
+	    spawnEventChildren (3, source);
 	}
     }
 
@@ -758,6 +767,10 @@ void CParticle::update (float dt) {
     for (auto& op : m_operators) {
 	op (m_particles, m_particleCount, m_opControlPoints, m_simTime, dt);
     }
+    for (int i = 0; i < 8; i++) {
+	m_controlPointLast[i] = m_opControlPoints[i].position;
+    }
+    m_controlPointsSeen = true;
 
     // Update animation frames
     for (uint32_t i = 0; i < m_particleCount; i++) {
@@ -798,7 +811,7 @@ void CParticle::update (float dt) {
     // We never kill based on size — particles may fade in/out with oscillating size.
     // Compaction preserves spawn order so array index 0 is always the oldest particle.
     uint32_t writeIdx = 0;
-    std::vector<std::pair<uint32_t, glm::vec3>> died;
+    std::vector<ParticleInstance> died;
     for (uint32_t readIdx = 0; readIdx < m_particleCount; readIdx++) {
 	if (m_particles[readIdx].isAlive ()) {
 	    if (writeIdx != readIdx) {
@@ -806,7 +819,7 @@ void CParticle::update (float dt) {
 	    }
 	    writeIdx++;
 	} else if (m_hasEventChildren) {
-	    died.emplace_back (m_particles[readIdx].id, m_particles[readIdx].position);
+	    died.push_back (m_particles[readIdx]);
 	}
     }
     m_particleCount = writeIdx;
@@ -814,8 +827,8 @@ void CParticle::update (float dt) {
     // the children: follow ones move with their particles, then every instance steps; dead particles' death
     // children start where they died (GH 0x14025c2e0)
     updateChildren (dt);
-    for (const auto& [id, at] : died) {
-	spawnEventChildren (4, id, at);
+    for (const auto& source : died) {
+	spawnEventChildren (4, source);
     }
 }
 
@@ -1247,14 +1260,14 @@ void CParticle::spawnParticle (ParticleInstance& p, const glm::vec3& velocity) {
 	p.size *= m_childSizeScale;
     }
     p.id = m_nextParticleId++;
-    if (m_hasEventChildren) {
-	m_spawned.emplace_back (p.id, p.position);
-    }
 
     p.initial.color = p.color;
     p.initial.alpha = p.alpha;
     p.initial.size = p.size;
     p.initial.lifetime = p.lifetime;
+    if (m_hasEventChildren) {
+	m_spawned.push_back (p);
+    }
 }
 
 // ========== INITIALIZERS ==========
@@ -1289,6 +1302,8 @@ void CParticle::setupInitializers () {
 	    func = createMapSequenceAroundControlPointInitializer (
 		*initializer->as<MapSequenceAroundControlPointInitializer> ()
 	    );
+	} else if (initializer->is<GenericParticleInitializer> ()) {
+	    func = createGenericInitializer (*initializer->as<GenericParticleInitializer> ());
 	} else {
 	    sLog.out ("Unknown initializer type");
 	}
@@ -1630,6 +1645,8 @@ void CParticle::setupOperators () {
 	    func = createOscillateSizeOperator (*op->as<OscillateSizeOperator> ());
 	} else if (op->is<OscillatePositionOperator> ()) {
 	    func = createOscillatePositionOperator (*op->as<OscillatePositionOperator> ());
+	} else if (op->is<GenericParticleOperator> ()) {
+	    func = createGenericOperator (*op->as<GenericParticleOperator> ());
 	} else {
 	    sLog.out ("Unknown operator type");
 	}

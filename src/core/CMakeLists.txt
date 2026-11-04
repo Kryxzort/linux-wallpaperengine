@@ -64,6 +64,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Render/Objects/CText.cpp
     WallpaperEngine/Render/Objects/TextLayout.cpp
     WallpaperEngine/Render/Objects/CParticle.cpp
+    WallpaperEngine/Render/Objects/CParticleStock.cpp
 
     WallpaperEngine/Render/CFBO.cpp
     WallpaperEngine/Render/Objects/Effects/CPass.cpp

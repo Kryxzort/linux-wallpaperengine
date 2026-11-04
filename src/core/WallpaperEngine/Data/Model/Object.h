@@ -10,6 +10,8 @@
 
 #include <glm/glm.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include "../Utils/TypeCaster.h"
 #include "DynamicValue.h"
 #include "Effect.h"
@@ -301,6 +303,19 @@ public:
     virtual ~ParticleInitializerBase () = default;
 };
 
+/**
+ * F6: an initializer only WE's stock presets use (hsvcolorrandom, colorlist, positionoffsetrandom,
+ * remapinitialvalue, inheritcontrolpointvelocity, inheritinitialvaluefromevent, mapsequencebetweencontrolpoints):
+ * its keys as written, read once by CParticle
+ */
+class GenericParticleInitializer : public ParticleInitializerBase {
+public:
+    GenericParticleInitializer (std::string name, nlohmann::json params) :
+	name (std::move (name)), params (std::move (params)) { }
+    std::string name;
+    nlohmann::json params;
+};
+
 class ColorRandomInitializer : public ParticleInitializerBase {
 public:
     ColorRandomInitializer (UserSettingUniquePtr min, UserSettingUniquePtr max, UserSettingUniquePtr exponent) :
@@ -413,6 +428,18 @@ using ParticleInitializerUniquePtr = std::unique_ptr<ParticleInitializerBase>;
 class ParticleOperatorBase : public TypeCaster {
 public:
     virtual ~ParticleOperatorBase () = default;
+};
+
+/**
+ * F6: an operator only WE's stock presets use (boids, capvelocity, remapvalue, the collisions, the control point
+ * constraints, inheritvaluefromevent): its keys as written, read once by CParticle (no user-property binding)
+ */
+class GenericParticleOperator : public ParticleOperatorBase {
+public:
+    GenericParticleOperator (std::string name, nlohmann::json params) :
+	name (std::move (name)), params (std::move (params)) { }
+    std::string name;
+    nlohmann::json params;
 };
 
 class MovementOperator : public ParticleOperatorBase {
