@@ -24,6 +24,13 @@ enum DepthtestMode {
     DepthtestMode_Enabled = 2,
 };
 
+/** a pass's `alphawriting` (WE's names and values, GH 0x140186aa0): `default` leaves the alpha write to the engine */
+enum AlphawritingMode {
+    AlphawritingMode_Default = 0,
+    AlphawritingMode_Enabled = 1,
+    AlphawritingMode_Disabled = 2,
+};
+
 enum DepthwriteMode {
     DepthwriteMode_Unknown = 0,
     DepthwriteMode_Disabled = 1,
@@ -39,6 +46,8 @@ struct MaterialPass {
     DepthtestMode depthtest;
     /** Depth write mode */
     DepthwriteMode depthwrite;
+    /** whether the pass writes alpha (`alphawriting`) */
+    AlphawritingMode alphawriting = AlphawritingMode_Default;
     /** Shader file to use for this pass */
     std::string shader;
     /** List of textures defined for this pass */

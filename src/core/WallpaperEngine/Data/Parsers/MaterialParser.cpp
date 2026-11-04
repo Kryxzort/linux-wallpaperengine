@@ -56,6 +56,12 @@ MaterialPassUniquePtr MaterialParser::parsePass (const JSON& it, const Project& 
 	.constants = constants.has_value () ? ShaderConstantParser::parse (*constants, project) : ShaderConstantMap {},
     });
 
+    // `alphawriting` default / enabled / disabled (GH 0x140186aa0 registers the names; an unknown one is default)
+    const std::string alphawriting = it.optional ("alphawriting", std::string ("default"));
+    pass->alphawriting = alphawriting == "enabled"	   ? AlphawritingMode_Enabled
+			 : alphawriting == "disabled" ? AlphawritingMode_Disabled
+						      : AlphawritingMode_Default;
+
     // WE's material pass setup (GH 0x140183570) turns the blending into combos: `alphatocoverage` (3) sets
     // ALPHATOCOVERAGE 1, `additive` (2) ADDITIVE 1. With ALPHATOCOVERAGE the stock shaders sharpen alpha and, on
     // GLSL, discard below 0.5 (generic*.frag, genericimage*.frag, genericparticle.frag): a cutout drawn without

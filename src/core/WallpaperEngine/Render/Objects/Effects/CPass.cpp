@@ -558,6 +558,15 @@ void CPass::render () {
     }
 
     this->setupRenderFramebuffer ();
+    // `alphawriting` enabled / disabled: the pass writes alpha, or doesn't, whatever the layer decided (its last
+    // pass keeps the target's alpha, CImage::render); default leaves that. The mask is put back after the draw.
+    // Inferred: WE's names (GH 0x140186aa0), the colour-write-mask effect read from the names
+    GLboolean mask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    const bool alphaOverride = this->m_pass.alphawriting != AlphawritingMode_Default;
+    if (alphaOverride) {
+	glGetBooleanv (GL_COLOR_WRITEMASK, mask);
+	glColorMask (mask[0], mask[1], mask[2], this->m_pass.alphawriting == AlphawritingMode_Enabled);
+    }
     this->m_drawToCopy = nullptr;
     this->setupRenderTexture ();
     this->setupRenderUniforms ();
@@ -565,6 +574,9 @@ void CPass::render () {
     this->setupRenderAttributes ();
     this->renderGeometry ();
     this->cleanupRenderSetup ();
+    if (alphaOverride) {
+	glColorMask (mask[0], mask[1], mask[2], mask[3]);
+    }
 }
 
 std::shared_ptr<const FBOProvider> CPass::getFBOProvider () const { return this->m_fboProvider; }
