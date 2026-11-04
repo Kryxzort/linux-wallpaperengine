@@ -556,21 +556,18 @@ JSValue layer_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 	case Method_Valid:
 	    return JS_NewBool (ctx, object.getScene ().isLayerAlive (&object));
 	case Method_Attachments: {
-	    // [{ name, m }]: a puppet's attachments, `m` their matrix in the layer's own space (posed now)
+	    // [{ name, m }]: a puppet's attachments, `m` their matrix in the layer's own space (posed now), whole: WE's
+	    // getAttachment* (GH 0x14020db20) multiply the layer's matrix by the vtable +0x78 product (bone · MDAT)
 	    JSValue result = JS_NewArray (ctx);
 	    if (image == nullptr) {
 		return result;
 	    }
 	    uint32_t count = 0;
 	    for (const auto& name : image->attachmentNames ()) {
-		glm::vec2 offset (0.0f);
-		float angle = 0.0f;
-		if (!image->attachmentTransform (name, offset, angle)) {
+		glm::mat4 local (1.0f);
+		if (!image->attachmentMatrix (name, local)) {
 		    continue;
 		}
-		const glm::mat4 local = glm::rotate (
-		    glm::translate (glm::mat4 (1.0f), glm::vec3 (offset, 0.0f)), angle, glm::vec3 (0.0f, 0.0f, 1.0f)
-		);
 		JSValue entry = JS_NewObject (ctx);
 		JS_SetPropertyStr (ctx, entry, "name", JS_NewString (ctx, name.c_str ()));
 		JS_SetPropertyStr (ctx, entry, "m", matrixArray (ctx, local));

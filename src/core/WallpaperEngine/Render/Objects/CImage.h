@@ -83,11 +83,13 @@ public:
     void pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::shared_ptr<const TextureProvider>* asInput);
 
     /**
-     * A puppet attachment's place in this layer at the current pose: its offset from the layer's origin in the
-     * layer's own pixels (y up, before the layer's scale and angle) and its z angle. False when there's none by that
-     * name (G09; the attachment is the bone's posed world · the MDAT matrix)
+     * A puppet attachment's matrix in this layer at the current pose, in the layer's own pixels (y up, before the
+     * layer's scale and angle): the bone's posed world · the MDAT matrix, whole (GH 0x14024b530, the puppet's
+     * vtable +0x78: local ← (bone · MDAT) · local; the bone is the animator's +0x30 array, the posed bone world in the
+     * model's space: GH 0x140243600 composes it parent-first, the skinning product goes to +0x90). False when there's
+     * none by that name (G09)
      */
-    [[nodiscard]] bool attachmentTransform (const std::string& name, glm::vec2& offset, float& angle);
+    [[nodiscard]] bool attachmentMatrix (const std::string& name, glm::mat4& matrix);
     /** The puppet's attachment names, in the model's order (none without a puppet) */
     [[nodiscard]] std::vector<std::string> attachmentNames () const;
     /** IImageLayer.alignment from a script: where the quad sits on the origin, from the next frame */

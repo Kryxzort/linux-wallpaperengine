@@ -1165,6 +1165,18 @@ glm::mat4 CScene::worldMatrixOf (const Object& object) const {
 
     glm::mat4 world (1.0f);
     for (int i = count - 1; i >= 0; --i) {
+	// a child pinned to its parent puppet's attachment: world = parent world · (bone · MDAT) · local
+	// (GH 0x14024b530, the puppet's vtable +0x78)
+	if (i + 1 < count && chain[i]->attachment.has_value ()) {
+	    const CObject* parent = this->getObject (chain[i + 1]->id);
+	    if (parent != nullptr && parent->is<Objects::CImage> ()) {
+		glm::mat4 attachment (1.0f);
+		if (const_cast<Objects::CImage*> (parent->as<Objects::CImage> ())
+			->attachmentMatrix (*chain[i]->attachment, attachment)) {
+		    world = world * attachment;
+		}
+	    }
+	}
 	world = world * localMatrixOf (*chain[i]);
     }
 

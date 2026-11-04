@@ -658,7 +658,7 @@ void CImage::setBlendShapeWeight (int index, const std::optional<float>& weight)
     this->m_puppetPoseDirty = true;
 }
 
-bool CImage::attachmentTransform (const std::string& name, glm::vec2& offset, float& angle) {
+bool CImage::attachmentMatrix (const std::string& name, glm::mat4& matrix) {
     for (const auto& attachment : this->m_puppet.attachments) {
 	if (attachment.name != name) {
 	    continue;
@@ -672,9 +672,7 @@ bool CImage::attachmentTransform (const std::string& name, glm::vec2& offset, fl
 	    Puppet::bindWorldMatrices (this->m_puppet, bind);
 	    bone = bind[attachment.bone];
 	}
-	const glm::mat4 world = bone * attachment.matrix;
-	offset = glm::vec2 (world[3]);
-	angle = std::atan2 (world[0][1], world[0][0]);
+	matrix = bone * attachment.matrix;
 	return true;
     }
     return false;

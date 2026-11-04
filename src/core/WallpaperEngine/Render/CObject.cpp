@@ -93,19 +93,24 @@ CObject::ResolvedTransform CObject::resolveTransform (const Object& object) cons
     for (int i = count - 2; i >= 0; --i) {
 	ResolvedTransform local = localTransform (*chain[i]);
 	// G09: a child pinned to its parent puppet's attachment is in the attachment's space, under the parent's
-	// (GH 0x1401b5170: world = parent world · attachment · local)
+	// (GH 0x1401b5170: world = parent world · attachment · local; GH 0x14024b530 applies the attachment whole). In
+	// this 2D form: its offset, its z turn and its axes' lengths (the bone's and the MDAT's scale)
 	if (chain[i]->attachment.has_value ()) {
 	    const auto* parentObject = this->getScene ().getObject (chain[i + 1]->id);
 	    if (parentObject != nullptr && parentObject->is<Objects::CImage> ()) {
 		auto* puppet = const_cast<Objects::CImage*> (parentObject->as<Objects::CImage> ());
-		glm::vec2 offset;
-		float attachmentAngle = 0.0f;
-		if (puppet->attachmentTransform (*chain[i]->attachment, offset, attachmentAngle)) {
-		    const glm::vec2 moved
-			= rotateVec2 ({ offset.x * resolved.scale.x, offset.y * resolved.scale.y }, resolved.angle);
+		glm::mat4 attachment (1.0f);
+		if (puppet->attachmentMatrix (*chain[i]->attachment, attachment)) {
+		    const glm::vec2 moved = rotateVec2 (
+			{ attachment[3].x * resolved.scale.x, attachment[3].y * resolved.scale.y }, resolved.angle
+		    );
 		    resolved.origin.x += moved.x;
 		    resolved.origin.y += moved.y;
-		    resolved.angle += attachmentAngle;
+		    resolved.angle += std::atan2 (attachment[0][1], attachment[0][0]);
+		    resolved.scale *= glm::vec3 (
+			glm::length (glm::vec3 (attachment[0])), glm::length (glm::vec3 (attachment[1])),
+			glm::length (glm::vec3 (attachment[2]))
+		    );
 		}
 	    }
 	}
