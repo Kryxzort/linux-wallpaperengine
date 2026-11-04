@@ -263,3 +263,40 @@ globalThis.__layerMethods = (function () {
   define('getLayerByID', (id) => scene.enumerateLayers().find((layer) => String(layer.id) === String(id)));
 })();
 
+// V8's legacy RegExp statics (RegExp.$1…$9, lastMatch, …), which quickjs leaves out: scripts written for WE use them
+// (2932157836's clock: `fmt.replace(RegExp.$1, …)` after a `test`). Every match (exec, test, match, replace, split go
+// through `exec`) records the last one, as V8 does
+(function () {
+  if (Object.getOwnPropertyDescriptor(RegExp, '$1') !== undefined) {
+    return;
+  }
+  const exec = RegExp.prototype.exec;
+  let last = null;
+  let input = '';
+  Object.defineProperty(RegExp.prototype, 'exec', {
+    value: function (s) {
+      const result = exec.call(this, s);
+      if (result !== null) {
+        last = result;
+        input = String(s);
+      }
+      return result;
+    },
+    writable: true,
+    configurable: true
+  });
+  const getter = (name, get) => Object.defineProperty(RegExp, name, { get, configurable: true });
+  for (let i = 1; i <= 9; i++) {
+    getter('$' + i, () => (last !== null && last[i] !== undefined ? last[i] : ''));
+  }
+  const lastMatch = () => (last !== null ? last[0] : '');
+  const lastParen = () => (last !== null && last.length > 1 && last[last.length - 1] !== undefined ? last[last.length - 1] : '');
+  const left = () => (last !== null ? input.slice(0, last.index) : '');
+  const right = () => (last !== null ? input.slice(last.index + last[0].length) : '');
+  for (const [names, get] of [[['lastMatch', '$&'], lastMatch], [['lastParen', '$+'], lastParen],
+    [['leftContext', '$`'], left], [['rightContext', "$'"], right], [['input', '$_'], () => input]]) {
+    for (const name of names) {
+      getter(name, get);
+    }
+  }
+})();

@@ -640,7 +640,12 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	<< "    get: function(t, k) {\n"
 	<< "      if (typeof k !== 'string') { return t[k]; }\n"
 	<< "      var v = globalThis.__layerProp(__id, k);\n"
-	<< "      return v === undefined ? t[k] : v;\n"
+	<< "      if (v === undefined) { return t[k]; }\n"
+	// a stored string for a vector default is that vector (as for property scripts, builtins.js)
+	<< "      var d = t[k];\n"
+	<< "      if (typeof v === 'string' && d !== null && typeof d === 'object' && typeof d.constructor === 'function'\n"
+	<< "          && /^Vec[234]$/.test(d.constructor.name)) { return new d.constructor(v); }\n"
+	<< "      return v;\n"
 	<< "    },\n"
 	<< "    has: function(t, k) { return (k in t) || globalThis.__layerProp(__id, k) !== undefined; }\n"
 	<< "  });\n"

@@ -211,7 +211,10 @@ DynamicValueParser::parse (const JSON& data, const Properties& properties, bool 
 
 	if (scriptPropsJson.has_value () && scriptPropsJson->is_object ()) {
 	    for (const auto& [key, propData] : scriptPropsJson->items ()) {
-		scriptProps[key] = UserSettingParser::parse (propData, properties);
+		// a stored string stays a string (an addText's "0.5, 1, 1"): WE hands scripts the JSON value as it is
+		// and only turns one into a Vec3 for a Vec3 default (baseclasses.js _Internal.updateScriptProperties,
+		// which builtins.js follows for Vec2/3/4)
+		scriptProps[key] = UserSettingParser::parse (propData, properties, false, true);
 	    }
 	}
 
