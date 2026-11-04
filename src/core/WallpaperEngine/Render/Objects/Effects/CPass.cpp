@@ -1018,6 +1018,15 @@ void CPass::setupTextureUniforms () {
 
 	texture = this->resolveTexture (expectedTexture->texture, textureIndex, texture);
 	this->addUniform (namestream.str (), texture->getResolution ());
+
+	// WE's g_Texture<n>Texel (ids 0x49–0x52, GH 0x140002a20): (1 / width, 1 / height, width, height) of the
+	// texture's storage (Inferred from model_vertex_v1.h's morph lookups)
+	if (const glm::vec4* resolution = texture->getResolution (); resolution != nullptr && resolution->x > 0.0f
+	    && resolution->y > 0.0f) {
+	    auto& texel = this->m_textureTexels[textureIndex];
+	    texel = glm::vec4 (1.0f / resolution->x, 1.0f / resolution->y, resolution->x, resolution->y);
+	    this->addUniform ("g_Texture" + std::to_string (textureIndex) + "Texel", &texel);
+	}
     }
 
     this->addUniform ("g_Texture0Resolution", &this->m_texture0Resolution);

@@ -338,14 +338,24 @@ bool convertArguments (std::string& source, const std::string& log) {
     if (!callArguments (line.text, open, args, close)) {
 	return false;
     }
-    // the user's definitions with as many parameters
-    const std::regex definition ("\\b(?:void|float|int|uint|bool|[biu]?vec[234]|mat[234])\\s+" + name + "\\s*\\(([^)]*)\\)\\s*\\{");
+    // the user's definitions with as many parameters (a parameter list may hold macro calls:
+    // DECLARE_SAMPLER2D_PARAMETER (morphTexture) in model_vertex_v1.h's ApplyMorphPosition)
+    const std::regex definition ("\\b(?:void|float|int|uint|bool|[biu]?vec[234]|mat[234])\\s+" + name + "\\s*\\(");
     std::vector<std::vector<std::string>> candidates;
     for (auto it = std::sregex_iterator (source.begin (), source.end (), definition); it != std::sregex_iterator (); ++it) {
+	const size_t paren = static_cast<size_t> (it->position () + it->length () - 1);
+	std::vector<std::pair<size_t, size_t>> bounds;
+	size_t end = 0;
+	if (!callArguments (source, paren, bounds, end)) {
+	    continue;
+	}
+	const size_t body = source.find_first_not_of (" \t\r\n", end + 1);
+	if (body == std::string::npos || source[body] != '{') {
+	    continue; // a call or a prototype, not the definition
+	}
 	std::vector<std::string> params;
-	std::stringstream list ((*it)[1].str ());
-	for (std::string p; std::getline (list, p, ',');) {
-	    params.push_back (p);
+	for (const auto& [b, e] : bounds) {
+	    params.push_back (source.substr (b, e - b));
 	}
 	if (params.size () == 1 && params[0].find_first_not_of (" \tvoid") == std::string::npos) {
 	    params.clear ();
@@ -368,7 +378,9 @@ bool convertArguments (std::string& source, const std::string& log) {
 	    for (std::string x; words >> x;) {
 		w.push_back (x);
 	    }
-	    const bool output = std::find (w.begin (), w.end (), "out") != w.end () || std::find (w.begin (), w.end (), "inout") != w.end ();
+	    // out, inout and array parameters (`in uint morphOffsets[12]`) are left as they are
+	    const bool output = std::find (w.begin (), w.end (), "out") != w.end () || std::find (w.begin (), w.end (), "inout") != w.end ()
+		|| candidates[0][i].find ('[') != std::string::npos;
 	    std::string type;
 	    for (const auto& x : w) {
 		if (std::regex_match (x, scalarType)) {
@@ -640,6 +652,30 @@ bool booleanCondition (std::string& source, const std::string& log) {
     return false;
 }
 
+/**
+ * WE's engine uniforms g_Texture0Texel … g_Texture9Texel (the name table GH 0x140002a20, ids 0x49–0x52) exist
+ * whether a shader declares them or not: the stock shadowcasterfoliage4 reads g_Texture1Texel under MORPHING and
+ * declares only g_Texture1Resolution. From glslang's "undeclared identifier", the uniform is declared at the top of
+ * the unit; CPass gives it (1 / width, 1 / height, width, height), the form model_vertex_v1.h's morph lookups read
+ * (Inferred: the setter wasn't read)
+ */
+bool declareTexelUniform (std::string& source, const std::string& log) {
+    static const std::regex error (R"(ERROR: 0:\d+: '(g_Texture\d+Texel)' : undeclared identifier)");
+    std::smatch m;
+    if (!std::regex_search (log, m, error)) {
+	return false;
+    }
+    const std::string declaration = "uniform vec4 " + m[1].str () + ";\n";
+    size_t at = 0;
+    if (source.rfind ("#version", 0) == 0) {
+	at = source.find ('\n');
+	at = at == std::string::npos ? source.size () : at + 1;
+    }
+    source.insert (at, declaration);
+    WPENGINE_HEALTH ("compat", { { "what", "WE: an engine texel uniform declared" } });
+    return true;
+}
+
 /** Parses a unit, retrying after each HLSL rule it needed (`source` must outlive the shader) */
 std::unique_ptr<glslang::TShader> parseUnit (EShLanguage stage, std::string& source, const char* what) {
     for (int attempt = 0;; attempt++) {
@@ -661,7 +697,8 @@ std::unique_ptr<glslang::TShader> parseUnit (EShLanguage stage, std::string& sou
 	shader.reset ();
 	const bool fixed = attempt < 64
 	    && (truncateWiderOperands (source, log) || convertAssignment (source, log) || constInitializer (source, log)
-		|| missingReturn (source, log) || booleanCondition (source, log) || convertArguments (source, log));
+		|| missingReturn (source, log) || booleanCondition (source, log) || convertArguments (source, log)
+		|| declareTexelUniform (source, log));
 	if (!fixed) {
 	    sLog.error ("GLSL ", what, " unit parsing Failed: ", log);
 	    WPENGINE_HEALTH ("shader_error", { { "stage", "glslang" }, { "unit", what }, { "message", WallpaperEngine::Health::brief (log) } });

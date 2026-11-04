@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <optional>
 
 #include <functional>
@@ -221,6 +222,8 @@ private:
     std::shared_ptr<const TextureProvider> m_input = nullptr;
     std::shared_ptr<const TextureProvider> m_previousInput = nullptr;
     glm::vec4 m_texture0Resolution = {};
+    /** g_Texture<n>Texel per bound texture (std::map: the uniforms point at its nodes) */
+    std::map<int, glm::vec4> m_textureTexels = {};
 
     GLuint m_programID;
 

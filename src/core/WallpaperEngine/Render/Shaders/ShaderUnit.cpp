@@ -848,6 +848,23 @@ const std::string& ShaderUnit::compile () {
 	this->m_final += VERTEX_SHADER_DEFINES;
     }
 
+    // SKINNING sizes g_Bones[BONECOUNT]: WE sets BONECOUNT to the skeleton's bone count with it (vtable +0xd8, GH
+    // 0x140230ec0), never 0. A SKINNING pass without a count (a caster's defaults) gets 1 rather than a zero-size array
+    const auto skinningSet = [this] () {
+	for (const ComboMap* map : std::initializer_list<const ComboMap*> { &this->m_overrideCombos, &this->m_combos, &this->m_discoveredCombos }) {
+	    for (const auto& [name, value] : *map) {
+		std::string upper;
+		std::ranges::transform (name, std::back_inserter (upper), ::toupper);
+		if (upper == "SKINNING") {
+		    return value != 0;
+		}
+	    }
+	}
+	return false;
+    } ();
+    const auto comboValue = [skinningSet] (const std::string& name, int value) {
+	return name == "BONECOUNT" && skinningSet && value < 1 ? 1 : value;
+    };
     std::map<std::string, bool> addedCombos;
 
     for (const auto& [name, value] : this->m_overrideCombos) {
@@ -855,7 +872,7 @@ const std::string& ShaderUnit::compile () {
 	std::ranges::transform (name, std::back_inserter (uppercase), ::toupper);
 
 	if (!addedCombos.contains (uppercase)) {
-	    this->m_final += DEFINE_COMBO (uppercase, value);
+	    this->m_final += DEFINE_COMBO (uppercase, comboValue (uppercase, value));
 	    addedCombos.emplace (uppercase, true);
 	}
     }
@@ -866,7 +883,7 @@ const std::string& ShaderUnit::compile () {
 	std::ranges::transform (name, std::back_inserter (uppercase), ::toupper);
 
 	if (!addedCombos.contains (uppercase)) {
-	    this->m_final += DEFINE_COMBO (uppercase, value);
+	    this->m_final += DEFINE_COMBO (uppercase, comboValue (uppercase, value));
 	    addedCombos.emplace (uppercase, true);
 	}
     }
@@ -876,7 +893,7 @@ const std::string& ShaderUnit::compile () {
 	std::ranges::transform (name, std::back_inserter (uppercase), ::toupper);
 
 	if (!addedCombos.contains (uppercase)) {
-	    this->m_final += DEFINE_COMBO (uppercase, value);
+	    this->m_final += DEFINE_COMBO (uppercase, comboValue (uppercase, value));
 	    addedCombos.emplace (uppercase, true);
 	}
     }
@@ -887,7 +904,7 @@ const std::string& ShaderUnit::compile () {
 	    std::ranges::transform (name, std::back_inserter (uppercase), ::toupper);
 
 	    if (!addedCombos.contains (uppercase)) {
-		this->m_final += DEFINE_COMBO (uppercase, value);
+		this->m_final += DEFINE_COMBO (uppercase, comboValue (uppercase, value));
 		addedCombos.emplace (uppercase, true);
 	    }
 	}
@@ -897,7 +914,7 @@ const std::string& ShaderUnit::compile () {
 	    std::ranges::transform (name, std::back_inserter (uppercase), ::toupper);
 
 	    if (!addedCombos.contains (uppercase)) {
-		this->m_final += DEFINE_COMBO (uppercase, value);
+		this->m_final += DEFINE_COMBO (uppercase, comboValue (uppercase, value));
 		addedCombos.emplace (uppercase, true);
 	    }
 	}
