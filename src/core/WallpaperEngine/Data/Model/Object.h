@@ -621,6 +621,16 @@ struct ParticleRenderer {
     bool uvSmoothing; // rope only: reduces flickering when lifetimes are identical
     bool fadeAlpha; // ropetrail: fade alpha along trail
     bool fadeSize; // ropetrail: fade size along trail
+    /** sprite: how the quad faces (WE's parser GH 0x1401efc50): 0 `screen` (the default), 1 `upright` (turns about
+     *  an up axis to face the camera), 2 `fixed` (a fixed plane, `axis` its normal) */
+    int orientation = 0;
+    /** sprite: `axis` ("0 0 0" by default: then WE's y axis), normalised */
+    glm::vec3 axis = glm::vec3 (0.0f, 1.0f, 0.0f);
+    /** sprite: the in-plane up of a `fixed` quad, cross (axis, cross (y, axis)) (the parser builds it) */
+    glm::vec3 axisUp = glm::vec3 (0.0f, 0.0f, -1.0f);
+    /** sprite: `flags` bit 0: the axes are in world space (the camera's up / world y / `axis` as is), not the
+     *  system's own */
+    bool worldSpace = false;
 };
 
 /**

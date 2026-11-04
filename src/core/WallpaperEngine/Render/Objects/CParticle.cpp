@@ -2420,11 +2420,10 @@ void CParticle::updateMatrices () {
 	m_mvpMatrix = m_parentSystem->m_mvpMatrix;
 	m_mvpMatrixInverse = m_parentSystem->m_mvpMatrixInverse;
 	m_eyePosition = m_parentSystem->m_eyePosition;
-	m_orientationUp = m_parentSystem->m_orientationUp;
-	m_orientationRight = m_parentSystem->m_orientationRight;
-	m_orientationForward = m_parentSystem->m_orientationForward;
 	m_viewUp = m_parentSystem->m_viewUp;
 	m_viewRight = m_parentSystem->m_viewRight;
+	// its own renderer's orientation, in the parent's matrices
+	this->updateOrientation ();
 	this->updateParticleRenderVars ();
 	return;
     }
@@ -2448,13 +2447,76 @@ void CParticle::updateMatrices () {
     m_mvpMatrix = m_viewProjectionMatrix * m_modelMatrix;
     m_mvpMatrixInverse = glm::inverse (m_mvpMatrix);
 
-    m_orientationUp = glm::vec3 (0.0f, 1.0f, 0.0f);
-    m_orientationRight = glm::vec3 (1.0f, 0.0f, 0.0f);
-    m_orientationForward = glm::vec3 (0.0f, 0.0f, 1.0f);
     m_viewUp = glm::vec3 (0.0f, 1.0f, 0.0f);
     m_viewRight = glm::vec3 (1.0f, 0.0f, 0.0f);
 
+    this->updateOrientation ();
     this->updateParticleRenderVars ();
+}
+
+void CParticle::updateOrientation () {
+    // WE's sprite orientation (GH 0x14024fd30, the renderer's settings from GH 0x1401efc50): forward F and up U are
+    // chosen in WE's world, taken into the system's space by the transpose of its model matrix's 3×3 (row-vector:
+    // v' = M·v), normalised, and right is U × F:
+    //   screen (0):  F = −view forward; U = the view's up (flags bit 0) or the system's y in the world, made
+    //                perpendicular to F
+    //   upright (1): U = world y (bit 0) or the system's `axis` in the world; R = view forward × U; F = R × U
+    //   fixed (2):   F = `axis`, U = its in-plane up — as given (bit 0) or the system's own, in the world
+    // LWE's particle space is WE's with y flipped (M_lwe = Fy·M_we·Fy, `updateMatrices`), and its sprites take
+    // (1,0,0)/(0,1,0)/(0,0,1) for WE's identity: R and F go across with Fy, U with −Fy, so with no rotation every
+    // mode is the identity LWE always drew
+    if (m_particle.renderers.empty () || m_particle.renderers[0].name != "sprite") {
+	// the trail and rope renderers have parsers of their own (not read): LWE's identity, as before
+	m_orientationRight = glm::vec3 (1.0f, 0.0f, 0.0f);
+	m_orientationUp = glm::vec3 (0.0f, 1.0f, 0.0f);
+	m_orientationForward = glm::vec3 (0.0f, 0.0f, 1.0f);
+	return;
+    }
+    const ParticleRenderer& renderer = m_particle.renderers[0];
+    const glm::mat3 fy (1.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    const glm::mat3 m = fy * glm::mat3 (m_modelMatrix) * fy;
+    const glm::mat3 toLocal = glm::transpose (m);
+
+    const auto& camera = getScene ().getCamera ();
+    glm::vec3 viewForward = camera.getCenter () - camera.getEye ();
+    viewForward = glm::length (viewForward) > 1e-6f ? glm::normalize (viewForward) : glm::vec3 (0.0f, 0.0f, -1.0f);
+    glm::vec3 viewUp = camera.getUp ();
+    viewUp = glm::length (viewUp) > 1e-6f ? glm::normalize (viewUp) : glm::vec3 (0.0f, 1.0f, 0.0f);
+
+    glm::vec3 forward, up;
+    switch (renderer.orientation) {
+	case 1:
+	    {
+		up = renderer.worldSpace ? glm::vec3 (0.0f, 1.0f, 0.0f) : m * renderer.axis;
+		const glm::vec3 right = glm::cross (viewForward, up);
+		forward = glm::cross (right, up);
+		break;
+	    }
+	case 2:
+	    forward = renderer.worldSpace ? renderer.axis : m * renderer.axis;
+	    up = renderer.worldSpace ? renderer.axisUp : m * renderer.axisUp;
+	    break;
+	default:
+	    forward = -viewForward;
+	    up = renderer.worldSpace ? viewUp : m * glm::vec3 (0.0f, 1.0f, 0.0f);
+	    up -= forward * glm::dot (forward, up);
+	    break;
+    }
+
+    forward = toLocal * forward;
+    up = toLocal * up;
+    glm::vec3 right = glm::cross (up, forward);
+    const auto unit = [] (const glm::vec3& v, const glm::vec3& fallback) {
+	const float length = glm::length (v);
+	return length > 1e-12f && std::isfinite (length) ? v / length : fallback;
+    };
+    forward = unit (forward, glm::vec3 (0.0f, 0.0f, 1.0f));
+    up = unit (up, glm::vec3 (0.0f, 1.0f, 0.0f));
+    right = unit (right, glm::vec3 (1.0f, 0.0f, 0.0f));
+
+    m_orientationRight = fy * right;
+    m_orientationUp = -(fy * up);
+    m_orientationForward = fy * forward;
 }
 
 void CParticle::applyParallaxToModelMatrix () {

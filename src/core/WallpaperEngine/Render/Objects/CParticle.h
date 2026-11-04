@@ -240,6 +240,8 @@ protected:
     void setupGeometryCallbacks ();
     void setupParticleUniforms ();
     void updateMatrices ();
+    /** g_Orientation* from the sprite renderer's orientation, in this system's matrices (WE's GH 0x14024fd30) */
+    void updateOrientation ();
     /** The system's origin/scale/angle this frame, with its parents' (P36/G04); moves world-space control points */
     void refreshTransform ();
     void applyParallaxToModelMatrix ();

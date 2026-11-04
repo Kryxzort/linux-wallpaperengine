@@ -825,6 +825,19 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
 	    it.user ("right", properties, glm::vec3 (0.0f, 0.0f, 1.0f))
 	);
     } else if (name == "mapsequencearoundcontrolpoint") {
+	// WE's defaults (GH 0x1401e8c90) are bounds "0 1", limitbehavior "repeat", axis "0 0 1": the sequence
+	// around the whole circle, wrapping, in the xy plane — what this initializer does. The library uses only
+	// them (2288455459, 3233141951, 3413117423); another value isn't decoded (its runtime is in the operator
+	// interpreter): reported, drawn as the default
+	{
+	    const glm::vec2 bounds = it.optional ("bounds", glm::vec2 (0.0f, 1.0f));
+	    const std::string limit = it.optional<std::string> ("limitbehavior", "repeat");
+	    const glm::vec3 axis = it.optional ("axis", glm::vec3 (0.0f, 0.0f, 1.0f));
+	    if (bounds != glm::vec2 (0.0f, 1.0f) || limit != "repeat" || axis != glm::vec3 (0.0f, 0.0f, 1.0f)) {
+		WPENGINE_HEALTH ("unsupported", { { "what", "particle initializer mapsequencearoundcontrolpoint: bounds / "
+							   "limitbehavior / axis other than WE's defaults (drawn as the defaults)" } });
+	    }
+	}
 	return std::make_unique<MapSequenceAroundControlPointInitializer> (
 	    it.user ("controlpoint", properties, 0), it.user ("count", properties, 1),
 	    it.user ("speedmin", properties, glm::vec3 (0.0f)), it.user ("speedmax", properties, glm::vec3 (100.0f))
@@ -938,6 +951,28 @@ ParticleRenderer ObjectParser::parseParticleRenderer (const JSON& it) {
     float subdivisionDefault = (name == "rope") ? 4.0f : 1.0f;
     float lengthDefault = (name == "ropetrail") ? 1.0f : 0.05f;
 
+    // a sprite's orientation (WE's parser GH 0x1401efc50): `orientation` screen / upright / fixed (anything else is
+    // screen), `axis` (default "0 0 0", which is WE's y axis), normalised, and the in-plane up of a fixed quad
+    // b = axis × t with t = normalize (y × axis) (along x when the axis is y itself), `flags` (as WE's asUInt, bit 0)
+    const std::string orientation = it.optional<std::string> ("orientation", "screen");
+    glm::vec3 axis = it.optional ("axis", glm::vec3 (0.0f));
+    glm::vec3 axisUp;
+    if (axis == glm::vec3 (0.0f)) {
+	axis = glm::vec3 (0.0f, 1.0f, 0.0f);
+    } else {
+	axis = glm::normalize (axis);
+    }
+    if (axis.x == 0.0f && axis.z == 0.0f) {
+	axisUp = glm::vec3 (0.0f, 0.0f, -1.0f); // WE's constant, either sign of y
+    } else {
+	const glm::vec3 t = glm::normalize (glm::vec3 (axis.z, 0.0f, -axis.x));
+	axisUp = glm::normalize (glm::cross (axis, t));
+    }
+    int flags = 0;
+    if (const auto flagsIt = it.find ("flags"); flagsIt != it.end () && flagsIt->is_number ()) {
+	flags = flagsIt->is_number_float () ? static_cast<int> (flagsIt->get<double> ()) : flagsIt->get<int> ();
+    }
+
     return ParticleRenderer {
 	.name = name,
 	.length = it.optional ("length", lengthDefault),
@@ -950,6 +985,10 @@ ParticleRenderer ObjectParser::parseParticleRenderer (const JSON& it) {
 	.uvSmoothing = it.optional ("uvsmoothing", true),
 	.fadeAlpha = it.optional ("fadealpha", false),
 	.fadeSize = it.optional ("fadesize", false),
+	.orientation = orientation == "upright" ? 1 : orientation == "fixed" ? 2 : 0,
+	.axis = axis,
+	.axisUp = axisUp,
+	.worldSpace = (flags & 1) != 0,
     };
 }
 
