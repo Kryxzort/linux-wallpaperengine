@@ -3,12 +3,34 @@
 
 #include <algorithm>
 #include <format>
+#include <glm/glm.hpp>
 #include <glm/vec3.hpp>
 
 const WallpaperEngine::Data::Model::Color WallpaperEngine::Data::Builders::ColorBuilder::White
     = WallpaperEngine::Data::Model::Color (1.0f, 1.0f, 1.0f, 1.0f);
 const WallpaperEngine::Data::Model::Color WallpaperEngine::Data::Builders::ColorBuilder::Black
     = WallpaperEngine::Data::Model::Color (0.0f, 0.0f, 0.0f, 1.0f);
+
+WallpaperEngine::Data::Model::Color
+WallpaperEngine::Data::Builders::ColorBuilder::parseProperty (const std::string& value) {
+    auto copy = value;
+    std::ranges::replace (copy, ',', ' ');
+
+    if (copy.find ('#') != 0 && copy.find ('.') == std::string::npos) {
+	const int vectorSize = VectorBuilder::preparseSize (copy);
+
+	if (vectorSize == 3 || vectorSize == 4) {
+	    const glm::ivec4 whole = vectorSize == 3 ? glm::ivec4 (VectorBuilder::parse<glm::ivec3> (copy), 1)
+						     : VectorBuilder::parse<glm::ivec4> (copy);
+
+	    if (glm::all (glm::lessThanEqual (whole, glm::ivec4 (1))) && glm::all (glm::greaterThanEqual (whole, glm::ivec4 (0)))) {
+		return Model::Color (glm::vec4 (whole));
+	    }
+	}
+    }
+
+    return parse (value);
+}
 
 WallpaperEngine::Data::Model::Color
 WallpaperEngine::Data::Builders::ColorBuilder::parse (const std::string& value, float alpha) {

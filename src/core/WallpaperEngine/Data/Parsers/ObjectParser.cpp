@@ -207,7 +207,7 @@ TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, O
 	    .animationLayers = {},
 	},
 	TextData {
-	    .text = it.user ("text", properties),
+	    .text = it.text ("text", properties),
 	    .font = it.optional ("font", std::string ("systemfont_arial")),
 	    .pointSize = it.user ("pointsize", properties, 32.0f),
 	    .horizontalAlign = it.optional ("horizontalalign", it.optional ("alignment", std::string ("center"))),

@@ -141,6 +141,8 @@ public:
 	return this->user (key, properties);
     }
     [[nodiscard]] UserSettingUniquePtr color (const std::string& key, const Properties& properties) const;
+    /** A text value: a string stays a string ("Sinner #8" or "HHH HHH HHH" isn't a vector) */
+    [[nodiscard]] UserSettingUniquePtr text (const std::string& key, const Properties& properties) const;
     [[nodiscard]] UserSettingUniquePtr
     color (const std::string& key, const Properties& properties, Color defaultValue) const {
 	const auto value = this->optional (key);

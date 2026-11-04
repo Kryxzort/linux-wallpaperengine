@@ -12,7 +12,9 @@ using namespace WallpaperEngine::Data::Model;
 
 class DynamicValueParser {
 public:
-    static Model::DynamicValueUniquePtr parse (const JSON& data, const Properties& properties, bool expectColor);
+    /** `expectString`: a string value stays a string (a text object's text), never a number or a vector */
+    static Model::DynamicValueUniquePtr
+    parse (const JSON& data, const Properties& properties, bool expectColor, bool expectString = false);
     /**
      * Parses a property's `animation` object (G01/G02 of docs/player/spikes/we-lwe-gap-audit.md) the way
      * Wallpaper Engine 2.8 does: `options` needs `fps` > 0 and `length` > 0 or there is no animation; curves

@@ -145,7 +145,8 @@ PropertyAnimationSharedPtr DynamicValueParser::parseAnimation (const JSON& anima
     );
 }
 
-DynamicValueUniquePtr DynamicValueParser::parse (const JSON& data, const Properties& properties, bool expectColor) {
+DynamicValueUniquePtr
+DynamicValueParser::parse (const JSON& data, const Properties& properties, bool expectColor, bool expectString) {
     auto value = std::make_unique<DynamicValue> ();
     auto valueIt = data;
     std::optional<std::string> scriptSource = std::nullopt;
@@ -164,7 +165,9 @@ DynamicValueUniquePtr DynamicValueParser::parse (const JSON& data, const Propert
 
     // actual value parsing
     if (valueIt.is_string ()) {
-	if (expectColor) {
+	if (expectString) {
+	    value->update (valueIt.get<std::string> (), DynamicValue::UpdateSource::Initialization);
+	} else if (expectColor) {
 	    value->update (Builders::ColorBuilder::parse (valueIt), DynamicValue::UpdateSource::Initialization);
 	} else {
 	    std::string str = valueIt;
