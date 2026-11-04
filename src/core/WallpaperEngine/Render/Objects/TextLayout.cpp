@@ -6,6 +6,8 @@
 #include <fontconfig/fontconfig.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <hb-ft.h>
+#include <hb.h>
 
 #include "WallpaperEngine/Logging/Log.h"
 
@@ -40,12 +42,7 @@ struct LineGlyph {
     float x0, y0, x1, y1;
 };
 
-const TextGlyphBitmap* render (TextFonts& fonts, TextLayout& layout, char32_t codepoint, FT_Face& face, uint32_t& index) {
-    face = fonts.faceFor (codepoint, index);
-    if (face == nullptr) {
-	return nullptr;
-    }
-
+const TextGlyphBitmap* render (TextLayout& layout, FT_Face face, uint32_t index) {
     const auto key = std::make_pair (face, index);
     if (const auto it = layout.bitmaps.find (key); it != layout.bitmaps.end ()) {
 	return &it->second;
@@ -69,61 +66,77 @@ const TextGlyphBitmap* render (TextFonts& fonts, TextLayout& layout, char32_t co
     return &layout.bitmaps.emplace (key, std::move (bitmap)).first->second;
 }
 
-float advanceOf (FT_Face face, uint32_t index) {
-    if (FT_Load_Glyph (face, index, FT_LOAD_DEFAULT) != 0) {
-	return 0.0f;
-    }
-    // HarfBuzz's x_advance >> 6 (26.6 pixels, truncated)
-    return static_cast<float> (face->glyph->advance.x >> 6);
-}
+/** WE keeps tab, LF, CR, space (the mask 0x100002600) and ZWJ in the run before them (GH 0x1401da3c0) */
+bool staysInRun (char32_t c) { return c == 0x200d || c == 0x20 || c == 0x09 || c == 0x0a || c == 0x0d; }
 
 /**
- * The glyphs of one line from pen 0 (kerning from the font's kern table: WE shapes with HarfBuzz, which also reads
- * GPOS; a control character other than tab draws nothing)
+ * The glyphs of one line from pen 0, shaped as WE shapes them (GH 0x1401da3c0): the line is cut into runs of one
+ * face (each character's face from the font's fallback chain; whitespace and ZWJ stay in the run before them), and
+ * each run goes through HarfBuzz on its FreeType face (GPOS / kern kerning, ligatures, marks), advances x_advance >> 6.
+ * A control character other than tab draws nothing. Inferred: the hb_ft font with HarfBuzz's default load flags, the
+ * runs' script/direction guessed per run (WE's FUN_1401e1c00 / 0x1401e0eb0 weren't read past the run split)
  */
 std::vector<LineGlyph> shapeLine (TextFonts& fonts, TextLayout& layout, const std::u32string& line, float spacingX) {
     std::vector<LineGlyph> glyphs;
-    FT_Face previousFace = nullptr;
-    uint32_t previousIndex = 0;
 
+    struct Run {
+	FT_Face face;
+	std::vector<size_t> at;
+    };
+    std::vector<Run> runs;
     for (size_t i = 0; i < line.size (); i++) {
 	const char32_t cp = line[i];
-	FT_Face face = nullptr;
-	uint32_t index = 0;
-
 	if (cp < 0x20 && cp != 0x09) {
 	    continue;
 	}
-
-	const TextGlyphBitmap* bitmap = render (fonts, layout, cp, face, index);
-	if (bitmap == nullptr) {
+	FT_Face face = nullptr;
+	if (staysInRun (cp) && !runs.empty ()) {
+	    face = runs.back ().face;
+	} else {
+	    uint32_t index = 0;
+	    face = fonts.faceFor (cp, index);
+	}
+	if (face == nullptr) {
 	    continue;
 	}
-
-	float kerning = 0.0f;
-	if (previousFace == face && FT_HAS_KERNING (face)) {
-	    FT_Vector delta;
-	    if (FT_Get_Kerning (face, previousIndex, index, FT_KERNING_DEFAULT, &delta) == 0) {
-		kerning = static_cast<float> (delta.x >> 6);
-	    }
+	if (runs.empty () || runs.back ().face != face) {
+	    runs.push_back (Run { .face = face, .at = {} });
 	}
-	if (kerning != 0.0f && !glyphs.empty ()) {
-	    glyphs.back ().advance += kerning;
-	}
-	previousFace = face;
-	previousIndex = index;
-
-	glyphs.push_back (LineGlyph {
-	    .bitmap = bitmap,
-	    .codepoint = cp,
-	    .cluster = i,
-	    .advance = advanceOf (face, index) + spacingX,
-	    .x0 = static_cast<float> (bitmap->left),
-	    .y0 = static_cast<float> (bitmap->top - bitmap->rows),
-	    .x1 = static_cast<float> (bitmap->left + bitmap->width),
-	    .y1 = static_cast<float> (bitmap->top),
-	});
+	runs.back ().at.push_back (i);
     }
+
+    hb_buffer_t* buffer = hb_buffer_create ();
+    for (const auto& run : runs) {
+	hb_buffer_clear_contents (buffer);
+	for (const size_t i : run.at) {
+	    hb_buffer_add (buffer, static_cast<hb_codepoint_t> (line[i]), static_cast<unsigned int> (i));
+	}
+	hb_buffer_set_content_type (buffer, HB_BUFFER_CONTENT_TYPE_UNICODE);
+	hb_buffer_guess_segment_properties (buffer);
+	hb_font_t* font = hb_ft_font_create_referenced (run.face);
+	hb_shape (font, buffer, nullptr, 0);
+
+	unsigned int count = 0;
+	const hb_glyph_info_t* info = hb_buffer_get_glyph_infos (buffer, &count);
+	const hb_glyph_position_t* pos = hb_buffer_get_glyph_positions (buffer, &count);
+	for (unsigned int k = 0; k < count; k++) {
+	    const TextGlyphBitmap* bitmap = render (layout, run.face, info[k].codepoint);
+	    const auto dx = static_cast<float> (pos[k].x_offset >> 6);
+	    const auto dy = static_cast<float> (pos[k].y_offset >> 6);
+	    glyphs.push_back (LineGlyph {
+		.bitmap = bitmap,
+		.codepoint = line[info[k].cluster],
+		.cluster = info[k].cluster,
+		.advance = static_cast<float> (pos[k].x_advance >> 6) + spacingX,
+		.x0 = static_cast<float> (bitmap->left) + dx,
+		.y0 = static_cast<float> (bitmap->top - bitmap->rows) + dy,
+		.x1 = static_cast<float> (bitmap->left + bitmap->width) + dx,
+		.y1 = static_cast<float> (bitmap->top) + dy,
+	    });
+	}
+	hb_font_destroy (font);
+    }
+    hb_buffer_destroy (buffer);
 
     return glyphs;
 }
@@ -280,6 +293,113 @@ FT_Face TextFonts::faceFor (char32_t codepoint, uint32_t& glyphIndex) {
     return this->m_primary.face;
 }
 
+namespace {
+/**
+ * WE's fallback chain (GH 0x1401da3c0, the table at 0x1404c5030: name + "in the Windows fonts directory"): arial.ttf,
+ * seguiemj.ttf, arialuni.ttf, segoeui.ttf, WE's own fonts/TwemojiMozilla.ttf, seguisym.ttf, msyh.ttc, Malgun.ttf; a
+ * character goes to the first that has it. Here each Windows file is its family, then the families fontconfig commonly
+ * has in its place (the substitutes are ours)
+ */
+struct ChainSlot {
+    const char* asset;
+    std::vector<const char*> families;
+};
+const std::vector<ChainSlot>& weChain () {
+    static const std::vector<ChainSlot> kChain = {
+	{ nullptr, { "Arial", "Liberation Sans", "Arimo" } },
+	{ nullptr, { "Segoe UI Emoji", "Noto Emoji" } },
+	{ nullptr, { "Arial Unicode MS", "Noto Sans", "DejaVu Sans" } },
+	{ nullptr, { "Segoe UI", "Selawik", "Noto Sans", "Open Sans" } },
+	{ "fonts/TwemojiMozilla.ttf", {} },
+	{ nullptr, { "Segoe UI Symbol", "Noto Sans Symbols 2", "Noto Sans Symbols", "Noto Sans Math", "DejaVu Sans" } },
+	{ nullptr, { "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", "WenQuanYi Micro Hei",
+		     "Droid Sans Fallback" } },
+	{ nullptr, { "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K", "Noto Sans KR", "NanumGothic" } },
+    };
+    return kChain;
+}
+
+/** The file of the first of `families` fontconfig has under that very family name (not a substitute), or none */
+std::optional<std::pair<std::string, int>> exactFamily (const std::vector<const char*>& families) {
+    if (!FcInit ()) {
+	return std::nullopt;
+    }
+    for (const char* family : families) {
+	FcPattern* pattern = FcPatternCreate ();
+	FcPatternAddString (pattern, FC_FAMILY, reinterpret_cast<const FcChar8*> (family));
+	FcPatternAddBool (pattern, FC_SCALABLE, FcTrue);
+	FcConfigSubstitute (nullptr, pattern, FcMatchPattern);
+	FcDefaultSubstitute (pattern);
+	FcResult res = FcResultNoMatch;
+	FcPattern* match = FcFontMatch (nullptr, pattern, &res);
+	std::optional<std::pair<std::string, int>> found;
+	if (match != nullptr) {
+	    FcChar8* got = nullptr;
+	    FcChar8* file = nullptr;
+	    int index = 0;
+	    for (int k = 0; FcPatternGetString (match, FC_FAMILY, k, &got) == FcResultMatch; k++) {
+		if (FcStrCmpIgnoreCase (got, reinterpret_cast<const FcChar8*> (family)) == 0
+		    && FcPatternGetString (match, FC_FILE, 0, &file) == FcResultMatch) {
+		    FcPatternGetInteger (match, FC_INDEX, 0, &index);
+		    found = std::make_pair (std::string (reinterpret_cast<const char*> (file)), index);
+		    break;
+		}
+	    }
+	    FcPatternDestroy (match);
+	}
+	FcPatternDestroy (pattern);
+	if (found.has_value ()) {
+	    return found;
+	}
+    }
+    return std::nullopt;
+}
+} // namespace
+
+void TextFonts::setAssetReader (AssetReader reader) { this->m_assets = std::move (reader); }
+
+int TextFonts::openFallback (Face face) {
+    // a colour-only font (emoji bitmaps) can't be drawn as coverage: skip it
+    if (!FT_IS_SCALABLE (face.face)) {
+	FT_Done_Face (face.face);
+	return -1;
+    }
+    FT_Select_Charmap (face.face, FT_ENCODING_UNICODE);
+    if (this->m_points > 0.0f) {
+	FT_Set_Char_Size (face.face, 0, static_cast<FT_F26Dot6> (this->m_points * 64.0f), 300, 300);
+    }
+    this->m_fallbacks.push_back (std::move (face));
+    return static_cast<int> (this->m_fallbacks.size () - 1);
+}
+
+int TextFonts::chainSlot (size_t slot) {
+    while (this->m_chain.size () <= slot) {
+	const auto& entry = weChain ()[this->m_chain.size ()];
+	int opened = -1;
+	if (this->initLibrary ()) {
+	    Face face;
+	    if (entry.asset != nullptr) {
+		if (this->m_assets) {
+		    if (auto data = this->m_assets (entry.asset); data.has_value () && !data->empty ()) {
+			face.data = std::move (*data);
+			if (FT_New_Memory_Face (this->m_library, face.data.data (), static_cast<FT_Long> (face.data.size ()), 0,
+						&face.face)
+			    == 0) {
+			    opened = this->openFallback (std::move (face));
+			}
+		    }
+		}
+	    } else if (const auto file = exactFamily (entry.families); file.has_value ()) {
+		if (FT_New_Face (this->m_library, file->first.c_str (), file->second, &face.face) == 0) {
+		    opened = this->openFallback (std::move (face));
+		}
+	    }
+	}
+	this->m_chain.push_back (opened);
+    }
+    return this->m_chain[slot];
+}
+
 int TextFonts::fallbackFor (char32_t codepoint) {
     if (const auto it = this->m_fallbackFor.find (codepoint); it != this->m_fallbackFor.end ()) {
 	return it->second;
@@ -287,14 +407,23 @@ int TextFonts::fallbackFor (char32_t codepoint) {
 
     int result = -1;
 
-    // the faces already open first
-    for (size_t i = 0; i < this->m_fallbacks.size (); i++) {
-	if (FT_Get_Char_Index (this->m_fallbacks[i].face, codepoint) != 0) {
-	    result = static_cast<int> (i);
-	    break;
+    // WE's chain, in its order (a slot this system has no font for is skipped)
+    for (size_t slot = 0; slot < weChain ().size () && result < 0; slot++) {
+	const int face = this->chainSlot (slot);
+	if (face >= 0 && FT_Get_Char_Index (this->m_fallbacks[face].face, codepoint) != 0) {
+	    result = face;
 	}
     }
 
+    // then the faces fontconfig picked for earlier characters
+    for (size_t i = 0; i < this->m_fallbacks.size () && result < 0; i++) {
+	if (FT_Get_Char_Index (this->m_fallbacks[i].face, codepoint) != 0) {
+	    result = static_cast<int> (i);
+	}
+    }
+
+    // Ours, not WE's (a Windows system has every slot's font; WE would draw the font's missing glyph): fontconfig's
+    // best scalable font for the character
     if (result < 0 && FcInit ()) {
 	FcPattern* pattern = FcPatternCreate ();
 	FcCharSet* charset = FcCharSetCreate ();
@@ -322,17 +451,7 @@ int TextFonts::fallbackFor (char32_t codepoint) {
 	    if (FT_New_Face (this->m_library, reinterpret_cast<const char*> (file), index, &face.face) != 0) {
 		continue;
 	    }
-	    // a colour-only font (emoji bitmaps) can't be drawn as coverage: skip it
-	    if (!FT_IS_SCALABLE (face.face)) {
-		FT_Done_Face (face.face);
-		continue;
-	    }
-	    FT_Select_Charmap (face.face, FT_ENCODING_UNICODE);
-	    if (this->m_points > 0.0f) {
-		FT_Set_Char_Size (face.face, 0, static_cast<FT_F26Dot6> (this->m_points * 64.0f), 300, 300);
-	    }
-	    this->m_fallbacks.push_back (std::move (face));
-	    result = static_cast<int> (this->m_fallbacks.size () - 1);
+	    result = this->openFallback (std::move (face));
 	}
 
 	if (set != nullptr) {

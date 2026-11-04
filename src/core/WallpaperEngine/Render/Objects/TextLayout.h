@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -57,7 +58,13 @@ public:
     /** Every face to `points` at 300 dpi, as WE (FT_Set_Char_Size (0, pt·64, 300), GH 0x1401d94c0) */
     void setPointSize (float points);
     [[nodiscard]] FT_Face primary () const;
-    /** The face that has `codepoint` (the font, else a fallback; else the font's missing glyph) and its glyph */
+    /** Reads a WE asset (`fonts/TwemojiMozilla.ttf`, the one asset in WE's fallback chain); none = can't */
+    using AssetReader = std::function<std::optional<std::vector<uint8_t>> (const std::string&)>;
+    void setAssetReader (AssetReader reader);
+    /**
+     * The face that has `codepoint` and its glyph: the font, else WE's fallback chain (GH 0x1401da3c0), else (ours)
+     * fontconfig's choice; else the font's missing glyph
+     */
     FT_Face faceFor (char32_t codepoint, uint32_t& glyphIndex);
 
     /**
@@ -74,13 +81,19 @@ private:
     };
 
     bool initLibrary ();
-    /** A fallback face for the codepoint (fontconfig), or -1 */
+    /** A fallback face for the codepoint (WE's chain, then fontconfig), or -1 */
     int fallbackFor (char32_t codepoint);
+    /** WE's chain slot `slot` (opened on first use, in order), an index into m_fallbacks or -1 (none here) */
+    int chainSlot (size_t slot);
+    /** Keeps an opened face (sized, Unicode charmap) as a fallback; a non-scalable one is closed: -1 */
+    int openFallback (Face face);
 
     FT_Library m_library = nullptr;
     Face m_primary;
     std::vector<Face> m_fallbacks;
     std::map<char32_t, int> m_fallbackFor;
+    std::vector<int> m_chain;
+    AssetReader m_assets;
     float m_points = 0.0f;
 };
 

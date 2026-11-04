@@ -122,6 +122,7 @@ set(TARGET_LIBRARIES
     kissfft::kissfft
     Freetype::Freetype
     PkgConfig::fontconfig
+    PkgConfig::harfbuzz
     glslang
     spirv-cross-core
     spirv-cross-glsl
@@ -168,6 +169,8 @@ pkg_check_modules(ffmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libswre
 find_package(SDL2 REQUIRED CONFIG REQUIRED COMPONENTS SDL2)
 find_package(Freetype REQUIRED)
 pkg_check_modules(fontconfig REQUIRED IMPORTED_TARGET fontconfig)
+# text shaping as WE does it (HarfBuzz on the FreeType face: kerning from GPOS, ligatures)
+pkg_check_modules(harfbuzz REQUIRED IMPORTED_TARGET harfbuzz)
 
 # generate the version file that will be exported with the installation
 configure_file(

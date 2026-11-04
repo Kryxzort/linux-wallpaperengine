@@ -85,6 +85,16 @@ void CText::setup () {
     bool systemFont = font.empty () || font.rfind ("systemfont_", 0) == 0;
     std::string from;
 
+    // WE's fallback chain has one font of its own, fonts/TwemojiMozilla.ttf (GH 0x1401da3c0)
+    this->m_fonts.setAssetReader ([this] (const std::string& path) -> std::optional<std::vector<uint8_t>> {
+	try {
+	    const auto stream = this->getAssetLocator ().read (path);
+	    return std::vector<uint8_t> { std::istreambuf_iterator<char> (*stream), std::istreambuf_iterator<char> () };
+	} catch (const std::exception&) {
+	    return std::nullopt;
+	}
+    });
+
     // the scene's (or WE's) font file; one that can't be read or opened falls back to arial (GH 0x1401d9d70)
     if (!systemFont) {
 	try {
