@@ -134,6 +134,17 @@ std::optional<std::string> CPass::userTextureName (const std::string& name) cons
 	return value;
     }
 
+    // a usertexture naming another kind of property: in the library, `usershortcut` (3516106265's app dock), whose
+    // texture is the picked shortcut's icon (WE names it "usershortcut_" + the property, GH 0x140184980). None picked
+    // keeps the slot's texture (inferred: the author's default icon is the material's texture there); a Windows
+    // shortcut's icon can't be read here, so a picked one keeps it too
+    if (const auto text = property->second->asOrNull<Data::Model::PropertyTextInput> ()) {
+	if (!text->getString ().empty ()) {
+	    sLog.out ("CPass: usertexture ", name, " (", text->getString (), ") is a shortcut's icon: the slot keeps its texture");
+	}
+	return std::nullopt;
+    }
+
     return name;
 }
 

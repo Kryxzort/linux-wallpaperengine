@@ -37,7 +37,9 @@ PropertySharedPtr PropertyParser::parse (const JSON& it, const std::string& name
     if (type == "combo") {
 	return parseCombo (it, name);
     }
-    if (type == "text") {
+    // "Text" (3319542538's five link labels in the properties panel) is the same value-less label: nothing in a scene
+    // can read one, so it changes no picture whichever way WE spells the type (its parser's compare wasn't read)
+    if (type == "text" || type == "Text") {
 	return parseText (it, name);
     }
     if (type == "scenetexture") {

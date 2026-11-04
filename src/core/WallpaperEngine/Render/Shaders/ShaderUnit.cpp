@@ -807,7 +807,9 @@ void ShaderUnit::parseParameterConfiguration (
 	    }
 	}
 
-	if (textureName != data.end ()) {
+	// "default": "" names no file (refract's normal map, 3042865984): the slot is the pass's (it was looked up as
+	// "materials/.tex" and reported missing)
+	if (textureName != data.end () && !(textureName->is_string () && textureName->get<std::string> ().empty ())) {
 	    this->m_defaultTextures.emplace (index, *textureName);
 	}
 
