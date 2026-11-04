@@ -46,6 +46,21 @@ public:
     [[nodiscard]] float getDeltaTime () const;
     [[nodiscard]] float getFps () const;
 
+    /**
+     * The size of the screen the scene is shown on, in pixels (the host's wp_project_hint_size; the scene's own size
+     * until a host gives one): engine.screenResolution. A change after the scene is up sends the scripts
+     * resizeScreen (size) (WE: "every time the wallpaper resizes because of a change to the current screen
+     * resolution", never on creation)
+     */
+    [[nodiscard]] glm::vec2 getScreenSize () const;
+    void setScreenSize (int width, int height);
+    /**
+     * The pointer in screen pixels (IInput.cursorScreenPosition, "the cursor on the screen in pixels"), x right, y
+     * down: the host shows the scene covering the screen (scaled to cover, centred, the overflow cut). Inferred: the
+     * cover mapping is liascape's, the y direction Windows' screen coordinates
+     */
+    [[nodiscard]] glm::vec2 getCursorScreenPosition () const;
+
     const glm::vec2* getMousePosition () const;
     const glm::vec2* getMousePositionLast () const;
     const glm::vec2* getMousePositionNormalized () const;
@@ -194,6 +209,8 @@ protected:
     friend class CWallpaper;
 
 private:
+    /** the host's screen size (0: none given) */
+    glm::ivec2 m_screenSize = { 0, 0 };
     Render::CObject* createObject (const Object& object);
     Render::CObject* dispatchObjectType (const Object& object);
     void addObjectToRenderOrder (const Object& object);

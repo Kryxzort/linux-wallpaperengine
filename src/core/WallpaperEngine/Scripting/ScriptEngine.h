@@ -232,6 +232,10 @@ public:
     };
     void notifyTrackMetadataChange (const MediaProperties& properties);
     void notifyMediaStatusChange (bool enabled);
+    /** resizeScreen (size): the screen the scene shows on changed size (CScene::setScreenSize), at the next tick */
+    void notifyResizeScreen (const glm::vec2& size);
+    /** forgets a queued event (a screen size the scene was created with is no resize) */
+    void dropQueuedEvent (const std::string& name);
     void notifyAlbumArtUrlChange (const std::optional<std::string>& url);
     void notifyPlaybackStateChange (std::optional<wp_media_playback_state> state);
     void notifyPlaybackPositionAndDurationChange (std::optional<double> position, std::optional<double> duration);

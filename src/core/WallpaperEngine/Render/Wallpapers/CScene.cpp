@@ -653,6 +653,35 @@ void CScene::addObjectToRenderOrder (const Object& object) {
 
 Scripting::ScriptEngine& CScene::getScriptEngine () const { return *this->m_scriptEngine; }
 
+glm::vec2 CScene::getScreenSize () const {
+    if (this->m_screenSize.x > 0 && this->m_screenSize.y > 0) {
+	return this->m_screenSize;
+    }
+    return { this->getWidth (), this->getHeight () };
+}
+
+void CScene::setScreenSize (int width, int height) {
+    if (width <= 0 || height <= 0) {
+	return;
+    }
+    const glm::vec2 before = this->getScreenSize ();
+    this->m_screenSize = { width, height };
+    if (before != this->getScreenSize ()) {
+	this->getScriptEngine ().notifyResizeScreen (this->getScreenSize ());
+    }
+}
+
+glm::vec2 CScene::getCursorScreenPosition () const {
+    const glm::vec2 scene (this->getWidth (), this->getHeight ());
+    const glm::vec2 screen = this->getScreenSize ();
+    const glm::vec2 pointer = *this->getMousePositionNormalized () * scene;
+    if (scene.x <= 0.0f || scene.y <= 0.0f) {
+	return pointer;
+    }
+    const float cover = std::max (screen.x / scene.x, screen.y / scene.y);
+    return (pointer - scene * 0.5f) * cover + screen * 0.5f;
+}
+
 void CScene::advanceAnimations () {
     auto& animated = const_cast<Data::Model::Scene&> (this->getScene ()).animatedValues;
     const float dt = std::max (

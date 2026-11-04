@@ -22,9 +22,10 @@ JSValue get_cursor_world_position (JSContext* ctx, JSValueConst this_val, int ar
 JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     JSClassID classId;
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
-    auto position = input->getScene ().getMousePositionNormalized ();
 
-    return input->getScene ().getScriptEngine ().newVec (*position);
+    // "the cursor on the screen in pixels" (d.ts): in engine.screenResolution's pixels (3509243656 centres it with
+    // screenResolution / 2); it was 0..1
+    return input->getScene ().getScriptEngine ().newVec (input->getScene ().getCursorScreenPosition ());
 }
 
 JSValue get_cursor_left_down (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {

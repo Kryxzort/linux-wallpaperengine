@@ -265,6 +265,9 @@ void WallpaperEngine::Project::hintSize (int width, int height) {
 
     if (this->wallpaper != nullptr && this->wallpaper->is<Wallpapers::CWeb> ()) {
 	this->wallpaper->as<Wallpapers::CWeb> ()->setSize (width, height);
+    } else if (this->wallpaper != nullptr && this->wallpaper->is<Wallpapers::CScene> ()) {
+	// the screen a scene shows on: engine.screenResolution, and resizeScreen when it changes
+	this->wallpaper->as<Wallpapers::CScene> ()->setScreenSize (width, height);
     }
 }
 
@@ -290,6 +293,11 @@ void WallpaperEngine::Project::render () {
 	// give hint about size to the wallpaper only if web
 	if (this->wallpaper->is<Wallpapers::CWeb> ()) {
 	    this->wallpaper->as<Wallpapers::CWeb> ()->setSize (this->hintedWidth, this->hintedHeight);
+	} else if (this->wallpaper->is<Wallpapers::CScene> () && this->hintedWidth > 0 && this->hintedHeight > 0) {
+	    // a size hinted before the scene existed is its screen from the start (no resizeScreen: WE sends none on
+	    // creation)
+	    this->wallpaper->as<Wallpapers::CScene> ()->setScreenSize (this->hintedWidth, this->hintedHeight);
+	    this->wallpaper->as<Wallpapers::CScene> ()->getScriptEngine ().dropQueuedEvent ("resizeScreen");
 	}
 	// notify current media metadata status
 	this->renderContext->albumArtUrlChange (this->mediaInfo.url);

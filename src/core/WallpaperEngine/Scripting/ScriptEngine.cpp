@@ -1523,6 +1523,23 @@ void ScriptEngine::notifyTrackMetadataChange (const MediaProperties& properties)
     this->m_queuedEvents.insert_or_assign ("mediaPropertiesChanged", event);
 }
 
+void ScriptEngine::notifyResizeScreen (const glm::vec2& size) {
+    if (!this->m_context) {
+	return;
+    }
+    if (const auto it = this->m_queuedEvents.find ("resizeScreen"); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (this->m_context, it->second);
+    }
+    this->m_queuedEvents.insert_or_assign ("resizeScreen", this->newVec (size));
+}
+
+void ScriptEngine::dropQueuedEvent (const std::string& name) {
+    if (const auto it = this->m_queuedEvents.find (name); it != this->m_queuedEvents.end ()) {
+	JS_FreeValue (this->m_context, it->second);
+	this->m_queuedEvents.erase (it);
+    }
+}
+
 void ScriptEngine::notifyMediaStatusChange (bool enabled) {
     JSContext* ctx = this->m_context;
     JSValue event = JS_NewObject (ctx);

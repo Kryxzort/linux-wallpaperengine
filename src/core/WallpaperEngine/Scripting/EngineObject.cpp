@@ -75,10 +75,9 @@ JSValue engine_get_screen_resolution (JSContext* ctx, JSValueConst this_val, int
 	return JS_EXCEPTION;
     }
 
-    // "the size of the screen the wallpaper is displayed on": the core renders at the scene's size and the host
-    // scales that to its output, which the core doesn't know, so the scene's size
-    const auto& scene = it->second.getScene ();
-    return it->second.getEngine ().newVec (glm::vec2 (scene.getWidth (), scene.getHeight ()));
+    // "Screen resolution in pixels": the screen the host shows the scene on (wp_project_hint_size), the scene's own
+    // size until a host gives one
+    return it->second.getEngine ().newVec (it->second.getScene ().getScreenSize ());
 }
 
 JSValue engine_get_user_properties (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {

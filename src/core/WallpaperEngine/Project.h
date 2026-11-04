@@ -86,8 +86,8 @@ protected:
     Properties::const_iterator property_it;
     wp_project_property* current_property;
     GLuint framebuffer;
-    int hintedWidth;
-    int hintedHeight;
+    int hintedWidth = 0;
+    int hintedHeight = 0;
     MediaInfo mediaInfo;
 
     Project (Context* context, wp_mouse_input* mouse_input, const std::filesystem::path& project);
