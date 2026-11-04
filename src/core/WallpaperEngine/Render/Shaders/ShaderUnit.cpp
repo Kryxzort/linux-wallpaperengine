@@ -107,11 +107,12 @@ using namespace WallpaperEngine::Render::Shaders;
 ShaderUnit::ShaderUnit (
     const GLSLContext::UnitType type, std::string file, std::string content, const AssetLocator& assetLocator,
     const ShaderConstantMap& constants, const TextureMap& passTextures, const TextureMap& overrideTextures,
-    const ComboMap& combos, const ComboMap& overrideCombos
+    const ComboMap& combos, const ComboMap& overrideCombos, TextureFormatResolver formatOf
 ) :
     m_type (type), m_file (std::move (file)), m_content (std::move (content)), m_combos (combos),
     m_overrideCombos (overrideCombos), m_constants (constants), m_passTextures (passTextures),
-    m_overrideTextures (overrideTextures), m_link (nullptr), m_assetLocator (assetLocator) {
+    m_overrideTextures (overrideTextures), m_formatOf (std::move (formatOf)), m_link (nullptr),
+    m_assetLocator (assetLocator) {
     // pre-process the shader so the units are clear
     this->preprocess ();
 }
@@ -791,14 +792,18 @@ void ShaderUnit::parseParameterConfiguration (
 	    }
 	}
 
-	// "formatcombo": WE defines TEX<n>FORMAT to the bound texture's format (common_fragment.h's FORMAT_*, read by
-	// ConvertTextureFormat; the stock fur4 uses TEX8FORMAT in code). LWE sets only TEX0FORMAT (CPass): the others
-	// are FORMAT_RGBA8888 (0), what LWE hands the shader for any texture it decoded. Inferred
+	// "formatcombo": WE defines TEX<n>FORMAT for each of slots 0..9 whose sampler has the flag, to the format of the
+	// texture bound there or, with none, of the sampler's default (GH 0x1401d2a20: "TEX" + n + "FORMAT" = the
+	// texture's format field; common_fragment.h's FORMAT_*, read by ConvertTextureFormat / DecompressNormal; the
+	// stock fur4 uses TEX8FORMAT in code). TEX0FORMAT stays CPass's (RG88 / R8 of the layer's texture)
 	const auto formatCombo = data.find ("formatcombo");
 	if (formatCombo != data.end () && formatCombo->is_boolean () && formatCombo->get<bool> ()) {
 	    const std::string name = "TEX" + std::to_string (index) + "FORMAT";
 	    if (!this->m_combos.contains (name) && !this->m_overrideCombos.contains (name)) {
-		this->m_discoveredCombos.emplace (name, 0);
+		const std::string defaultName
+		    = textureName != data.end () && textureName->is_string () ? textureName->get<std::string> () : "";
+		const int format = this->m_formatOf && index != 0 ? this->m_formatOf (static_cast<int> (index), defaultName) : 0;
+		this->m_discoveredCombos.emplace (name, format);
 	    }
 	}
 

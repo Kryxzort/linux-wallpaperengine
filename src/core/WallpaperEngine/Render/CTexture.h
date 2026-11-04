@@ -31,6 +31,8 @@ public:
     [[nodiscard]] uint32_t getRealWidth () const override;
     [[nodiscard]] uint32_t getRealHeight () const override;
     [[nodiscard]] TextureFormat getFormat () const override;
+    /** a .tex that holds a JPEG / PNG / … (FreeImage): uploaded as RGBA8 whatever its format field says */
+    [[nodiscard]] bool isFreeImage () const;
     [[nodiscard]] uint32_t getFlags () const override;
     [[nodiscard]] const glm::vec4* getResolution () const override;
     [[nodiscard]] const std::vector<FrameSharedPtr>& getFrames () const override;

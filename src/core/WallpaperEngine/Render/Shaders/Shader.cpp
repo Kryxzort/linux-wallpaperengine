@@ -18,15 +18,16 @@ using namespace WallpaperEngine::Assets;
 namespace WallpaperEngine::Render::Shaders {
 Shader::Shader (
     const AssetLocator& assetLocator, std::string filename, const ComboMap& combos, const ComboMap& overrideCombos,
-    const TextureMap& textures, const TextureMap& overrideTextures, const ShaderConstantMap& constants
+    const TextureMap& textures, const TextureMap& overrideTextures, const ShaderConstantMap& constants,
+    const TextureFormatResolver& formatOf
 ) :
     m_vertex (
 	GLSLContext::UnitType_Vertex, filename, assetLocator.vertexShader (filename), assetLocator, constants, textures,
-	overrideTextures, combos, overrideCombos
+	overrideTextures, combos, overrideCombos, formatOf
     ),
     m_fragment (
 	GLSLContext::UnitType_Fragment, filename, assetLocator.fragmentShader (filename), assetLocator, constants,
-	textures, overrideTextures, combos, overrideCombos
+	textures, overrideTextures, combos, overrideCombos, formatOf
     ),
     m_file (std::move (filename)), m_combos (combos), m_overrideCombos (overrideCombos), m_passTextures (textures),
     m_overrideTextures (overrideTextures) {

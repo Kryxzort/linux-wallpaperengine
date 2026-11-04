@@ -15,6 +15,7 @@
 #include "WallpaperEngine/Data/Model/Property.h"
 
 #include "WallpaperEngine/Render/CFBO.h"
+#include "WallpaperEngine/Render/CTexture.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
 
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariable.h"
@@ -694,6 +695,62 @@ GLuint CPass::compileShader (const char* shader, GLuint type) {
     return shaderID;
 }
 
+int CPass::shaderFormatOf (int index, const std::string& defaultName) const {
+    // what setupTextureUniforms will bind at `index`, most important first: a bind, the effect's user / plain texture
+    // overrides, the pass's user / plain textures, the sampler's default
+    std::string name;
+    const auto pick = [&] (const TextureMap& map, bool user) {
+	if (!name.empty ()) {
+	    return;
+	}
+	const auto it = map.find (index);
+	if (it == map.end ()) {
+	    return;
+	}
+	if (user) {
+	    name = this->userTextureName (it->second).value_or ("");
+	} else {
+	    name = it->second;
+	}
+    };
+    if (const auto bind = this->m_binds.find (index); bind != this->m_binds.end ()) {
+	if (bind->second == "previous") {
+	    return 0; // the chain's previous output: an RGBA target
+	}
+	name = bind->second;
+    }
+    pick (this->m_override.usertextures, true);
+    pick (this->m_override.textures, false);
+    pick (this->m_pass.usertextures, true);
+    pick (this->m_pass.textures, false);
+    if (name.empty ()) {
+	name = defaultName;
+    }
+    if (name.empty ()) {
+	return 0;
+    }
+    std::shared_ptr<const TextureProvider> texture = nullptr;
+    try {
+	if (name.find ("_rt_") == 0 || name.find ("_alias_") == 0) {
+	    texture = this->m_fboProvider->find (name);
+	} else {
+	    texture = this->getContext ().resolveTexture (name);
+	}
+    } catch (const std::exception&) {
+	return 0; // reported when it's bound
+    }
+    if (texture == nullptr) {
+	return 0;
+    }
+    // a .tex holding a JPEG / PNG is decoded to RGBA8 (CTexture::setupInternalFormat)
+    if (const auto* tex = dynamic_cast<const CTexture*> (texture.get ());
+	tex != nullptr && tex->isFreeImage ()) {
+	return 0;
+    }
+    const auto format = texture->getFormat ();
+    return format == TextureFormat_UNKNOWN ? 0 : static_cast<int> (format);
+}
+
 void CPass::setupShaders () {
     // ensure the constants are defined
     const auto texture0 = this->m_renderable.getTexture ();
@@ -724,7 +781,8 @@ void CPass::setupShaders () {
 
     this->m_shader = new Render::Shaders::Shader (
 	this->m_renderable.getAssetLocator (), shaderName, this->m_combos, this->m_override.combos, passTextures,
-	this->m_override.textures, this->m_override.constants
+	this->m_override.textures, this->m_override.constants,
+	[this] (int index, const std::string& defaultName) { return this->shaderFormatOf (index, defaultName); }
     );
 
     // WPENGINE_HEALTH: a compile error names the shader

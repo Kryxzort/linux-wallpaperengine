@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -18,6 +19,12 @@ using namespace WallpaperEngine::Assets;
 using namespace WallpaperEngine::Data::Model;
 
 /**
+ * The WE texture format (common_fragment.h's FORMAT_*) of what a pass binds at sampler slot `index` (`defaultName`: the
+ * sampler's own default texture, empty if none): a `formatcombo` sampler's TEX<n>FORMAT
+ */
+using TextureFormatResolver = std::function<int (int index, const std::string& defaultName)>;
+
+/**
  * Represents a whole shader unit
  */
 class ShaderUnit {
@@ -25,7 +32,7 @@ public:
     ShaderUnit (
 	const GLSLContext::UnitType type, std::string file, std::string content, const AssetLocator& assetLocator,
 	const ShaderConstantMap& constants, const TextureMap& passTextures, const TextureMap& overrideTextures,
-	const ComboMap& combos, const ComboMap& overrideCombos
+	const ComboMap& combos, const ComboMap& overrideCombos, TextureFormatResolver formatOf = nullptr
     );
     ~ShaderUnit () = default;
 
@@ -182,6 +189,8 @@ private:
     const TextureMap& m_passTextures;
     /** The textures that are being overridden */
     const TextureMap& m_overrideTextures;
+    /** the bound textures' formats, for TEX<n>FORMAT (none: 0) */
+    TextureFormatResolver m_formatOf;
     /** The default textures to use when a texture is not applied in a given slot */
     TextureMap m_defaultTextures = {};
     /**

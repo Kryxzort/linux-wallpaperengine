@@ -61,6 +61,8 @@ public:
 
     /** `command: swap` (GH 0x1402131b0 reads it as command 2): render () exchanges the two named FBOs instead */
     void setSwap (std::string first, std::string second);
+    /** the WE texture format bound at sampler `index` (TEX<n>FORMAT, ShaderUnit::TextureFormatResolver) */
+    [[nodiscard]] int shaderFormatOf (int index, const std::string& defaultName) const;
     [[nodiscard]] bool isSwap () const;
 
     // Custom geometry rendering support (for particles, etc.)

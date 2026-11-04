@@ -228,6 +228,8 @@ uint32_t CTexture::getRealHeight () const {
 
 TextureFormat CTexture::getFormat () const { return this->getHeader ().format; }
 
+bool CTexture::isFreeImage () const { return this->getHeader ().freeImageFormat != FIF_UNKNOWN; }
+
 uint32_t CTexture::getFlags () const { return this->getHeader ().flags; }
 
 const Texture& CTexture::getHeader () const { return *this->m_header; }
