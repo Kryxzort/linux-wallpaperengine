@@ -99,16 +99,52 @@ public:
     /** Placed in a 3D scene's world (a model, a particle system, an image that isn't full-screen) */
     [[nodiscard]] bool drawsInWorld (const CObject& object) const;
 
-    /** A 3D scene's point and spot lights this frame, packed as the generated PerformLighting_V1 reads them */
+    /**
+     * A 3D scene's lights this frame, packed as the generated PerformLighting_V1 reads them (GH 0x1401bf270): the
+     * point and spot lights (`count`), then the tubes (`tubes`) in origin … extra; the projections of the lights that
+     * cast shadows or project a cookie; the directional lights
+     */
+    /** The shadow quality (LIGHTS_SHADOW_MAPPING_QUALITY): WE's "shadows" setting's default, medium (GH 0x14013f3f0) */
+    static constexpr int ShadowQuality = 2;
     struct SceneLights {
-	static constexpr int Max = 8;
+	static constexpr int Max = 16;
+	static constexpr int MaxProjections = 16;
+	static constexpr int MaxDirectional = 3;
 	int count = 0;
+	int tubes = 0;
 	glm::vec4 origin[Max] = {};
 	glm::vec4 color[Max] = {};
 	glm::vec4 direction[Max] = {};
 	glm::vec4 extra[Max] = {};
+	int projections = 0;
+	glm::mat4 projection[MaxProjections] = {};
+	glm::vec4 projectionTransform[MaxProjections] = {};
+	glm::vec4 pointProjection[MaxProjections] = {};
+	int directional = 0;
+	glm::vec4 directionalColor[MaxDirectional] = {};
+	glm::vec4 directionalDirection[MaxDirectional] = {};
+	/** the shadow atlas's 1 / size and size (g_Texture6Texel: SHADOW_ATLAS_TEXEL) */
+	glm::vec4 atlasTexel = glm::vec4 (0.5f, 0.5f, 2.0f, 2.0f);
     };
     [[nodiscard]] const SceneLights& getLights () const;
+    /**
+     * One viewport of the shadow pass: its rect in the atlas (pixels, x y w h) and the clip matrix that draws a
+     * caster there, so that the lit materials' header (CalculateProjectedCoords / …Point, common_pbr_2.h) finds it
+     */
+    struct ShadowView {
+	glm::vec4 rect;
+	glm::mat4 clip;
+    };
+    /** This frame's shadow viewports (empty when no light casts a shadow) */
+    [[nodiscard]] const std::vector<ShadowView>& getShadowViews () const;
+    /** A light in the scene has castshadow: its models build their shadow casters and sample the atlas */
+    [[nodiscard]] bool castsShadows () const;
+    /** The cookie of the scene's spot lights with usecookie (the last one's: WE binds one, scene+0x1310), or null */
+    [[nodiscard]] std::shared_ptr<const TextureProvider> getLightCookie () const;
+    /** How many directional lights the scene has (LIGHTS_DIRECTIONAL, at most 3) */
+    [[nodiscard]] int directionalLightCount () const;
+    /** The shadow atlas (a depth texture, grown as the shadow lights need) */
+    [[nodiscard]] std::shared_ptr<const CFBO> getShadowAtlas () const;
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
     [[nodiscard]] std::mt19937& getParticleRng ();
     [[nodiscard]] const CObject* getObject (int id) const;
@@ -148,8 +184,10 @@ protected:
     void advanceAnimations ();
     /** The camera update (WE GH 0x1401b8af0): shake, the active camera object's zoom, general.zoom, the parallax */
     void updateCamera ();
-    /** Packs the 3D scene's lights for this frame (getLights) */
+    /** Packs the 3D scene's lights for this frame (getLights), and lays out the shadow atlas (getShadowViews) */
     void updateLights ();
+    /** WE's shadow pass (GH 0x1401c4f30): the casters into each shadow viewport of the atlas */
+    void renderShadows ();
     /** The order objects draw in this frame: the render order, a 3D scene's world objects sorted by `transparentsorting` */
     const std::vector<CObject*>& drawOrder ();
 
@@ -186,6 +224,11 @@ private:
     /** drawOrder's sorted copy of the render order */
     std::vector<CObject*> m_sortedOrder = {};
     SceneLights m_lights = {};
+    std::vector<ShadowView> m_shadowViews = {};
+    bool m_castsShadows = false;
+    int m_directionalCount = 0;
+    std::shared_ptr<const TextureProvider> m_lightCookie = nullptr;
+    std::shared_ptr<CFBO> m_shadowAtlas = nullptr;
     /** the sound objects, ticked on the host's clock every frame (they don't render) */
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};

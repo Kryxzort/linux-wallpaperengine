@@ -34,6 +34,7 @@ CModelMesh::~CModelMesh () {
 	delete pass;
     }
     this->m_passes.clear ();
+    delete this->m_shadowPass;
 
     if (this->m_vbo != GL_NONE) {
 	glDeleteBuffers (1, &this->m_vbo);
@@ -100,6 +101,16 @@ void CModelMesh::setup () {
 	cpass->addUniform ("g_EyePosition", &this->m_eye);
 	cpass->setInput (this->m_texture);
 
+	// the scene's light cookie where the material samples _alias_lightCookie (generic4's g_Texture7 under
+	// LIGHTS_COOKIE; WE points the alias at the cookie, GH 0x1401bf270 → scene+0x1310)
+	if (const auto cookie = this->getScene ().getLightCookie (); cookie != nullptr) {
+	    for (const auto& [index, name] : cpass->getShader ()->getFragment ().getTextures ()) {
+		if (name == "_alias_lightCookie") {
+		    cpass->setTexture (index, cookie);
+		}
+	    }
+	}
+
 	const GLint position = glGetAttribLocation (program, "a_Position");
 	const GLint normal = glGetAttribLocation (program, "a_Normal");
 	const GLint tangent = glGetAttribLocation (program, "a_Tangent4");
@@ -152,19 +163,36 @@ void CModelMesh::uploadSceneUniforms (GLuint program) const {
     }
 
     const auto& lights = scene.getLights ();
+    using SceneLights = Wallpapers::CScene::SceneLights;
     if (const GLint at = glGetUniformLocation (program, "g_LCluster_Counts"); at >= 0) {
-	glUniform4f (at, static_cast<float> (lights.count), 0.0f, 0.0f, 0.0f);
+	glUniform4f (
+	    at, static_cast<float> (lights.count), static_cast<float> (lights.tubes),
+	    static_cast<float> (lights.projections), 0.0f
+	);
     }
-    const std::pair<const char*, const glm::vec4*> arrays[] = {
-	{ "g_LCluster_Origin", lights.origin },
-	{ "g_LCluster_Color", lights.color },
-	{ "g_LCluster_Direction", lights.direction },
-	{ "g_LCluster_Extra", lights.extra },
+    const std::tuple<const char*, const glm::vec4*, int> arrays[] = {
+	{ "g_LCluster_Origin", lights.origin, SceneLights::Max },
+	{ "g_LCluster_Color", lights.color, SceneLights::Max },
+	{ "g_LCluster_Direction", lights.direction, SceneLights::Max },
+	{ "g_LCluster_Extra", lights.extra, SceneLights::Max },
+	{ "g_LCluster_ProjectionTransform", lights.projectionTransform, SceneLights::MaxProjections },
+	{ "g_LCluster_PointProjection", lights.pointProjection, SceneLights::MaxProjections },
+	{ "g_LDirectional_Color", lights.directionalColor, scene.directionalLightCount () },
+	{ "g_LDirectional_Direction", lights.directionalDirection, scene.directionalLightCount () },
+	// the atlas's texel size: generic4's SHADOW_ATLAS_TEXEL (2.8.485's generator names it g_TextureShadowAtlasTexel)
+	{ "g_Texture6Texel", &lights.atlasTexel, 1 },
+	{ "g_TextureShadowAtlasTexel", &lights.atlasTexel, 1 },
     };
-    for (const auto& [name, values] : arrays) {
-	if (const GLint at = glGetUniformLocation (program, name); at >= 0) {
-	    glUniform4fv (at, Wallpapers::CScene::SceneLights::Max, glm::value_ptr (values[0]));
+    for (const auto& [name, values, count] : arrays) {
+	if (count <= 0) {
+	    continue;
 	}
+	if (const GLint at = glGetUniformLocation (program, name); at >= 0) {
+	    glUniform4fv (at, count, glm::value_ptr (values[0]));
+	}
+    }
+    if (const GLint at = glGetUniformLocation (program, "g_LCluster_Projection"); at >= 0) {
+	glUniformMatrix4fv (at, SceneLights::MaxProjections, GL_FALSE, glm::value_ptr (lights.projection[0]));
     }
 
     const auto& fog = scene.getScene ().fog;
@@ -207,6 +235,88 @@ void CModelMesh::draw (const std::shared_ptr<const CFBO>& target, const glm::mat
     glColorMask (true, true, true, true);
     glDisable (GL_DEPTH_TEST);
     glDepthMask (GL_FALSE);
+}
+
+void CModelMesh::setupShadowCaster (const Material& caster) {
+    if (caster.passes.empty () || this->m_shadowPass != nullptr) {
+	return;
+    }
+
+    auto* cpass = new CPass (*this, std::make_shared<FBOProvider> (this), *caster.passes[0], std::nullopt, std::nullopt, std::nullopt);
+    const GLuint program = cpass->getProgramID ();
+    cpass->setModelMatrix (&this->m_modelMatrix);
+    cpass->setInput (this->m_texture);
+
+    const GLint position = glGetAttribLocation (program, "a_Position");
+    const GLint texcoord = glGetAttribLocation (program, "a_TexCoord");
+    const GLint normal = glGetAttribLocation (program, "a_Normal");
+    const GLint viewports = glGetUniformLocation (program, "g_ViewportViewProjectionMatrices");
+
+    cpass->setGeometryCallback (
+	[this, position, texcoord, normal] () {
+	    glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
+	    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_ibo);
+	    const GLsizei stride = kFloatsPerVertex * sizeof (GLfloat);
+	    const std::pair<GLint, std::pair<GLint, size_t>> attributes[] = {
+		{ position, { 3, 0 } }, { normal, { 3, 3 } }, { texcoord, { 2, 10 } }
+	    };
+	    for (const auto& [location, layout] : attributes) {
+		if (location < 0) {
+		    continue;
+		}
+		glEnableVertexAttribArray (location);
+		glVertexAttribPointer (
+		    location, layout.first, GL_FLOAT, GL_FALSE, stride,
+		    reinterpret_cast<const void*> (layout.second * sizeof (GLfloat))
+		);
+	    }
+	},
+	[this, viewports] () {
+	    // one draw per viewport: its rect bound and its matrix as g_ViewportViewProjectionMatrices[0] (the caster
+	    // reads [gl_InstanceID], 0 for a single instance); WE draws up to six instances, one per viewport
+	    if (this->m_shadowViews == nullptr) {
+		return;
+	    }
+	    for (const auto& view : *this->m_shadowViews) {
+		if (GLAD_GL_VERSION_4_1) {
+		    glViewportIndexedf (0, view.rect.x, view.rect.y, view.rect.z, view.rect.w);
+		} else {
+		    glViewport (
+			static_cast<GLint> (view.rect.x), static_cast<GLint> (view.rect.y), static_cast<GLsizei> (view.rect.z),
+			static_cast<GLsizei> (view.rect.w)
+		    );
+		}
+		if (viewports >= 0) {
+		    glUniformMatrix4fv (viewports, 1, GL_FALSE, glm::value_ptr (view.clip));
+		}
+		glDrawElements (GL_TRIANGLES, this->m_indexCount, GL_UNSIGNED_INT, nullptr);
+	    }
+	},
+	[position, texcoord, normal] () {
+	    for (const GLint location : { position, texcoord, normal }) {
+		if (location >= 0) {
+		    glDisableVertexAttribArray (location);
+		}
+	    }
+	    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
+	}
+    );
+
+    this->m_shadowPass = cpass;
+}
+
+void CModelMesh::drawShadow (
+    const std::shared_ptr<const CFBO>& atlas, const glm::mat4& world, const std::vector<Wallpapers::CScene::ShadowView>& views
+) {
+    if (this->m_shadowPass == nullptr) {
+	return;
+    }
+
+    this->m_modelMatrix = world;
+    this->m_shadowViews = &views;
+    this->m_shadowPass->setDestination (atlas);
+    this->m_shadowPass->render ();
+    this->m_shadowViews = nullptr;
 }
 
 bool CModelMesh::isReady () const { return this->m_ready; }
@@ -259,6 +369,9 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
     }
 
     const auto& fog = this->getScene ().getScene ().fog;
+    const auto& scene = this->getScene ();
+    const bool casts = scene.castsShadows () && this->m_object.castShadow != nullptr
+	&& this->m_object.castShadow->value->getBool ();
 
     for (const auto& mesh : this->m_model.meshes) {
 	try {
@@ -280,6 +393,19 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 		}
 		pass.cullmode = CullingMode_Disable;
 
+		// the lights' combos (WE sets them on every model pass it builds, GH 0x1401c56e0 and the scene's light
+		// config): the shadow atlas and its quality when a light casts a shadow, the cookie, the directional count
+		if (scene.castsShadows ()) {
+		    pass.combos.insert_or_assign ("LIGHTS_SHADOW_MAPPING", 1);
+		    pass.combos.insert_or_assign ("LIGHTS_SHADOW_MAPPING_QUALITY", Wallpapers::CScene::ShadowQuality);
+		}
+		if (scene.getLightCookie () != nullptr) {
+		    pass.combos.insert_or_assign ("LIGHTS_COOKIE", 1);
+		}
+		if (scene.directionalLightCount () > 0) {
+		    pass.combos.insert_or_assign ("LIGHTS_DIRECTIONAL", scene.directionalLightCount ());
+		}
+
 		// the scene's fog for a material that keeps generic4's FOG combo (default 1)
 		const auto fogCombo = pass.combos.find ("FOG");
 		if (fogCombo == pass.combos.end () || fogCombo->second != 0) {
@@ -293,8 +419,36 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 	    }
 
 	    auto renderable = std::make_unique<CModelMesh> (this->getScene (), this->m_object, *material, mesh);
-	    this->m_materials.push_back (std::move (material));
 	    renderable->setup ();
+
+	    if (renderable->isReady () && casts) {
+		// its caster: materials/util/shadowcaster.json with the shader for the mesh's (WE maps the material's
+		// shader through a table, GH 0x140185230; foliage4 → shadowcasterfoliage4, fur4 → shadowcasterfur4 by
+		// their names, inferred) and the mesh material's combos (ALPHATOCOVERAGE, …)
+		try {
+		    auto caster = MaterialParser::load (project, "materials/util/shadowcaster.json");
+		    const auto& first = *material->passes.front ();
+		    for (auto& pass : caster->passes) {
+			if (first.shader == "foliage4" || first.shader == "fur4") {
+			    pass->shader = "shadowcaster" + first.shader;
+			}
+			for (const auto& [name, value] : first.combos) {
+			    pass->combos.insert_or_assign (name, value);
+			}
+			pass->depthtest = DepthtestMode_Enabled;
+			pass->depthwrite = DepthwriteMode_Enabled;
+			pass->cullmode = CullingMode_Disable;
+			pass->blending = BlendingMode_Normal;
+		    }
+		    renderable->setupShadowCaster (*caster);
+		    this->m_materials.push_back (std::move (caster));
+		} catch (const std::exception& ex) {
+		    sLog.error ("No shadow caster for mesh ", mesh.material, " of model ", file, ": ", ex.what ());
+		    WPENGINE_HEALTH ("asset_error", { { "kind", "material" }, { "path", "materials/util/shadowcaster.json" }, { "message", "no shadow caster: " + WallpaperEngine::Health::brief (ex.what ()) } });
+		}
+	    }
+
+	    this->m_materials.push_back (std::move (material));
 
 	    if (renderable->isReady ()) {
 		this->m_meshes.push_back (std::move (renderable));
@@ -322,6 +476,18 @@ void CModel::render () {
 
     for (const auto& mesh : this->m_meshes) {
 	mesh->draw (target, world, keepAlpha);
+    }
+}
+
+void CModel::renderShadow (const std::shared_ptr<const CFBO>& atlas, const std::vector<Wallpapers::CScene::ShadowView>& views) {
+    if (this->m_meshes.empty () || this->m_object.castShadow == nullptr || !this->m_object.castShadow->value->getBool ()
+	|| !this->getScene ().isEffectivelyVisible (this->m_object)) {
+	return;
+    }
+
+    const glm::mat4 world = this->getScene ().worldMatrixOf (this->m_object);
+    for (const auto& mesh : this->m_meshes) {
+	mesh->drawShadow (atlas, world, views);
     }
 }
 

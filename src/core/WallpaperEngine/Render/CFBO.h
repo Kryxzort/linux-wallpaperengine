@@ -44,6 +44,13 @@ public:
      * against. Cleared to the far plane
      */
     void attachDepthBuffer () const;
+    /**
+     * Turns this FBO into a shadow atlas: its texture becomes a 24-bit depth texture (the framebuffer's depth
+     * attachment, no colour) that samples as a comparison (sampler2DShadow, GL_LEQUAL, filtered: WE's
+     * SamplerComparisonState, inferred), cleared to 1. A resize keeps it one
+     */
+    void makeShadowAtlas ();
+    [[nodiscard]] bool isShadowAtlas () const;
 
     void incrementUsageCount () const override;
     void decrementUsageCount () const override;
@@ -54,6 +61,7 @@ private:
     GLuint m_framebuffer = GL_NONE;
     mutable GLuint m_depthbuffer = GL_NONE;
     GLuint m_texture = GL_NONE;
+    bool m_shadowAtlas = false;
     glm::vec4 m_resolution = {};
     float m_scale = 0;
     std::string m_name = "";

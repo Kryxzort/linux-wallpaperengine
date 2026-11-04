@@ -195,6 +195,9 @@ public:
 struct MeshObjectData {
     /** the .mdl file */
     std::string file;
+    /** `castshadow` (default false): the model is drawn into the shadow atlas of the lights that cast shadows
+     *  (WE's object property, GH 0x140283df0's table; the shadow pass GH 0x1401c4f30 draws the casters) */
+    UserSettingUniquePtr castShadow = nullptr;
 };
 
 class MeshObject : public Object, public MeshObjectData {
@@ -205,12 +208,15 @@ public:
 };
 
 /**
- * A light object (`"light": "lpoint" | "lspot" | …`). WE's light property table (GH 0x140283df0): color +0x2cc,
- * intensity +0x2e4, radius +0x2e8, exponent +0x2ec, innercone +0x2f0, outercone +0x2f4 (degrees). Its transform is
- * the base object's; a spot shines along its world x axis (GH 0x1401bf270)
+ * A light object (`"light": "lpoint" | "lspot" | "ltube" | "ldirectional"`, WE's type table 0 … 3 at the light's
+ * +0x2c0). WE's light property table (GH 0x140283df0): color +0x2cc, intensity +0x2e4, radius +0x2e8, exponent
+ * +0x2ec, innercone +0x2f0, outercone +0x2f4 (degrees), controlpoint +0x2d8 (a vec3: a tube's far end, in the
+ * light's own space), lightsourcesize +0x314, and the flags at +0x2c4: castshadow bit 0, usecookie bit 1 (GH
+ * 0x1401c9430), castvolumetrics bit 2. A spot with usecookie projects its `cookie` texture (GH 0x140282140; default
+ * cookie/flashlight1). Its transform is the base object's; a spot shines along its world x axis (GH 0x1401bf270)
  */
 struct LightData {
-    enum class Kind { Point, Spot, Other };
+    enum class Kind { Point, Spot, Tube, Directional, Other };
     Kind kind = Kind::Point;
     std::string type;
     UserSettingUniquePtr color;
@@ -219,6 +225,11 @@ struct LightData {
     float exponent = 1.0f;
     float innerCone = 0.0f;
     float outerCone = 45.0f;
+    UserSettingUniquePtr castShadow = nullptr;
+    UserSettingUniquePtr useCookie = nullptr;
+    std::string cookie = "cookie/flashlight1";
+    glm::vec3 controlPoint = glm::vec3 (0.0f);
+    float lightSourceSize = 0.0f;
 };
 
 class Light : public Object, public LightData {

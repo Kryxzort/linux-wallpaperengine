@@ -69,7 +69,7 @@
     "#define MAKE_SAMPLER2D_ARGUMENT(t) t\n"                                                                           \
     "#define DECLARE_SAMPLER2D_COMPARE_PARAMETER(t) sampler2DShadow t\n"                                               \
     "#define MAKE_SAMPLER2D_COMPARE_ARGUMENT(t) t\n"                                                                   \
-    "#define texSample2DCompare(s, u, d) texture(s, vec3((u), (d)))\n"                                                 \
+    "#define texSample2DCompare(s, u, d) vec4(texture(s, vec3((u), (d))))\n"                                           \
     "#define texLoad2D(s, u, r) texelFetch(s, ivec2((u) * (r)), 0)\n"                                                  \
     "#define texSample3D texture\n"                                                                                    \
     "#define texSample2DBackBuffer(s, u, r) texture(s, (u))\n"                                                         \
@@ -248,38 +248,116 @@ std::string ShaderUnit::resolveRequireModule (const std::string& moduleName) con
 }
 
 std::string ShaderUnit::generateLightingV1 () const {
-    // WE generates PerformLighting_V1 for the scene's lights (GH 0x140197e20 builds it: the point/spot loop over
-    // g_LCluster_Origin/Color/Direction/Extra, ComputePBRLightShadow per light). This is that loop without the
-    // clusters, the shadows, the cookies and the tube and directional lights: the first
-    // g_LCluster_Counts.x lights of the scene (CScene::updateLights feeds them; none outside a 3D scene)
-    return "// begin of generated module LightingV1\n"
-	   "uniform vec4 g_LCluster_Counts;\n"
-	   "uniform vec4 g_LCluster_Origin[8];\n"
-	   "uniform vec4 g_LCluster_Color[8];\n"
-	   "uniform vec4 g_LCluster_Direction[8];\n"
-	   "uniform vec4 g_LCluster_Extra[8];\n"
-	   "vec3 PerformLighting_V1(vec3 worldPos, vec3 color, vec3 normal, vec3 viewVector,\n"
-	   "    vec3 specularTint, vec3 ambient, float roughness, float metallic)\n"
-	   "{\n"
-	   "    vec3 light = CAST3(0.0);\n"
-	   "    int pointSpotCount = int(g_LCluster_Counts.x);\n"
-	   "    for (int lightIndex = 0; lightIndex < 8; ++lightIndex)\n"
-	   "    {\n"
-	   "        if (lightIndex >= pointSpotCount) break;\n"
-	   "        vec4 lightOrigin = g_LCluster_Origin[lightIndex];\n"
-	   "        vec4 lightColor = g_LCluster_Color[lightIndex];\n"
-	   "        vec4 lightDirection = g_LCluster_Direction[lightIndex];\n"
-	   "        vec4 lightExtra = g_LCluster_Extra[lightIndex];\n"
-	   "        vec3 lightDelta = lightOrigin.xyz - worldPos;\n"
-	   "        float spotCookie = -dot(normalize(lightDelta), lightDirection.xyz);\n"
-	   "        spotCookie = smoothstep(0.0, 1.0, spotCookie * lightDirection.w + lightExtra.x);\n"
-	   "        vec3 clusterColor = lightColor.rgb * spotCookie;\n"
-	   "        light += ComputePBRLightShadow(normal, lightDelta, viewVector, color, clusterColor, lightOrigin.w,\n"
-	   "            lightColor.w, specularTint, ambient, roughness, metallic, 1.0);\n"
-	   "    }\n"
-	   "    return light;\n"
-	   "}\n"
-	   "// end of generated module LightingV1\n";
+    // WE generates PerformLighting_V1 for the scene's lights (GH 0x140197e20): the point/spot loop over
+    // g_LCluster_Origin/Color/Direction/Extra, the tube loop after it (PointSegmentDelta to the segment origin →
+    // g_LCluster_Direction), then the directional lights (g_LDirectional_*, ComputePBRLightShadowInfinite). A point or
+    // spot light's flags (g_LCluster_Extra.y: 1 shadow, 2 cookie, 4 projected — a spot) pick its projection
+    // (g_LCluster_Extra.z): a spot's g_LCluster_Projection for the cookie and its atlas tile, a point light's six cube
+    // faces (CalculateProjectedCoordsPoint). WE emits the shadow code when LIGHTS_SHADOW_MAPPING_QUALITY is set; here
+    // it's there when the material declares the atlas sampler (generic4: SHADOW_ATLAS_SAMPLER under
+    // LIGHTS_SHADOW_MAPPING) and the cookie code when it declares COOKIE_SAMPLER (LIGHTS_COOKIE). Not done: WE's
+    // light clusters (the first lights are taken, CScene::updateLights) and the directional cascades.
+    // The calls follow the common_pbr_2.h the assets ship: 2.8.42's PerformShadowMapping (coords, transform) and
+    // CalculateProjectedCoordsPoint (pos, origin, info, transform); 2.8.485's take the projection scale, the penumbra
+    // and the PCSS terms (the generator's own text, GH 0x140197e20)
+    const bool v485 = this->m_preprocessed.find ("vec2 projectionScale") != std::string::npos;
+    std::string out =
+	"// begin of generated module LightingV1\n"
+	"uniform vec4 g_LCluster_Counts;\n"
+	"uniform vec4 g_LCluster_Origin[16];\n"
+	"uniform vec4 g_LCluster_Color[16];\n"
+	"uniform vec4 g_LCluster_Direction[16];\n"
+	"uniform vec4 g_LCluster_Extra[16];\n"
+	"#if defined(SHADOW_ATLAS_SAMPLER) || defined(COOKIE_SAMPLER)\n"
+	"uniform mat4 g_LCluster_Projection[16];\n"
+	"uniform vec4 g_LCluster_ProjectionTransform[16];\n"
+	"uniform vec4 g_LCluster_PointProjection[16];\n"
+	"#endif\n"
+	"#if defined(LIGHTS_DIRECTIONAL) && LIGHTS_DIRECTIONAL > 0\n"
+	"uniform vec4 g_LDirectional_Color[LIGHTS_DIRECTIONAL];\n"
+	"uniform vec4 g_LDirectional_Direction[LIGHTS_DIRECTIONAL];\n"
+	"#endif\n"
+	"vec3 PerformLighting_V1(vec3 worldPos, vec3 color, vec3 normal, vec3 viewVector, vec3 specularTint, vec3 ambient, float roughness, float metallic)\n"
+	"{\n"
+	"\tvec3 light = CAST3(0.0);\n"
+	"\tvec2 shadowNoisePosition = gl_FragCoord.xy;\n"
+	"\tuint pointSpotCount = uint(g_LCluster_Counts.x);\n"
+	"\tuint tubeCount = uint(g_LCluster_Counts.y);\n"
+	"\tfor (uint pointSpotIndex = 0u; pointSpotIndex < pointSpotCount; ++pointSpotIndex)\n"
+	"\t{\n"
+	"\t\tuint lightIndex = pointSpotIndex;\n"
+	"\t\tvec4 lightOrigin = g_LCluster_Origin[lightIndex];\n"
+	"\t\tvec4 lightColor = g_LCluster_Color[lightIndex];\n"
+	"\t\tvec4 lightDirection = g_LCluster_Direction[lightIndex];\n"
+	"\t\tvec4 lightExtra = g_LCluster_Extra[lightIndex];\n"
+	"\n"
+	"\t\tvec3 lightDelta = lightOrigin.xyz - worldPos;\n"
+	"\t\tfloat spotCookie = -dot(normalize(lightDelta), lightDirection.xyz);\n"
+	"\t\tspotCookie = smoothstep(0.0, 1.0, spotCookie * lightDirection.w + lightExtra.x);\n"
+	"\t\tvec3 clusterColor = lightColor.rgb * spotCookie;\n"
+	"\t\tfloat shadowFactor = 1.0;\n"
+	"#if defined(SHADOW_ATLAS_SAMPLER) || defined(COOKIE_SAMPLER)\n"
+	"\t\tuint lightFlags = uint(lightExtra.y);\n"
+	"\t\tif ((lightFlags & 3u) != 0u)\n"
+	"\t\t{\n"
+	"\t\t\tuint projectionIndex = uint(lightExtra.z);\n"
+	"\t\t\tif ((lightFlags & 4u) != 0u)\n"
+	"\t\t\t{\n"
+	"\t\t\t\tvec3 projectedCoords = CalculateProjectedCoords(worldPos, g_LCluster_Projection[projectionIndex]);\n"
+	"#ifdef COOKIE_SAMPLER\n"
+	"\t\t\t\tif ((lightFlags & 2u) != 0u)\n"
+	"\t\t\t\t{\n"
+	"\t\t\t\t\tvec2 cookieInside = step(abs(projectedCoords.xy - CAST2(0.5)), CAST2(0.5));\n"
+	"\t\t\t\t\tclusterColor *= texSample2DLod(COOKIE_SAMPLER, projectedCoords.xy, 0.0).rgb * (cookieInside.x * cookieInside.y);\n"
+	"\t\t\t\t}\n"
+	"#endif\n"
+	"#ifdef SHADOW_ATLAS_SAMPLER\n"
+	"\t\t\t\tif ((lightFlags & 1u) != 0u)\n"
+	"\t\t\t\t{\n";
+    out += v485
+	? "\t\t\t\t\tshadowFactor = PerformShadowMapping(projectedCoords, g_LCluster_ProjectionTransform[projectionIndex], g_LCluster_PointProjection[projectionIndex], lightExtra.w, shadowNoisePosition, CAST3(0.0), CAST3(0.0));\n"
+	: "\t\t\t\t\tshadowFactor = PerformShadowMapping(projectedCoords, g_LCluster_ProjectionTransform[projectionIndex]);\n";
+    out +=
+	"\t\t\t\t}\n"
+	"#endif\n"
+	"\t\t\t}\n"
+	"#ifdef SHADOW_ATLAS_SAMPLER\n"
+	"\t\t\telse\n"
+	"\t\t\t{\n";
+    out += v485
+	? "\t\t\t\tvec4 projectedCoords = CalculateProjectedCoordsPoint(worldPos, lightOrigin.xyz, lightDirection.xy, g_LCluster_PointProjection[projectionIndex], g_LCluster_ProjectionTransform[projectionIndex]);\n"
+	  "\t\t\t\tshadowFactor = PerformPointShadowMapping(projectedCoords, g_LCluster_ProjectionTransform[projectionIndex], g_LCluster_PointProjection[projectionIndex], lightExtra.w, shadowNoisePosition, CAST3(0.0), CAST3(0.0));\n"
+	: "\t\t\t\tvec4 projectedCoords = CalculateProjectedCoordsPoint(worldPos, lightOrigin.xyz, g_LCluster_PointProjection[projectionIndex], g_LCluster_ProjectionTransform[projectionIndex]);\n"
+	  "\t\t\t\tshadowFactor = PerformPointShadowMapping(projectedCoords);\n";
+    out +=
+	"\t\t\t}\n"
+	"#endif\n"
+	"\t\t}\n"
+	"#endif\n"
+	"\n"
+	"\t\tlight += ComputePBRLightShadow(normal, lightDelta, viewVector, color, clusterColor, lightOrigin.w, lightColor.w, specularTint, ambient, roughness, metallic, shadowFactor);\n"
+	"\t}\n"
+	"\n"
+	"\tfor (uint tubeIndex = 0u; tubeIndex < tubeCount; ++tubeIndex)\n"
+	"\t{\n"
+	"\t\tuint lightIndex = pointSpotCount + tubeIndex;\n"
+	"\t\tvec4 lightOrigin = g_LCluster_Origin[lightIndex];\n"
+	"\t\tvec4 lightColor = g_LCluster_Color[lightIndex];\n"
+	"\t\tvec4 lightDirection = g_LCluster_Direction[lightIndex];\n"
+	"\n"
+	"\t\tvec3 lightDelta = PointSegmentDelta(worldPos, lightOrigin.xyz, lightDirection.xyz);\n"
+	"\t\tlight += ComputePBRLightShadow(normal, lightDelta, viewVector, color, lightColor.rgb, lightOrigin.w, lightColor.w, specularTint, ambient, roughness, metallic, 1.0);\n"
+	"\t}\n"
+	"#if defined(LIGHTS_DIRECTIONAL) && LIGHTS_DIRECTIONAL > 0\n"
+	"\tfor (int i = 0; i < LIGHTS_DIRECTIONAL; ++i)\n"
+	"\t{\n"
+	"\t\tlight += ComputePBRLightShadowInfinite(normal, g_LDirectional_Direction[i].xyz, viewVector, color, g_LDirectional_Color[i].rgb, specularTint, ambient, roughness, metallic, 1.0);\n"
+	"\t}\n"
+	"#endif\n"
+	"\treturn light;\n"
+	"}\n"
+	"// end of generated module LightingV1\n";
+    return out;
 }
 
 std::string ShaderUnit::applyLinkedVaryingCompatibility (std::string source) const {
@@ -470,8 +548,9 @@ std::string ShaderUnit::applyBuiltinDeclarations (std::string source) {
     // WE's translator turns a declared `gl_…` input or output into a member of its IN / OUT struct with that system
     // value's semantic (gl_Position SV_POSITION: GH 0x140125e80 adds it; the stock shadow casters declare
     // `in uint gl_InstanceID;` and `varying uint gl_ViewportIndex;` — inferred to be SV_InstanceID and
-    // SV_ViewportArrayIndex). GLSL has them built in and refuses a declaration: it's dropped, and a vertex unit
-    // that writes gl_ViewportIndex asks for the extension that allows it there
+    // SV_ViewportArrayIndex). GLSL has them built in and refuses a declaration: it's dropped. A vertex unit's
+    // gl_ViewportIndex write (GLSL 4.10 or GL_ARB_shader_viewport_layer_array) is dropped too: LWE draws the
+    // casters one viewport at a time (CScene::renderShadows), so every instance goes to the viewport bound
     static const std::regex declaration (
 	R"((^|\n)[ \t]*(?:in|out|varying|attribute)\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+)+(gl_[A-Za-z0-9_]+)\s*;[^\n]*)"
     );
@@ -479,8 +558,10 @@ std::string ShaderUnit::applyBuiltinDeclarations (std::string source) {
 	return source;
     }
     source = std::regex_replace (source, declaration, "$1// built in: $2");
-    if (this->m_type == GLSLContext::UnitType_Vertex && source.find ("gl_ViewportIndex") != std::string::npos) {
-	this->m_extensions += "#extension GL_ARB_shader_viewport_layer_array : enable\n";
+    static const std::regex viewportWrite (R"(\bgl_ViewportIndex\s*=[^;]*;)");
+    if (this->m_type == GLSLContext::UnitType_Vertex && std::regex_search (source, viewportWrite)) {
+	source = std::regex_replace (source, viewportWrite, "/* one draw per viewport: gl_ViewportIndex */");
+	WPENGINE_HEALTH ("compat", { { "what", "WE: a vertex gl_ViewportIndex write dropped (one draw per viewport)" } });
     }
     WPENGINE_HEALTH ("compat", { { "what", "WE: a declared gl_ built-in dropped" } });
     return source;

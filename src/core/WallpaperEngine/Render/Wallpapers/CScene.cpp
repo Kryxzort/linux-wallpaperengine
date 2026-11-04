@@ -112,11 +112,39 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     const uint32_t sceneWidth = this->m_camera->getWidth ();
     const uint32_t sceneHeight = this->m_camera->getHeight ();
 
-    this->_rt_shadowAtlas = this->create (
-	"_rt_shadowAtlas", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth, sceneHeight },
-	{ sceneWidth, sceneHeight }
-    );
-    this->alias ("_alias_lightCookie", "_rt_shadowAtlas");
+    // WE's shadow atlas starts at 2 x 2 (GH 0x1401bf270 creates it so, and recreates it bigger when the shadow
+    // lights' tiles don't fit) and is a depth texture the lit materials sample by comparison. It was a scene-sized
+    // RGBA8 target nothing drew. The light cookie a material reads (_alias_lightCookie, generic4's g_Texture7) is the
+    // scene's cookie (getLightCookie, bound per pass), else this 1 x 1 placeholder
+    this->m_shadowAtlas = this->create ("_rt_shadowAtlas", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { 2, 2 }, { 2, 2 });
+    this->m_shadowAtlas->makeShadowAtlas ();
+    this->_rt_shadowAtlas = this->m_shadowAtlas;
+    this->create ("_alias_lightCookie", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { 1, 1 }, { 1, 1 });
+
+    // what the lights ask of the models' materials (decided before they're built): the shadow atlas when one casts a
+    // shadow (castshadow on a point or spot light; a directional light's cascades aren't done), the cookie of the
+    // spots with usecookie (WE keeps the last one's, GH 0x1401bf270 → scene+0x1310), the directional count
+    for (const auto& object : scene->objects) {
+	if (!object->is<Light> ()) {
+	    continue;
+	}
+	const auto& light = *object->as<Light> ();
+	const bool pointOrSpot = light.kind == LightData::Kind::Point || light.kind == LightData::Kind::Spot;
+	if (pointOrSpot && light.castShadow != nullptr && light.castShadow->value->getBool ()) {
+	    this->m_castsShadows = true;
+	}
+	if (light.kind == LightData::Kind::Directional) {
+	    this->m_directionalCount = std::min (this->m_directionalCount + 1, SceneLights::MaxDirectional);
+	}
+	if (light.kind == LightData::Kind::Spot && light.useCookie != nullptr && light.useCookie->value->getBool ()) {
+	    try {
+		this->m_lightCookie = this->getContext ().resolveTexture (light.cookie);
+	    } catch (const std::exception& ex) {
+		sLog.error ("Cannot load light cookie ", light.cookie, ": ", ex.what ());
+		WPENGINE_HEALTH ("missing_asset", { { "kind", "texture" }, { "path", light.cookie }, { "message", WallpaperEngine::Health::brief (ex.what ()) } });
+	    }
+	}
+    }
 
     // set clear color
     const glm::vec3 clearColor = scene->colors.clear->value->getVec3 ();
@@ -705,6 +733,13 @@ void CScene::renderFrame () {
 
     // bind the vertex array
     glBindVertexArray (this->m_vaoBuffer);
+
+    // a 3D scene's lights for this frame (the models' shading reads them), and the shadow pass into the atlas
+    if (this->m_camera->isPerspective ()) {
+	this->updateLights ();
+	this->renderShadows ();
+    }
+
     // use the scene's framebuffer by default
     glBindFramebuffer (GL_FRAMEBUFFER, this->getWallpaperFramebuffer ());
     // ensure we render over the whole framebuffer
@@ -720,11 +755,6 @@ void CScene::renderFrame () {
     const glm::vec3 clearColor = this->getScene ().colors.clear->value->getVec3 ();
     glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // a 3D scene's lights for this frame (the models' shading reads them)
-    if (this->m_camera->isPerspective ()) {
-	this->updateLights ();
-    }
 
     // a copy: a text layer's script runs as it renders, and may create, destroy or sort layers
     const std::vector<CObject*> order = this->drawOrder ();
@@ -1133,16 +1163,84 @@ const std::vector<CObject*>& CScene::drawOrder () {
     return this->m_sortedOrder;
 }
 
+namespace {
+/** A light's tile at CScene::ShadowQuality (WE's "shadows" setting: disabled 0, low 1, medium 2 — the default, high 3,
+ *  ultra 4, GH 0x14013f3f0): 256 px below high (GH 0x140282540: 512 high, 1024 ultra) */
+constexpr float kShadowTile = 256.0f;
+/** common_pbr_2.h's viewportPointCompensation for qualities 1 and 2 (0.48 high, 0.49 ultra): a cube face covers
+ *  ±0.47 of its sub-tile, so WE renders it a little wider than 90° (94° at medium, FUN_140282580's DAT_1404d4488) */
+constexpr float kPointCompensation = 0.47f;
+constexpr int kAtlasColumns = 4;
+
+/**
+ * The clip matrix that draws into a tile what the lit material's header samples there: `view` then a right-handed
+ * D3D perspective (depth 0 … 1) with x and y scaled by `sx` / `sy`, y negated (the header's v grows down the texture,
+ * whose first row is the tile's first row: window y 0) and depth remapped to GL's −1 … 1 so the depth buffer holds
+ * the D3D depth the header compares against
+ */
+glm::mat4 shadowClip (const glm::mat4& view, float sx, float sy, float nearZ, float farZ) {
+    const float m22 = farZ / (nearZ - farZ);
+    const float m32 = nearZ * farZ / (nearZ - farZ);
+    glm::mat4 clip (0.0f);
+    clip[0][0] = sx;
+    clip[1][1] = -sy;
+    clip[2][2] = 2.0f * m22 + 1.0f;
+    clip[3][2] = 2.0f * m32;
+    clip[2][3] = -1.0f;
+    return clip * view;
+}
+
+/** The D3D projection (depth 0 … 1) the header's CalculateProjectedCoords applies to a spot's view */
+glm::mat4 d3dPerspective (float sx, float sy, float nearZ, float farZ) {
+    glm::mat4 projection (0.0f);
+    projection[0][0] = sx;
+    projection[1][1] = sy;
+    projection[2][2] = farZ / (nearZ - farZ);
+    projection[3][2] = nearZ * farZ / (nearZ - farZ);
+    projection[2][3] = -1.0f;
+    return projection;
+}
+
+/** common_pbr_2.h's CalculateProjectedCoordsPoint face views (+x, −x, +y, −y, +z, −z), for a light at `o` */
+glm::mat4 pointFaceView (int face, const glm::vec3& o) {
+    switch (face) {
+	case 0: return glm::mat4 (0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, -o.z, -o.y, o.x, 1);
+	case 1: return glm::mat4 (0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, o.z, -o.y, -o.x, 1);
+	case 2: return glm::mat4 (1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, -o.x, -o.z, o.y, 1);
+	case 3: return glm::mat4 (1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, -o.x, o.z, -o.y, 1);
+	case 4: return glm::mat4 (-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, o.x, -o.y, o.z, 1);
+	default: return glm::mat4 (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -o.x, -o.y, -o.z, 1);
+    }
+}
+} // namespace
+
 void CScene::updateLights () {
-    // the point and spot lights the models' generated PerformLighting_V1 loops over (GH 0x1401bf270 fills
-    // g_LCluster_Origin/Color/Direction/Extra the same way; WE culls them into clusters, LWE takes the first ones):
+    // the lights the models' generated PerformLighting_V1 reads (GH 0x1401bf270 fills g_LCluster_* the same way; WE
+    // culls them into clusters, LWE takes the first ones):
     //  origin (world position, radius), color (rgb · intensity, exponent), direction (a spot's world x axis,
-    //  1 / (cos inner − cos outer)), extra.x (−cos outer / (cos inner − cos outer)); a point light: 0 and 1
+    //  1 / (cos inner − cos outer)), extra.x (−cos outer / (cos inner − cos outer)); a point light: 0 and 1.
+    //  extra.y: the flags (1 shadow, 2 cookie, 4 projected: a spot with either), extra.z: its projection (at most 16).
+    //  Then the tubes: origin (the light's position, radius), direction (its far end: the world position of its
+    //  `controlpoint`), extra.x 1. The directional lights: g_LDirectional_Color (rgb · intensity), _Direction (the
+    //  light's −x axis: it shines along x like a spot; the zero minus the axis is inferred from the packer)
     auto& lights = this->m_lights;
     lights.count = 0;
+    lights.tubes = 0;
+    lights.projections = 0;
+    lights.directional = 0;
+    this->m_shadowViews.clear ();
+
+    struct Projected {
+	const Light* light;
+	glm::mat4 world;
+	int index;
+	int slot;
+    };
+    std::vector<Projected> projected;
+    std::vector<std::pair<const Light*, glm::mat4>> tubes;
 
     for (const auto& object : this->getScene ().objects) {
-	if (!object->is<Light> () || lights.count >= SceneLights::Max) {
+	if (!object->is<Light> ()) {
 	    continue;
 	}
 
@@ -1152,11 +1250,32 @@ void CScene::updateLights () {
 	}
 
 	const glm::mat4 world = this->worldMatrixOf (light);
-	const int i = lights.count++;
 	const float intensity = light.intensity->value->getFloat ();
+	const glm::vec3 color = light.color->value->getVec3 () * intensity;
 
+	if (light.kind == LightData::Kind::Directional) {
+	    if (lights.directional < SceneLights::MaxDirectional && lights.directional < this->m_directionalCount) {
+		const int d = lights.directional++;
+		lights.directionalColor[d] = glm::vec4 (color, 0.0f);
+		lights.directionalDirection[d] = glm::vec4 (-glm::vec3 (world[0]), 0.0f);
+	    }
+	    continue;
+	}
+	if (light.kind == LightData::Kind::Tube) {
+	    tubes.emplace_back (&light, world);
+	    continue;
+	}
+	if (lights.count >= SceneLights::Max) {
+	    continue;
+	}
+
+	const int i = lights.count++;
 	lights.origin[i] = glm::vec4 (glm::vec3 (world[3]), light.radius);
-	lights.color[i] = glm::vec4 (light.color->value->getVec3 () * intensity, light.exponent);
+	lights.color[i] = glm::vec4 (color, light.exponent);
+
+	const bool shadow = this->m_castsShadows && light.castShadow != nullptr && light.castShadow->value->getBool ();
+	const bool cookie = light.kind == LightData::Kind::Spot && this->m_lightCookie != nullptr && light.useCookie != nullptr
+	    && light.useCookie->value->getBool ();
 
 	if (light.kind == LightData::Kind::Spot) {
 	    const glm::vec3 axis = glm::vec3 (world[0]);
@@ -1171,8 +1290,127 @@ void CScene::updateLights () {
 	    lights.direction[i] = glm::vec4 (0.0f, 0.0f, -1.0f, 0.0f);
 	    lights.extra[i] = glm::vec4 (1.0f, 0.0f, 0.0f, 0.0f);
 	}
+
+	if ((shadow || cookie) && lights.projections < SceneLights::MaxProjections) {
+	    const int p = lights.projections++;
+	    const int flags = light.kind == LightData::Kind::Spot ? 4 | (cookie ? 2 : 0) | (shadow ? 1 : 0) : 1;
+	    lights.extra[i].y = static_cast<float> (flags);
+	    lights.extra[i].z = static_cast<float> (p);
+	    projected.push_back ({ &light, world, shadow ? p : -1, i });
+	}
+    }
+
+    for (const auto& [light, world] : tubes) {
+	if (lights.count + lights.tubes >= SceneLights::Max) {
+	    break;
+	}
+	const int i = lights.count + lights.tubes++;
+	const glm::vec3 a = glm::vec3 (world[3]);
+	const glm::vec3 b = glm::vec3 (world * glm::vec4 (light->controlPoint, 1.0f));
+	lights.origin[i] = glm::vec4 (a, light->radius);
+	lights.color[i] = glm::vec4 (light->color->value->getVec3 () * light->intensity->value->getFloat (), light->exponent);
+	lights.direction[i] = glm::vec4 (b, 0.0f);
+	lights.extra[i] = glm::vec4 (1.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    if (projected.empty ()) {
+	return;
+    }
+
+    // the atlas: a 256 px tile per projection, four to a row (WE packs them skyline-wise, GH 0x1401bf270; the place
+    // doesn't show). It grows to fit and never shrinks, as WE's
+    const int tiles = lights.projections;
+    const float atlasW = static_cast<float> (std::min (tiles, kAtlasColumns)) * kShadowTile;
+    const float atlasH = static_cast<float> ((tiles + kAtlasColumns - 1) / kAtlasColumns) * kShadowTile;
+    if (this->m_shadowAtlas->getRealWidth () < atlasW || this->m_shadowAtlas->getRealHeight () < atlasH) {
+	const uint32_t w = std::max (this->m_shadowAtlas->getRealWidth (), static_cast<uint32_t> (atlasW));
+	const uint32_t h = std::max (this->m_shadowAtlas->getRealHeight (), static_cast<uint32_t> (atlasH));
+	this->m_shadowAtlas->resize (w, h, w, h);
+    }
+    const float W = static_cast<float> (this->m_shadowAtlas->getRealWidth ());
+    const float H = static_cast<float> (this->m_shadowAtlas->getRealHeight ());
+    lights.atlasTexel = glm::vec4 (1.0f / W, 1.0f / H, W, H);
+
+    int p = 0;
+    for (const auto& item : projected) {
+	const Light& light = *item.light;
+	const float tx = static_cast<float> (p % kAtlasColumns) * kShadowTile;
+	const float ty = static_cast<float> (p / kAtlasColumns) * kShadowTile;
+	lights.projectionTransform[p] = glm::vec4 (tx / W, ty / H, kShadowTile / W, kShadowTile / H);
+	const glm::vec3 origin = glm::vec3 (item.world[3]);
+	// near: 0.05 (or the light's source size, for a point light), far: the radius (FUN_140282580)
+	const float nearZ = light.kind == LightData::Kind::Point ? std::max (0.05f, light.lightSourceSize) : 0.05f;
+	const float farZ = std::max (light.radius, nearZ + 0.01f);
+	lights.pointProjection[p] = glm::vec4 (farZ / (nearZ - farZ), nearZ * farZ / (nearZ - farZ), -1.0f, 0.0f);
+
+	if (light.kind == LightData::Kind::Spot) {
+	    // its view looks along its x axis with its y axis up; the frustum is the outer cone (fov 2 · outercone)
+	    const glm::vec3 x = glm::normalize (glm::vec3 (item.world[0]));
+	    const glm::vec3 y = glm::length (glm::vec3 (item.world[1])) > 0.0f ? glm::normalize (glm::vec3 (item.world[1]))
+									     : glm::vec3 (0.0f, 1.0f, 0.0f);
+	    const glm::mat4 view = glm::lookAt (origin, origin + x, y);
+	    const float scale = 1.0f / std::tan (glm::radians (std::clamp (light.outerCone, 0.5f, 89.5f)));
+	    lights.projection[p] = d3dPerspective (scale, scale, nearZ, farZ) * view;
+	    if (item.index >= 0) {
+		this->m_shadowViews.push_back ({ glm::vec4 (tx, ty, kShadowTile, kShadowTile), shadowClip (view, scale, scale, nearZ, farZ) });
+	    }
+	} else {
+	    // the six cube faces in a 2 x 3 grid of the tile (the header's viewportScale 0.5 x 0.3333 and its offsets)
+	    const glm::vec2 face (kShadowTile * 0.5f, kShadowTile * 0.3333f);
+	    // (2.8.485's header reads the faces' projection scale from direction.xy; w stays 0, so no spot falloff)
+	    lights.direction[item.slot] = glm::vec4 (2.0f * kPointCompensation, 2.0f * kPointCompensation, 0.0f, 0.0f);
+	    for (int f = 0; f < 6; f++) {
+		const glm::vec4 rect (tx + (f % 2) * face.x, ty + (f / 2) * face.y, face.x, face.y);
+		this->m_shadowViews.push_back (
+		    { rect, shadowClip (pointFaceView (f, origin), 2.0f * kPointCompensation, 2.0f * kPointCompensation, nearZ, farZ) }
+		);
+	    }
+	}
+	p++;
     }
 }
+
+void CScene::renderShadows () {
+    if (this->m_shadowViews.empty ()) {
+	return;
+    }
+
+    // WE's pass (GH 0x1401c4f30): the atlas bound, its depth cleared, then every caster in up to six viewports at
+    // once (its shaders pick g_ViewportViewProjectionMatrices[gl_InstanceID] and write gl_ViewportIndex). LWE draws a
+    // viewport at a time (CModel::renderShadow), with a depth bias against acne (inferred: WE's rasterizer state for
+    // the pass wasn't read)
+    GLint previousFramebuffer = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+    glBindFramebuffer (GL_FRAMEBUFFER, this->m_shadowAtlas->getFramebuffer ());
+    glViewport (0, 0, this->m_shadowAtlas->getRealWidth (), this->m_shadowAtlas->getRealHeight ());
+    glDepthMask (GL_TRUE);
+    glClearDepth (1.0);
+    glClear (GL_DEPTH_BUFFER_BIT);
+    glEnable (GL_POLYGON_OFFSET_FILL);
+    // (the 9-tap filter at medium quality reaches about two texels: the slope term covers that)
+    glPolygonOffset (4.0f, 16.0f);
+
+    for (const auto& cur : this->m_objectsByRenderOrder) {
+	if (cur->is<Objects::CModel> ()) {
+	    cur->as<Objects::CModel> ()->renderShadow (this->m_shadowAtlas, this->m_shadowViews);
+	}
+    }
+
+    glDisable (GL_POLYGON_OFFSET_FILL);
+    glDisable (GL_DEPTH_TEST);
+    glDepthMask (GL_FALSE);
+    glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+}
+
+const std::vector<CScene::ShadowView>& CScene::getShadowViews () const { return this->m_shadowViews; }
+
+bool CScene::castsShadows () const { return this->m_castsShadows; }
+
+std::shared_ptr<const TextureProvider> CScene::getLightCookie () const { return this->m_lightCookie; }
+
+int CScene::directionalLightCount () const { return this->m_directionalCount; }
+
+std::shared_ptr<const CFBO> CScene::getShadowAtlas () const { return this->m_shadowAtlas; }
 
 const CScene::SceneLights& CScene::getLights () const { return this->m_lights; }
 

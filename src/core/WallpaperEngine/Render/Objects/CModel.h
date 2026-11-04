@@ -23,6 +23,13 @@ public:
     void setup () override;
     /** Draws the mesh into `target` with this frame's matrices */
     void draw (const std::shared_ptr<const CFBO>& target, const glm::mat4& world, bool keepAlpha);
+    /** Builds the mesh's shadow caster pass from `caster` (materials/util/shadowcaster.json with its shader picked) */
+    void setupShadowCaster (const Material& caster);
+    /** Draws the mesh's caster into every shadow viewport of `atlas` (the scene's shadow pass) */
+    void drawShadow (
+	const std::shared_ptr<const CFBO>& atlas, const glm::mat4& world,
+	const std::vector<Wallpapers::CScene::ShadowView>& views
+    );
     [[nodiscard]] bool isReady () const;
 
     [[nodiscard]] const float& getBrightness () const override;
@@ -39,6 +46,8 @@ private:
     const Material& m_meshMaterial;
     const Puppet::Mesh& m_mesh;
     std::vector<Effects::CPass*> m_passes = {};
+    Effects::CPass* m_shadowPass = nullptr;
+    const std::vector<Wallpapers::CScene::ShadowView>* m_shadowViews = nullptr;
     GLuint m_vbo = GL_NONE;
     GLuint m_ibo = GL_NONE;
     GLsizei m_indexCount = 0;
@@ -68,6 +77,8 @@ public:
 
     void setup () override;
     void render () override;
+    /** The scene's shadow pass: a model with castshadow draws its meshes' casters into the atlas's viewports */
+    void renderShadow (const std::shared_ptr<const CFBO>& atlas, const std::vector<Wallpapers::CScene::ShadowView>& views);
 
     [[nodiscard]] const MeshObject& getMeshObject () const;
     /** The meshes that could be built (tests) */

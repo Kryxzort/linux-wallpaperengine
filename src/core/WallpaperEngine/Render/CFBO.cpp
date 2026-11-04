@@ -134,6 +134,25 @@ void CFBO::resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidt
     glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
 
     glBindTexture (GL_TEXTURE_2D, this->m_texture);
+    if (this->m_shadowAtlas) {
+	glTexImage2D (
+	    GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, textureWidth, textureHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT,
+	    nullptr
+	);
+	glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
+	glDepthMask (GL_TRUE);
+	glClearDepth (1.0);
+	glClear (GL_DEPTH_BUFFER_BIT);
+	glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+	this->m_resolution = { textureWidth, textureHeight, realWidth, realHeight };
+	for (const auto& frame : this->m_frames) {
+	    frame->width1 = textureWidth;
+	    frame->height1 = textureHeight;
+	    frame->width2 = realWidth;
+	    frame->height2 = realHeight;
+	}
+	return;
+    }
     const GLStorage storage = storageFor (this->m_format);
     glTexImage2D (
 	GL_TEXTURE_2D, 0, storage.internalFormat, textureWidth, textureHeight, 0, storage.format, storage.type, nullptr
@@ -195,6 +214,47 @@ void CFBO::attachDepthBuffer () const {
 
     glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
 }
+
+void CFBO::makeShadowAtlas () {
+    if (this->m_shadowAtlas) {
+	return;
+    }
+
+    GLint previousFramebuffer = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+    glBindTexture (GL_TEXTURE_2D, this->m_texture);
+    glTexImage2D (
+	GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, static_cast<GLsizei> (this->m_resolution.x),
+	static_cast<GLsizei> (this->m_resolution.y), 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr
+    );
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf (GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 1.0f);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+
+    glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
+    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, this->m_texture, 0);
+    glDrawBuffer (GL_NONE);
+    glReadBuffer (GL_NONE);
+
+    if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+	sLog.error ("The shadow atlas ", this->m_name, " is an incomplete framebuffer");
+	WPENGINE_HEALTH ("pass_error", { { "message", "shadow atlas " + this->m_name + " is an incomplete framebuffer" } });
+    }
+
+    glDepthMask (GL_TRUE);
+    glClearDepth (1.0);
+    glClear (GL_DEPTH_BUFFER_BIT);
+    glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+    this->m_shadowAtlas = true;
+}
+
+bool CFBO::isShadowAtlas () const { return this->m_shadowAtlas; }
 
 CFBO::~CFBO () {
     if (this->m_depthbuffer != GL_NONE) {
