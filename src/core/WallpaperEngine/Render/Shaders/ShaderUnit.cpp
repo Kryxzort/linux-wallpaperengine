@@ -802,8 +802,34 @@ void ShaderUnit::parseParameterConfiguration (
 	    if (!this->m_combos.contains (name) && !this->m_overrideCombos.contains (name)) {
 		const std::string defaultName
 		    = textureName != data.end () && textureName->is_string () ? textureName->get<std::string> () : "";
-		const int format = this->m_formatOf && index != 0 ? this->m_formatOf (static_cast<int> (index), defaultName) : 0;
+		const int format = this->m_formatOf && index != 0 ? this->m_formatOf (static_cast<int> (index), defaultName).format : 0;
 		this->m_discoveredCombos.emplace (name, format);
+	    }
+	}
+
+	// "components": WE's shader preamble (GH 0x14019b550) defines component i's combo when the texture bound at the
+	// slot has flag 0x100000 << i. resourcecompiler64.exe sets that flag for each channel it builds from a
+	// "component" image (`or [flags], 0x100000 << channel`, 0x140060f1c): the PBRMASKS sampler's METALLIC_MAP,
+	// ROUGHNESS_MAP, REFLECTION_MAP, EMISSIVE_MAP (3477054430's mask: 0xa00000, roughness + emissive; 3509243656's
+	// four: 0x800000, emissive). LWE never defined them: the shaders took g_Metallic / g_Roughness and no emission
+	const auto components = data.find ("components");
+	if (components != data.end () && components->is_array () && this->m_formatOf) {
+	    const std::string defaultName
+		= textureName != data.end () && textureName->is_string () ? textureName->get<std::string> () : "";
+	    const uint32_t flags = this->m_formatOf (static_cast<int> (index), defaultName).flags;
+	    for (size_t i = 0; i < components->size () && i < 12; i++) {
+		const auto& component = (*components)[i];
+		if ((flags & (0x100000u << i)) == 0 || !component.is_object ()) {
+		    continue;
+		}
+		const auto componentCombo = component.find ("combo");
+		if (componentCombo == component.end () || !componentCombo->is_string ()) {
+		    continue;
+		}
+		const std::string name = componentCombo->get<std::string> ();
+		if (!this->m_combos.contains (name) && !this->m_overrideCombos.contains (name)) {
+		    this->m_discoveredCombos.emplace (name, 1);
+		}
 	    }
 	}
 

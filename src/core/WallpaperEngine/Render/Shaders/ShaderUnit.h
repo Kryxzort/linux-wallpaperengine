@@ -18,11 +18,18 @@ using JSON = WallpaperEngine::Data::JSON::JSON;
 using namespace WallpaperEngine::Assets;
 using namespace WallpaperEngine::Data::Model;
 
+/** What a pass binds at a sampler slot, as the shader's combos need it */
+struct ResolvedTexture {
+    /** the WE texture format (common_fragment.h's FORMAT_*): a `formatcombo` sampler's TEX<n>FORMAT */
+    int format = 0;
+    /** the .tex header's flags (0x100000 << i: channel i was built from a `components` image) */
+    uint32_t flags = 0;
+};
+
 /**
- * The WE texture format (common_fragment.h's FORMAT_*) of what a pass binds at sampler slot `index` (`defaultName`: the
- * sampler's own default texture, empty if none): a `formatcombo` sampler's TEX<n>FORMAT
+ * What a pass binds at sampler slot `index` (`defaultName`: the sampler's own default texture, empty if none)
  */
-using TextureFormatResolver = std::function<int (int index, const std::string& defaultName)>;
+using TextureFormatResolver = std::function<ResolvedTexture (int index, const std::string& defaultName)>;
 
 /**
  * Represents a whole shader unit

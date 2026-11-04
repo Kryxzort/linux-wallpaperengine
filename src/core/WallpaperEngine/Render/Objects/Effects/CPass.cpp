@@ -706,7 +706,7 @@ GLuint CPass::compileShader (const char* shader, GLuint type) {
     return shaderID;
 }
 
-int CPass::shaderFormatOf (int index, const std::string& defaultName) const {
+Render::Shaders::ResolvedTexture CPass::shaderFormatOf (int index, const std::string& defaultName) const {
     // what setupTextureUniforms will bind at `index`, most important first: a bind, the effect's user / plain texture
     // overrides, the pass's user / plain textures, the sampler's default
     std::string name;
@@ -726,7 +726,7 @@ int CPass::shaderFormatOf (int index, const std::string& defaultName) const {
     };
     if (const auto bind = this->m_binds.find (index); bind != this->m_binds.end ()) {
 	if (bind->second == "previous") {
-	    return 0; // the chain's previous output: an RGBA target
+	    return {}; // the chain's previous output: an RGBA target
 	}
 	name = bind->second;
     }
@@ -738,7 +738,7 @@ int CPass::shaderFormatOf (int index, const std::string& defaultName) const {
 	name = defaultName;
     }
     if (name.empty ()) {
-	return 0;
+	return {};
     }
     std::shared_ptr<const TextureProvider> texture = nullptr;
     try {
@@ -748,18 +748,19 @@ int CPass::shaderFormatOf (int index, const std::string& defaultName) const {
 	    texture = this->getContext ().resolveTexture (name);
 	}
     } catch (const std::exception&) {
-	return 0; // reported when it's bound
+	return {}; // reported when it's bound
     }
     if (texture == nullptr) {
-	return 0;
+	return {};
     }
+    const uint32_t flags = texture->getFlags ();
     // a .tex holding a JPEG / PNG is decoded to RGBA8 (CTexture::setupInternalFormat)
     if (const auto* tex = dynamic_cast<const CTexture*> (texture.get ());
 	tex != nullptr && tex->isFreeImage ()) {
-	return 0;
+	return { 0, flags };
     }
     const auto format = texture->getFormat ();
-    return format == TextureFormat_UNKNOWN ? 0 : static_cast<int> (format);
+    return { format == TextureFormat_UNKNOWN ? 0 : static_cast<int> (format), flags };
 }
 
 void CPass::setupShaders () {
