@@ -9,6 +9,7 @@
 #include "WallpaperEngine/Utils/ScopeGuard.h"
 
 #include <algorithm>
+#include <tuple>
 #include <nlohmann/json.hpp>
 
 using namespace WallpaperEngine::Scripting;
@@ -308,6 +309,38 @@ JSValue create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 	JS_FreeValue (ctx, image);
     } else {
 	return JS_UNDEFINED;
+    }
+
+    // a script from a Workshop asset (`export let __workshopId = '…'`, as the editor writes it) names its files as in
+    // its own item: `models/bar.json` is `models/workshop/<id>/bar.json` when that exists (2469881470's bars)
+    if (const auto* module = container->getEngine ().getRunningModule (); module != nullptr && JS_IsObject (module->ns)) {
+	JSValue id = JS_GetPropertyStr (ctx, module->ns, "__workshopId");
+	if (JS_IsString (id)) {
+	    const std::string workshop = jsString (ctx, id);
+	    try {
+		auto json = nlohmann::json::parse (config);
+		for (const char* key : { "image", "particle", "model", "sound" }) {
+		    if (!json.contains (key) || !json[key].is_string ()) {
+			continue;
+		    }
+		    const std::string file = json[key].get<std::string> ();
+		    const auto slash = file.find ('/');
+		    if (slash == std::string::npos || file.find ("/workshop/") != std::string::npos) {
+			continue;
+		    }
+		    const std::string own = file.substr (0, slash) + "/workshop/" + workshop + file.substr (slash);
+		    try {
+			std::ignore = container->getScene ().getAssetLocator ().readString (own);
+			json[key] = own;
+		    } catch (const std::exception&) {
+			// not in the item's folder: the path as written
+		    }
+		}
+		config = json.dump ();
+	    } catch (const std::exception&) {
+	    }
+	}
+	JS_FreeValue (ctx, id);
     }
 
     return layerValue (*container, container->getScene ().createLayer (config));

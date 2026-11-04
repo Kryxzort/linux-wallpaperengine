@@ -993,6 +993,9 @@ JSValue animation_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom ato
     if (strcmp (name.str, "duration") == 0) {
 	return JS_NewFloat64 (ctx, animation.getLength () / animation.getFps ());
     }
+    if (strcmp (name.str, "rate") == 0) {
+	return JS_NewFloat64 (ctx, animation.getRate ());
+    }
 
     for (const auto& [method, id] : kAnimationMethods) {
 	if (strcmp (name.str, method) == 0) {
@@ -1001,6 +1004,25 @@ JSValue animation_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom ato
     }
 
     return JS_UNDEFINED;
+}
+
+// IAnimation.rate is the one writable member
+int animation_property_set (
+    JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst val, JSValueConst receiver, int flags
+) {
+    JSClassID classId = 0;
+    auto* opaque = static_cast<OpaqueAnimation*> (JS_GetAnyOpaque (obj_val, &classId));
+    const AtomName name (ctx, atom);
+
+    if (opaque == nullptr || name.str == nullptr || opaque->value.getAnimation () == nullptr) {
+	return -1;
+    }
+    if (strcmp (name.str, "rate") == 0) {
+	double rate = 1.0;
+	JS_ToFloat64 (ctx, &rate, val);
+	opaque->value.getAnimation ()->setRate (static_cast<float> (rate));
+    }
+    return 1;
 }
 
 void animation_finalizer (JSRuntime* rt, JSValueConst val) {
@@ -1200,6 +1222,7 @@ ScriptableObjectAdapter::ScriptableObjectAdapter (ScriptEngine& engine, std::str
     JS_NewClass (rt, this->m_videoClassId, &this->m_videoDefinition);
 
     this->m_animationExoticMethods.get_property = animation_property_get;
+    this->m_animationExoticMethods.set_property = animation_property_set;
     this->m_animationDefinition = {
 	.class_name = "IAnimation",
 	.finalizer = animation_finalizer,

@@ -185,6 +185,7 @@ void PropertyAnimation::advance (float dt) {
     if (this->m_duration <= 0.0f) {
 	return;
     }
+    dt *= this->m_rate;
     const float before = this->m_time;
     const bool backwards = (this->m_flags & Reverse) != 0;
     if (backwards) {

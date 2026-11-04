@@ -79,6 +79,9 @@ public:
     void setFrame (int frame);
     [[nodiscard]] int getLength () const;
     [[nodiscard]] float getFps () const;
+    /** SceneScript's IAnimation.rate: the speed the timeline runs at (1: its own) */
+    [[nodiscard]] float getRate () const { return this->m_rate; }
+    void setRate (float rate) { this->m_rate = rate; }
 
     [[nodiscard]] const std::string& getName () const;
     [[nodiscard]] size_t getComponentCount () const;
@@ -95,6 +98,7 @@ public:
 private:
     std::string m_name;
     float m_fps;
+    float m_rate = 1.0f;
     float m_secondsPerFrame;
     float m_duration;
     int m_length;
