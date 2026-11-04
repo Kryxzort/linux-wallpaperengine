@@ -205,8 +205,8 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     );
     this->m_currentMainFBO = this->m_mainFBO = mainFBO;
     this->m_currentSubFBO = this->m_subFBO = subFBO;
-    this->m_sizedTargets.emplace_back (mainFBO, 1.0f);
-    this->m_sizedTargets.emplace_back (subFBO, 1.0f);
+    this->m_sizedTargets.push_back ({ .fbo = mainFBO });
+    this->m_sizedTargets.push_back ({ .fbo = subFBO });
 
     // build a list of vertices, these might need some change later (or maybe invert the camera)
     GLfloat sceneSpacePosition[] = { this->m_pos.x, this->m_pos.y, 0.0f, this->m_pos.x, this->m_pos.w, 0.0f,
@@ -821,9 +821,13 @@ void CImage::setup () {
 
 	    // create all the fbos for this effect
 	    for (const auto& fbo : cur->effect->fbos) {
-		this->m_sizedTargets.emplace_back (
-		    fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize (), this->getScene ().rendersHDR ()), fbo->scale
-		);
+		this->m_sizedTargets.push_back ({
+		    .fbo = fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize (), this->getScene ().rendersHDR ()),
+		    .scale = fbo->scale,
+		    .fit = fbo->fit,
+		    .width = fbo->width,
+		    .height = fbo->height,
+		});
 	    }
 
 	    // TODO: MAKE USE OF ZIP OPERATOR IN BOOST? WAY OVERKILL JUST FOR THIS...
@@ -858,11 +862,6 @@ void CImage::setup () {
 			continue;
 		    }
 
-		    if ((*curEffect)->command != Command_Copy) {
-			sLog.error ("Only copy command is supported for pass without material");
-			WPENGINE_HEALTH ("unsupported", { { "what", "effect pass command other than copy" } });
-			continue;
-		    }
 
 		    auto virtualPass
 			= std::make_unique<MaterialPass> (MaterialPass { .blending = BlendingMode_Normal,
@@ -876,10 +875,13 @@ void CImage::setup () {
 
 		    const auto& config = *this->m_virtualPassess.emplace_back (std::move (virtualPass));
 
-		    // build a pass for a copy shader
+		    // build a pass for a copy shader (a swap is that pass exchanging its source and target instead)
 		    this->m_passes.push_back (new CPass (
 			*this, fboProvider, config, std::nullopt, std::nullopt, (*curEffect)->target.value ()
 		    ));
+		    if ((*curEffect)->command == Command_Swap) {
+			this->m_passes.back ()->setSwap (*(*curEffect)->source, (*curEffect)->target.value ());
+		    }
 		} else {
 		    for (auto& pass : (*curEffect)->material.value ()->passes) {
 			const auto override = curOverride != endOverride
@@ -1028,6 +1030,13 @@ void CImage::updateActivePasses () {
 	if (visible) {
 	    this->m_activePasses.push_back (this->m_passes[i]);
 	}
+    }
+
+    // swaps at the end exchange FBOs after the layer's last draw: they run after it, outside the chain
+    this->m_trailingSwaps.clear ();
+    while (!this->m_activePasses.empty () && this->m_activePasses.back ()->isSwap ()) {
+	this->m_trailingSwaps.insert (this->m_trailingSwaps.begin (), this->m_activePasses.back ());
+	this->m_activePasses.pop_back ();
     }
 
     // if there's more than one pass the blendmode has to be moved from the beginning to the end (of the passes that
@@ -1203,10 +1212,11 @@ void CImage::pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::share
 void CImage::resizeTargets (const glm::vec2& size) {
     this->m_size = size;
 
-    for (const auto& [fbo, scale] : this->m_sizedTargets) {
-	const auto width = static_cast<uint32_t> (std::max (1.0f, size.x / scale));
-	const auto height = static_cast<uint32_t> (std::max (1.0f, size.y / scale));
-	fbo->resize (width, height, width, height);
+    for (const auto& target : this->m_sizedTargets) {
+	const glm::vec2 sized = FBOProvider::sizeFor (target.scale, target.fit, target.width, target.height, size);
+	const auto width = static_cast<uint32_t> (sized.x);
+	const auto height = static_cast<uint32_t> (sized.y);
+	target.fbo->resize (width, height, width, height);
     }
 }
 
@@ -1327,6 +1337,10 @@ void CImage::render () {
 	}
 
 	(*cur)->render ();
+    }
+
+    for (auto* swap : this->m_trailingSwaps) {
+	swap->render ();
     }
 
 #if !NDEBUG

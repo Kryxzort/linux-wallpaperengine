@@ -508,7 +508,25 @@ void CPass::cleanupRenderSetup () {
     }
 }
 
+void CPass::setSwap (std::string first, std::string second) {
+    this->m_swap = std::make_pair (std::move (first), std::move (second));
+}
+
+bool CPass::isSwap () const { return this->m_swap.has_value (); }
+
 void CPass::render () {
+    if (this->m_swap.has_value ()) {
+	// `command: swap`: the stock fluid simulation ping-pongs its velocity and dye FBOs at the end of the chain, so
+	// the next frame reads (as the first name) what this one drew into the second. Inferred from that use: WE parses
+	// the command (2) but its runtime wasn't traced
+	const auto first = this->m_fboProvider->find (this->m_swap->first);
+	const auto second = this->m_fboProvider->find (this->m_swap->second);
+	if (first != nullptr && second != nullptr && first != second) {
+	    first->swapContents (*second);
+	}
+	return;
+    }
+
     // set the VAO for now
     glBindVertexArray (this->m_vao);
 

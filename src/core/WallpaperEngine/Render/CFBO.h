@@ -51,6 +51,11 @@ public:
      */
     void makeShadowAtlas ();
     [[nodiscard]] bool isShadowAtlas () const;
+    /**
+     * Exchanges what the two FBOs hold (their GL framebuffer, texture, depth buffer and size) in place: a pass's
+     * `command: swap`. Passes keep their pointers to both, so each name now reads what the other drew
+     */
+    void swapContents (CFBO& other);
 
     void incrementUsageCount () const override;
     void decrementUsageCount () const override;

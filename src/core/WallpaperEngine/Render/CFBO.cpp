@@ -1,4 +1,6 @@
 #include "CFBO.h"
+
+#include <utility>
 #include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 
@@ -255,6 +257,15 @@ void CFBO::makeShadowAtlas () {
 }
 
 bool CFBO::isShadowAtlas () const { return this->m_shadowAtlas; }
+
+void CFBO::swapContents (CFBO& other) {
+    std::swap (this->m_framebuffer, other.m_framebuffer);
+    std::swap (this->m_depthbuffer, other.m_depthbuffer);
+    std::swap (this->m_texture, other.m_texture);
+    std::swap (this->m_resolution, other.m_resolution);
+    std::swap (this->m_format, other.m_format);
+    std::swap (this->m_shadowAtlas, other.m_shadowAtlas);
+}
 
 CFBO::~CFBO () {
     if (this->m_depthbuffer != GL_NONE) {

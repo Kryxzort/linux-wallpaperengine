@@ -59,6 +59,10 @@ public:
     [[nodiscard]] Render::Shaders::Shader* getShader () const;
     [[nodiscard]] GLuint getProgramID () const;
 
+    /** `command: swap` (GH 0x1402131b0 reads it as command 2): render () exchanges the two named FBOs instead */
+    void setSwap (std::string first, std::string second);
+    [[nodiscard]] bool isSwap () const;
+
     // Custom geometry rendering support (for particles, etc.)
     using GeometryCallback = std::function<void ()>;
     void
@@ -208,6 +212,8 @@ private:
     std::shared_ptr<const CFBO> m_drawTo = nullptr;
     /** this render's copy of m_drawTo, for a texture unit that samples it (taken once per render) */
     mutable std::shared_ptr<const CFBO> m_drawToCopy = nullptr;
+    /** a swap command's FBO names (empty: a draw) */
+    std::optional<std::pair<std::string, std::string>> m_swap = std::nullopt;
     /** samplerIsUsed, by unit */
     mutable std::map<int, bool> m_samplerUsed = {};
     std::shared_ptr<const TextureProvider> m_input = nullptr;

@@ -110,6 +110,12 @@ std::vector<FBOUniquePtr> EffectParser::parseFBOs (const JSON& it) {
 		.format = cur.optional<std::string> ("format", "rgba8888"),
 		.scale = cur.optional ("scale", 1.0f),
 		.unique = cur.optional ("unique", false),
+		// GH 0x1402131b0 reads fit, width, height (each a uint16 kept only up to 4096) and `uvs` ("repeat"
+		// sets the FBO's repeat flag)
+		.fit = cur.optional ("fit", 0u),
+		.width = cur.optional ("width", 0u),
+		.height = cur.optional ("height", 0u),
+		.repeatUVs = cur.optional<std::string> ("uvs", "") == "repeat",
 	    })
 	);
     }

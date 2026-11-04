@@ -13,6 +13,13 @@ struct FBO {
     std::string format;
     float scale;
     bool unique;
+    /** `fit`: the longer side at most this many pixels, the aspect kept (0: none; WE takes 1..4096) */
+    uint32_t fit = 0;
+    /** `width` / `height`: the size instead of the layer's (0: the layer's; WE takes 1..4096) */
+    uint32_t width = 0;
+    uint32_t height = 0;
+    /** `uvs`: "repeat" samples it wrapping */
+    bool repeatUVs = false;
 };
 
 struct EffectPass {

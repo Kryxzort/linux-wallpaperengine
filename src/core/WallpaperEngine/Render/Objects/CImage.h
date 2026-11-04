@@ -241,6 +241,9 @@ private:
     std::vector<BlendingMode> m_passBlending = {};
     /** The m_passes that run, in order */
     std::vector<Effects::CPass*> m_activePasses = {};
+    /** the `command: swap` passes after the last draw (the fluid simulation's ping-pong): run after it, so the draw
+     *  before them is the one that reaches the scene */
+    std::vector<Effects::CPass*> m_trailingSwaps = {};
     /** Per built effect, its `visible` when m_activePasses was set up */
     std::vector<bool> m_effectVisibility = {};
     int m_visibleEffects = 0;
@@ -253,7 +256,14 @@ private:
     /** setLocalOffset's offset; unset: placed by `alignment` */
     std::optional<glm::vec2> m_localOffset = std::nullopt;
     /** The FBOs sized after the layer, with their scale (the composite pair: 1), for resizeTargets */
-    std::vector<std::pair<std::shared_ptr<CFBO>, float>> m_sizedTargets = {};
+    struct SizedTarget {
+	std::shared_ptr<CFBO> fbo;
+	float scale = 1.0f;
+	uint32_t fit = 0;
+	uint32_t width = 0;
+	uint32_t height = 0;
+    };
+    std::vector<SizedTarget> m_sizedTargets = {};
 
     bool m_initialized = false;
     /** (color.rgb, alpha) for g_Color4, refreshed by getColor4 () — every render () */

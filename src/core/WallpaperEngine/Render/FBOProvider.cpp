@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include "FBOProvider.h"
 
 using namespace WallpaperEngine::Render;
@@ -31,10 +33,34 @@ TextureFormat FBOProvider::formatFromName (const std::string& name, const bool h
     return TextureFormat_ARGB8888;
 }
 
+glm::vec2 FBOProvider::sizeFor (float scale, uint32_t fit, uint32_t width, uint32_t height, glm::vec2 size) {
+    float w = width > 0 && width <= 4096 ? static_cast<float> (width) : size.x;
+    float h = height > 0 && height <= 4096 ? static_cast<float> (height) : size.y;
+    if (fit > 0 && fit <= 4096 && w > 0.0f && h > 0.0f) {
+	const auto f = static_cast<float> (fit);
+	if (w < h) {
+	    const float fitted = std::min (f, h);
+	    w = std::floor (w / h * fitted);
+	    h = fitted;
+	} else {
+	    const float fitted = std::min (f, w);
+	    h = std::floor (h / w * fitted);
+	    w = fitted;
+	}
+    }
+    if (scale <= 0.0f) {
+	scale = 1.0f;
+    }
+    return { std::max (1.0f, w / scale), std::max (1.0f, h / scale) };
+}
+
 std::shared_ptr<CFBO> FBOProvider::create (const FBO& base, uint32_t flags, const glm::vec2 size, const bool hdr) {
+    const glm::vec2 sized = sizeFor (base.scale, base.fit, base.width, base.height, size);
+    if (base.repeatUVs) {
+	flags &= ~static_cast<uint32_t> (TextureFlags_ClampUVs | TextureFlags_ClampUVsBorder);
+    }
     return this->m_fbos[base.name] = std::make_shared<CFBO> (
-	       base.name, formatFromName (base.format, hdr), flags, base.scale, size.x / base.scale,
-	       size.y / base.scale, size.x / base.scale, size.y / base.scale
+	       base.name, formatFromName (base.format, hdr), flags, base.scale, sized.x, sized.y, sized.x, sized.y
 	   );
 }
 
