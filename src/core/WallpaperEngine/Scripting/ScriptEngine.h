@@ -60,6 +60,8 @@ public:
 	ScriptableObject& object;
 	/** a script on an effect's `visible`: thisObject is that effect (IEffect), not the layer */
 	const ImageEffect* effect = nullptr;
+	/** the script's unit per stored unit: a script sees `angles` in degrees, the layer keeps radians */
+	float scriptScale = 1.0f;
 	/** the module namespace once evaluated (JS_UNDEFINED before, or when it failed to load) */
 	JSValue ns = JS_UNDEFINED;
 	bool evaluated = false;
@@ -82,11 +84,20 @@ public:
     /** A module's top level is being evaluated (not one of its exported functions) */
     bool isEvaluatingModule () const { return m_evaluatingModule; }
     JSValue dynamicToJs (DynamicValue& value) const;
+    /** dynamicToJs, every numeric component times `scale` (scriptScaleOf) */
+    JSValue dynamicToJs (DynamicValue& value, float scale) const;
+    /**
+     * How a layer property is scaled for a script: `angles` is degrees in SceneScript and radians in the scene
+     * (and here), so 180 / π; everything else 1
+     */
+    static float scriptScaleOf (const std::string& property);
     /**
      * Writes a script value into `target` (numbers, booleans, strings, Vec2/3/4); undefined/null write nothing
      * @return false when nothing was written
      */
     bool jsToDynamic (JSValueConst value, DynamicValue& target) const;
+    /** jsToDynamic, every numeric component divided by `scale` (scriptScaleOf) */
+    bool jsToDynamic (JSValueConst value, DynamicValue& target, float scale) const;
     /** A new instance of the scripts' own `Vec2`/`Vec3`/`Vec4` class (Wallpaper Engine's baseclasses.js) */
     JSValue newVec (const glm::vec2& value) const;
     JSValue newVec (const glm::vec3& value) const;

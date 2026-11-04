@@ -288,7 +288,7 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
     const auto& properties = object.getProperties ();
 
     if (const auto it = properties.find (name); it != properties.end ()) {
-	return engine.dynamicToJs (it->second.value);
+	return engine.dynamicToJs (it->second.value, ScriptEngine::scriptScaleOf (name));
     }
 
     // IImageLayer.size / ITextLayer.size: the layer's size in pixels
@@ -363,7 +363,7 @@ int scriptableobject_property_set (
 
     // a registered property (origin, scale, angles, visible, alpha, color, text, volume, …) takes the value
     if (const auto it = properties.find (name); it != properties.end ()) {
-	container->adapter.getEngine ().jsToDynamic (val, it->second.value);
+	container->adapter.getEngine ().jsToDynamic (val, it->second.value, ScriptEngine::scriptScaleOf (name));
 	return 1;
     }
 

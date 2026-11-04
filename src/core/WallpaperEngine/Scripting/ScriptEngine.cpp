@@ -188,10 +188,42 @@ JSValue ScriptEngine::dynamicToJs (DynamicValue& value) const {
     }
 }
 
-static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& target);
+static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& target, float scale = 1.0f);
 
 bool ScriptEngine::jsToDynamic (JSValueConst value, DynamicValue& target) const {
     return jsToDynamicValue (this->m_context, value, target);
+}
+
+bool ScriptEngine::jsToDynamic (JSValueConst value, DynamicValue& target, float scale) const {
+    return jsToDynamicValue (this->m_context, value, target, scale);
+}
+
+float ScriptEngine::scriptScaleOf (const std::string& property) {
+    // SceneScript's angles are degrees: scripts write `value.z = angle * WEMath.rad2deg` (2679248947), spin by
+    // `% 1.0 * 360` (2134765860), label sliders "Max Rotation (degrees)" (3477054430) and sway a body by
+    // cursor x · −0.0005 (3414858021: 1° at the centre, 55° read as radians); scene.json and the renderer keep radians
+    return property == "angles" ? static_cast<float> (180.0 / M_PI) : 1.0f;
+}
+
+JSValue ScriptEngine::dynamicToJs (DynamicValue& value, float scale) const {
+    if (scale == 1.0f) {
+	return this->dynamicToJs (value);
+    }
+
+    switch (value.getType ()) {
+	case DynamicValue::Float:
+	    return JS_NewFloat64 (this->m_context, value.getFloat () * scale);
+	case DynamicValue::Int:
+	    return JS_NewFloat64 (this->m_context, value.getInt () * scale);
+	case DynamicValue::Vec2:
+	    return this->newVec (value.getVec2 () * scale);
+	case DynamicValue::Vec3:
+	    return this->newVec (value.getVec3 () * scale);
+	case DynamicValue::Vec4:
+	    return this->newVec (value.getVec4 () * scale);
+	default:
+	    return this->dynamicToJs (value);
+    }
 }
 
 JSValue ScriptEngine::newVec (int components, const float* values) const {
@@ -228,8 +260,13 @@ std::string ScriptEngine::readScriptAsset (const std::string& path) const {
  *
  * @return false when nothing was written
  */
-static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& target) {
+static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& target, float scale) {
     const int tag = JS_VALUE_GET_TAG (val);
+
+    if (tag == JS_TAG_INT && scale != 1.0f) {
+	target.update (static_cast<float> (JS_VALUE_GET_INT (val) / scale), DynamicValue::UpdateSource::Script);
+	return true;
+    }
 
     if (tag == JS_TAG_INT) {
 	target.update (JS_VALUE_GET_INT (val), DynamicValue::UpdateSource::Script);
@@ -242,7 +279,7 @@ static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& ta
     }
 
     if (JS_TAG_IS_FLOAT64 (tag)) {
-	target.update (static_cast<float> (JS_VALUE_GET_FLOAT64 (val)), DynamicValue::UpdateSource::Script);
+	target.update (static_cast<float> (JS_VALUE_GET_FLOAT64 (val) / scale), DynamicValue::UpdateSource::Script);
 	return true;
     }
 
@@ -269,6 +306,7 @@ static bool jsToDynamicValue (JSContext* ctx, JSValueConst val, DynamicValue& ta
 
     while (count < 4 && JS_IsNumber (components[count])) {
 	JS_ToFloat64 (ctx, &v[count], components[count]);
+	v[count] /= scale;
 	count++;
     }
 
@@ -833,7 +871,12 @@ void ScriptEngine::queueScript (
     // evaluated on the next tick: objects queue their scripts while the scene is still being built, and a script's
     // top level may already look up other layers (thisScene.getLayer) or this layer's other properties
     this->m_scriptModules.emplace_back (
-	new LoadedModule { .key = key, .source = *source, .value = currentValue, .object = object, .effect = effect }
+	new LoadedModule { .key = key,
+			   .source = *source,
+			   .value = currentValue,
+			   .object = object,
+			   .effect = effect,
+			   .scriptScale = scriptScaleOf (key.substr (0, key.rfind ('_'))) }
     );
     this->m_pendingModules = true;
 }
@@ -959,7 +1002,7 @@ void ScriptEngine::callModule (LoadedModule& module, const char* name, int argc,
     if (JS_IsException (result)) {
 	this->logModuleError (module, name);
     } else if (writeBack) {
-	jsToDynamicValue (ctx, result, module.value);
+	jsToDynamicValue (ctx, result, module.value, module.scriptScale);
     }
 
     JS_FreeValue (ctx, result);
@@ -1007,7 +1050,7 @@ void ScriptEngine::startPendingScripts () {
 
 	module.initialized = true;
 	started.push_back (&module);
-	JSValue args[] = { this->dynamicToJs (module.value) };
+	JSValue args[] = { this->dynamicToJs (module.value, module.scriptScale) };
 	this->callModule (module, "init", 1, args, true);
 	JS_FreeValue (this->m_context, args[0]);
     }
@@ -1272,7 +1315,7 @@ void ScriptEngine::tick () {
     // run all update methods
     for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
 	auto& module = *this->m_scriptModules[i];
-	JSValue args[] = { this->dynamicToJs (module.value) };
+	JSValue args[] = { this->dynamicToJs (module.value, module.scriptScale) };
 	this->callModule (module, "update", 1, args, true);
 	JS_FreeValue (this->m_context, args[0]);
     }
