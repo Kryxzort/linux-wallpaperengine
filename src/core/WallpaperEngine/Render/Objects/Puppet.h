@@ -29,10 +29,41 @@ struct Vertex {
     glm::vec3 normal = glm::vec3 (0.0f, 0.0f, 1.0f);
     /** format bit 0x4: xyz and the bitangent's sign in w (1 0 0 1 when absent) */
     glm::vec4 tangent = glm::vec4 (1.0f, 0.0f, 0.0f, 1.0f);
+    /**
+     * the vec4 position's w (format 0x10000): 1 + the vertex's point in its mesh's morph targets, 0 for a vertex no
+     * target moves (genericimage4's MORPHING reads a_PositionVec4.w)
+     */
+    uint32_t morph = 0;
+};
+
+/**
+ * A blend shape (MDMP0001, GH 0x1402873f0): per point (a vertex's `morph` − 1) a position delta, read as snorm16
+ * × the mesh's morph scale (2.8.485's morph_vertex_v1.h: DecodeMorphSnorm16, × g_MorphPositionScale), and, with the
+ * mesh's flag 0x1000, an alpha (snorm16, the morph map's w: v_VertexAlpha mixes it in by the weight)
+ */
+struct MorphTarget {
+    uint64_t id = 0;
+    std::string name;
+    std::vector<glm::vec3> positions;
+    /** with mesh flag 0x400 */
+    std::vector<glm::vec3> normals;
+    /** with mesh flag 0x1000, else empty (1) */
+    std::vector<float> alpha;
+    /** with mesh flag 0x2000 (MORPHING_MODIFIERS): a bone and its rule (u32, f32, f32): parsed, not applied */
+    int modifierBone = -1;
+    uint32_t modifierMode = 0;
+    glm::vec2 modifierRange = glm::vec2 (0.0f);
 };
 
 struct Mesh {
     std::string material;
+    /** the mesh's flags (v4+): 1 32-bit indices, 2 an influence count, 0x400 / 0x1000 / 0x2000 morph normals / alpha /
+     *  modifiers */
+    uint32_t flags = 0;
+    /** MDMP: the snorm16 deltas' scale and the targets (points: their delta count) */
+    float morphScale = 0.0f;
+    uint32_t morphPoints = 0;
+    std::vector<MorphTarget> morphs;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 };
@@ -68,6 +99,18 @@ struct Animation {
     float fps = 30.0f;
     uint32_t frames = 0;
     std::vector<Track> tracks;
+    /**
+     * MDLA v3+: the bones' alpha tracks (a flag byte, then per bone its flags and frames + 1 floats; empty when the
+     * flag is 0). genericimage4's SKINNING_ALPHA: v_VertexAlpha = saturate (Σ weight · alpha[bone])
+     */
+    std::vector<std::vector<float>> boneAlpha;
+    /**
+     * MDLA v4+: blend-shape weight tracks, per mesh (flags bit 0, a float, a u16 count), per track the target's index
+     * and frames + 1 weights
+     */
+    std::vector<std::vector<std::pair<uint16_t, std::vector<float>>>> shapeWeights;
+    /** flags bit 0: the root-motion record (18 bytes, not decoded) */
+    bool rootMotion = false;
     /** the animation's events (MDLA's last list: a frame, a name): SceneScript's animationEvent on the layer */
     std::vector<std::pair<uint32_t, std::string>> events;
 };
@@ -145,6 +188,27 @@ void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vecto
 
 /** The bind world matrices (GH 0x1402261c0) */
 void bindWorldMatrices (const Model& model, std::vector<glm::mat4>& world);
+
+/** A float track's value at `time` (frames a, b and the fraction as `mix`) */
+float sampleFloat (const Animation& animation, const std::vector<float>& track, float time);
+
+/**
+ * Mixes one layer's bone alphas and blend-shape weights into `alpha` (per bone, from 1) and `weights` (per mesh,
+ * per target, from 0): normal lerps toward the sample by the layer's weight, additive adds (sample − rest) × weight.
+ * **Inferred**: WE's blend for these (the mixer GH 0x140228470 wasn't read that far); the bones' rule is
+ * the position's
+ */
+void mixExtras (std::vector<float>& alpha, std::vector<std::vector<float>>& weights, const Animation& animation,
+		float time, float weight, bool additive);
+
+/**
+ * A morphed position: position + scale · Σ weightₜ · deltaₜ[point] over the mesh's targets (genericimage4's
+ * MORPHING before SKINNING), and its alpha Π (alphaₜ · weightₜ + 1 − weightₜ)
+ */
+glm::vec3 morph (const Mesh& mesh, const Vertex& vertex, const std::vector<float>& weights, float& alpha);
+
+/** Skins `position` (the vertex's, morphed) by the vertex's bones and weights, as skin () */
+glm::vec3 skin (const glm::vec3& position, const Vertex& vertex, const std::vector<glm::mat4>& skinning);
 
 /** Skins a vertex: Σ weightᵢ · world[boneᵢ] · bindWorld⁻¹[boneᵢ] · position; weights summing to 0 keep it */
 glm::vec3 skin (const Vertex& vertex, const std::vector<glm::mat4>& skinning);

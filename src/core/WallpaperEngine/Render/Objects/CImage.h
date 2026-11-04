@@ -124,6 +124,12 @@ public:
     void puppetBonePose (std::vector<glm::mat4>& local, std::vector<glm::mat4>& world);
     /** A script's local matrix for a bone, over what the animations pose (nullopt: back to the animations) */
     void setBoneOverride (int bone, const std::optional<glm::mat4>& local);
+    /** The puppet's blend shapes (MDMP targets, every mesh's in order): their names */
+    [[nodiscard]] std::vector<std::string> blendShapeNames () const;
+    /** A blend shape's weight now (the animations' mix, or the script's), 0 when there's no such shape */
+    [[nodiscard]] float blendShapeWeight (int index);
+    /** A script's weight for a blend shape, over the animations' (nullopt: back to them) */
+    void setBlendShapeWeight (int index, const std::optional<float>& weight);
     /** a script changed an animation layer (its frame, its blend): the pose follows now */
     void puppetPoseChanged () { this->m_puppetPoseDirty = true; }
 
@@ -212,6 +218,21 @@ private:
     /** a script changed a layer or a bone: pose again this frame (with no time passing) */
     bool m_puppetPoseDirty = false;
     bool m_puppetSkinned = false;
+    /** a mesh has blend shapes (MDMP): posed even without animations */
+    bool m_puppetMorphed = false;
+    /** the animations carry bone alphas or the targets alphas: the first pass gets VERTEXCOLOR and a_Color */
+    bool m_puppetVertexAlpha = false;
+    /** per vertex of m_puppetVertices, its mesh */
+    std::vector<uint16_t> m_puppetVertexMesh = {};
+    /** the blend shapes' (mesh, target), in blendShapeNames' order */
+    std::vector<std::pair<size_t, size_t>> m_puppetShapes = {};
+    /** per mesh, per target: the weights mixed last (with the script's) */
+    std::vector<std::vector<float>> m_puppetShapeWeights = {};
+    /** blend-shape weights a script set, by blendShapeNames' index */
+    std::map<int, float> m_shapeOverrides = {};
+    /** per vertex: (1, 1, 1, bone alpha · morph alpha) when m_puppetVertexAlpha */
+    std::vector<GLfloat> m_puppetColors = {};
+    GLuint m_puppetColor = GL_NONE;
     glm::vec2 m_puppetSize = glm::vec2 (0.0f);
 
     glm::mat4 m_modelViewProjectionScreen = {};

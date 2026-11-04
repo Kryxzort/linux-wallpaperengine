@@ -121,6 +121,8 @@ enum LayerMethod {
     Method_AnimLayerDestroy,
     Method_Bones,
     Method_BoneOverride,
+    Method_Shapes,
+    Method_ShapeOverride,
     Method_EmitParticles,
     Method_ParticleGet,
     Method_ParticleSet,
@@ -142,6 +144,7 @@ constexpr std::pair<const char*, LayerMethod> kMethods[] = {
     { "__animLayers", Method_AnimLayers },	   { "__animLayerSet", Method_AnimLayerSet },
     { "__animLayerCreate", Method_AnimLayerCreate }, { "__animLayerDestroy", Method_AnimLayerDestroy },
     { "__bones", Method_Bones },		   { "__boneOverride", Method_BoneOverride },
+    { "__shapes", Method_Shapes },		   { "__shapeOverride", Method_ShapeOverride },
     { "emitParticles", Method_EmitParticles },
     { "__particleGet", Method_ParticleGet },	   { "__particleSet", Method_ParticleSet },
 };
@@ -518,6 +521,35 @@ JSValue layer_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 		image->setBoneOverride (bone, local);
 	    } else {
 		image->setBoneOverride (bone, std::nullopt);
+	    }
+	    return JS_TRUE;
+	}
+	case Method_Shapes: {
+	    // [{ name, weight }]: the puppet's blend shapes (MDMP targets, every mesh's in order), weighted now
+	    JSValue result = JS_NewArray (ctx);
+	    if (image == nullptr) {
+		return result;
+	    }
+	    const auto names = image->blendShapeNames ();
+	    for (uint32_t i = 0; i < names.size (); i++) {
+		JSValue entry = JS_NewObject (ctx);
+		JS_SetPropertyStr (ctx, entry, "name", JS_NewString (ctx, names[i].c_str ()));
+		JS_SetPropertyStr (ctx, entry, "weight", JS_NewFloat64 (ctx, image->blendShapeWeight (static_cast<int> (i))));
+		JS_SetPropertyUint32 (ctx, result, i, entry);
+	    }
+	    return result;
+	}
+	case Method_ShapeOverride: {
+	    // __shapeOverride (index, weight | null): a script's weight over the animations', or back to them
+	    int index = -1;
+	    if (image == nullptr || argc < 1 || JS_ToInt32 (ctx, &index, argv[0]) < 0) {
+		return JS_FALSE;
+	    }
+	    double weight = 0.0;
+	    if (argc > 1 && JS_IsNumber (argv[1]) && JS_ToFloat64 (ctx, &weight, argv[1]) == 0) {
+		image->setBlendShapeWeight (index, static_cast<float> (weight));
+	    } else {
+		image->setBlendShapeWeight (index, std::nullopt);
 	    }
 	    return JS_TRUE;
 	}

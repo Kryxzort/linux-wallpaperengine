@@ -96,6 +96,7 @@ void parseMeshes (Reader& r, int version, Model& out) {
 	    }
 	}
 	const uint32_t flags = version >= 4 ? r.u32 () : 0;
+	mesh.flags = flags;
 	if (flags & 2) {
 	    r.u32 (); // influences per vertex (≤ 4)
 	}
@@ -145,6 +146,11 @@ void parseMeshes (Reader& r, int version, Model& out) {
 	    const char* base = r.data + vertices + v * stride;
 	    Vertex& vertex = mesh.vertices[v];
 	    std::memcpy (&vertex.position, base + positionAt, sizeof (glm::vec3));
+	    if (format & 0x10000) {
+		float w = 0.0f;
+		std::memcpy (&w, base + positionAt + 12, sizeof (float));
+		vertex.morph = w > 0.0f ? static_cast<uint32_t> (w) : 0;
+	    }
 	    vertex.uv = glm::vec2 (0.0f);
 	    if (hasUv) {
 		std::memcpy (&vertex.uv, base + uvAt, sizeof (glm::vec2));
@@ -258,6 +264,87 @@ void parseSkeleton (Reader& r, int version, Model& out, SkeletonCounts& counts) 
     }
 }
 
+/** `count` float tracks (a u32 of flags, a blob of frames + 1 floats each) */
+std::vector<std::vector<float>> floatTracks (Reader& r, uint32_t count, size_t samples) {
+    std::vector<std::vector<float>> out (count);
+    for (uint32_t i = 0; i < count; i++) {
+	r.u32 ();
+	uint32_t length;
+	const size_t at = r.blob (length);
+	if (length != samples * 4) {
+	    throw std::runtime_error ("float track length isn't (frames + 1) · 4");
+	}
+	out[i].resize (samples);
+	std::memcpy (out[i].data (), r.data + at, length);
+    }
+    return out;
+}
+
+/** MDMP0001 (GH 0x1402873f0): per mesh a u16 target count (≤ 0x100); with targets, the f32 scale and the u32 point
+ *  count N; per target a u64 id, its name and N · 6 bytes of snorm16 xyz, then by the mesh's flags N · 6 normal bytes
+ *  (0x400), N · 2 alpha bytes (0x1000) and a bone rule (0x2000: u32 bone, u32, f32, f32) */
+void parseMorphs (Reader& r, Model& out) {
+    const auto snorm = [] (int16_t v) { return std::max (static_cast<float> (v) / 32767.0f, -1.0f); };
+    for (auto& mesh : out.meshes) {
+	const uint16_t count = r.u16 ();
+	if (count > 0x100) {
+	    throw std::runtime_error ("too many morph targets");
+	}
+	if (count == 0) {
+	    continue;
+	}
+	mesh.morphScale = r.f32 ();
+	mesh.morphPoints = r.u32 ();
+	for (uint16_t t = 0; t < count; t++) {
+	    MorphTarget target;
+	    target.id = r.get<uint64_t> ();
+	    target.name = r.str ();
+	    uint32_t length;
+	    size_t at = r.blob (length);
+	    if (length % 6 != 0) {
+		throw std::runtime_error ("morph positions not 6 bytes a point");
+	    }
+	    // WE takes the smaller of the header's count and the blob's (and requires them equal)
+	    mesh.morphPoints = std::min<uint32_t> (mesh.morphPoints, length / 6);
+	    const auto read3 = [&] (size_t from, std::vector<glm::vec3>& into, float scale) {
+		into.resize (mesh.morphPoints);
+		for (uint32_t i = 0; i < mesh.morphPoints; i++) {
+		    int16_t v[3];
+		    std::memcpy (v, r.data + from + i * 6, sizeof (v));
+		    into[i] = glm::vec3 (snorm (v[0]), snorm (v[1]), snorm (v[2])) * scale;
+		}
+	    };
+	    read3 (at, target.positions, mesh.morphScale);
+	    if (mesh.flags & 0x400) {
+		at = r.blob (length);
+		if (length != mesh.morphPoints * 6) {
+		    throw std::runtime_error ("morph normals don't match the points");
+		}
+		read3 (at, target.normals, 1.0f);
+	    }
+	    if (mesh.flags & 0x1000) {
+		at = r.blob (length);
+		if (length != mesh.morphPoints * 2) {
+		    throw std::runtime_error ("morph alphas don't match the points");
+		}
+		target.alpha.resize (mesh.morphPoints);
+		for (uint32_t i = 0; i < mesh.morphPoints; i++) {
+		    int16_t v;
+		    std::memcpy (&v, r.data + at + i * 2, sizeof (v));
+		    target.alpha[i] = snorm (v);
+		}
+	    }
+	    if (mesh.flags & 0x2000) {
+		target.modifierBone = static_cast<int> (r.u32 ());
+		target.modifierMode = r.u32 ();
+		target.modifierRange.x = r.f32 ();
+		target.modifierRange.y = r.f32 ();
+	    }
+	    mesh.morphs.push_back (std::move (target));
+	}
+    }
+}
+
 void skipFloatTracks (Reader& r, uint32_t count) {
     for (uint32_t i = 0; i < count; i++) {
 	r.u32 ();
@@ -311,18 +398,27 @@ void parseAnimations (Reader& r, int version, const SkeletonCounts& counts, Mode
 	    }
 	    skipFloatTracks (r, curves);
 	    if (r.u8 ()) {
-		skipFloatTracks (r, tracks); // per-bone alpha
+		animation.boneAlpha = floatTracks (r, tracks, samples);
 	    }
 	}
 	if (version > 3 && r.u8 ()) {
-	    // blend-shape weights per mesh
+	    // blend-shape weights per mesh: flags (bit 0), a float (the mesh's morph scale again), a u16 count, then per
+	    // track the target's index and frames + 1 floats
+	    animation.shapeWeights.resize (out.meshes.size ());
 	    for (size_t m = 0; m < out.meshes.size (); m++) {
 		if (r.u32 () & 1) {
 		    r.u32 ();
 		    const uint16_t shapes = r.u16 ();
 		    for (uint16_t s = 0; s < shapes; s++) {
-			r.u16 ();
-			r.skipBlob ();
+			const uint16_t index = r.u16 ();
+			uint32_t length;
+			const size_t at = r.blob (length);
+			if (length != samples * 4) {
+			    throw std::runtime_error ("blend-shape track length isn't (frames + 1) · 4");
+			}
+			std::vector<float> weights (samples);
+			std::memcpy (weights.data (), r.data + at, length);
+			animation.shapeWeights[m].emplace_back (index, std::move (weights));
 		    }
 		}
 	    }
@@ -336,6 +432,7 @@ void parseAnimations (Reader& r, int version, const SkeletonCounts& counts, Mode
 	    skipFloatTracks (r, tracks);
 	}
 	if (flags & 1) {
+	    animation.rootMotion = true;
 	    r.need (18);
 	    r.at += 18; // root motion
 	}
@@ -412,12 +509,22 @@ bool parse (const char* data, size_t size, Model& out, std::string& error) {
 		parseAnimations (r, v, counts, out);
 	    } else if (versionOf (marker, "MDAT") >= 1) {
 		parseAttachments (r, out);
+	    } else if (versionOf (marker, "MDMP") >= 1) {
+		parseMorphs (r, out);
 	    }
 	    r.at = end;
 	}
     } catch (const std::exception& ex) {
 	error = ex.what ();
 	return !out.meshes.empty ();
+    }
+    // a vertex's morph point must be one of its mesh's (else no target moves it)
+    for (auto& mesh : out.meshes) {
+	for (auto& vertex : mesh.vertices) {
+	    if (vertex.morph > mesh.morphPoints) {
+		vertex.morph = 0;
+	    }
+	}
     }
     // tracks and attachments must match the skeleton
     const auto bones = out.bones.size ();
@@ -612,8 +719,71 @@ void bindWorldMatrices (const Model& model, std::vector<glm::mat4>& world) {
     }
 }
 
+float sampleFloat (const Animation& animation, const std::vector<float>& track, float time) {
+    if (track.empty () || animation.fps <= 0.0f) {
+	return 0.0f;
+    }
+    const float frame = 1.0f / animation.fps;
+    const int frames = static_cast<int> (animation.frames);
+    const int a = std::clamp (static_cast<int> (time / frame), 0, std::max (frames - 1, 0));
+    const int b = std::min (a + 1, frames);
+    const float f = std::fmod (time, frame) / frame;
+    if (static_cast<size_t> (b) >= track.size ()) {
+	return track.back ();
+    }
+    return track[a] * (1.0f - f) + track[b] * f;
+}
+
+void mixExtras (std::vector<float>& alpha, std::vector<std::vector<float>>& weights, const Animation& animation,
+		float time, float weight, bool additive) {
+    for (size_t b = 0; b < alpha.size () && b < animation.boneAlpha.size (); b++) {
+	if (b < animation.tracks.size () && (animation.tracks[b].flags & 1)) {
+	    continue;
+	}
+	const float sample = sampleFloat (animation, animation.boneAlpha[b], time);
+	alpha[b] = additive ? alpha[b] + (sample - 1.0f) * weight : alpha[b] * (1.0f - weight) + sample * weight;
+    }
+    for (size_t m = 0; m < weights.size () && m < animation.shapeWeights.size (); m++) {
+	for (const auto& [index, track] : animation.shapeWeights[m]) {
+	    if (index >= weights[m].size ()) {
+		continue;
+	    }
+	    const float sample = sampleFloat (animation, track, time);
+	    float& w = weights[m][index];
+	    w = additive ? w + sample * weight : w * (1.0f - weight) + sample * weight;
+	}
+    }
+}
+
+glm::vec3 morph (const Mesh& mesh, const Vertex& vertex, const std::vector<float>& weights, float& alpha) {
+    alpha = 1.0f;
+    if (vertex.morph == 0 || mesh.morphs.empty ()) {
+	return vertex.position;
+    }
+    const uint32_t point = vertex.morph - 1;
+    glm::vec3 delta (0.0f);
+    for (size_t t = 0; t < mesh.morphs.size () && t < weights.size (); t++) {
+	const float w = weights[t];
+	if (w == 0.0f) {
+	    continue;
+	}
+	const auto& target = mesh.morphs[t];
+	if (point < target.positions.size ()) {
+	    delta += target.positions[point] * w;
+	}
+	if (point < target.alpha.size ()) {
+	    alpha *= target.alpha[point] * w + (1.0f - w);
+	}
+    }
+    return vertex.position + delta;
+}
+
 glm::vec3 skin (const Vertex& vertex, const std::vector<glm::mat4>& skinning) {
-    const glm::vec4 p (vertex.position, 1.0f);
+    return skin (vertex.position, vertex, skinning);
+}
+
+glm::vec3 skin (const glm::vec3& position, const Vertex& vertex, const std::vector<glm::mat4>& skinning) {
+    const glm::vec4 p (position, 1.0f);
     glm::vec3 result (0.0f);
     float total = 0.0f;
     for (int c = 0; c < 4; c++) {
@@ -625,6 +795,6 @@ glm::vec3 skin (const Vertex& vertex, const std::vector<glm::mat4>& skinning) {
 	result += w * glm::vec3 (skinning[bone] * p);
 	total += w;
     }
-    return total == 0.0f ? vertex.position : result;
+    return total == 0.0f ? position : result;
 }
 } // namespace WallpaperEngine::Render::Objects::Puppet

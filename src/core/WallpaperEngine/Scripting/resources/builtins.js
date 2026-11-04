@@ -341,12 +341,23 @@ globalThis.__layerMethods = (function () {
       const d = m.decompose();
       this.setLocalBoneTransform(which, Mat4.compose(origin, d.rotation, d.scale));
     },
-    // LWE simulates no bone physics and has no blend shapes (no library scene has either)
+    // LWE simulates no bone physics (no library scene enables it: every bone's "se"/"re"/"ge" is false)
     applyBonePhysicsImpulse() {},
     resetBonePhysicsSimulation() {},
-    getBlendShapeIndex() { return -1; },
-    getBlendShapeWeight() { return 0; },
-    setBlendShapeWeight() {},
+    // the puppet's blend shapes (MDMP targets), by name or index: "get the index of a blend shape by name",
+    // "get / set blend shape weight by name or index" (d.ts 2.8). A set weight holds over the animations'
+    getBlendShapeIndex(name) {
+      return this.__shapes().findIndex((s) => s.name === String(name));
+    },
+    getBlendShapeWeight(shape) {
+      const shapes = this.__shapes();
+      const i = typeof shape === 'number' ? shape : shapes.findIndex((s) => s.name === String(shape));
+      return i >= 0 && i < shapes.length ? shapes[i].weight : 0;
+    },
+    setBlendShapeWeight(shape, weight) {
+      const i = typeof shape === 'number' ? shape : this.getBlendShapeIndex(shape);
+      if (i >= 0) { this.__shapeOverride(i, Number(weight)); }
+    },
     // "the current world transform matrix"
     getTransformMatrix() {
       return mat(this.__world());

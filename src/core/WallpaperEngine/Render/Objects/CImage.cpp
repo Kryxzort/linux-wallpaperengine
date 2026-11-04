@@ -350,6 +350,9 @@ CImage::~CImage () {
     if (this->m_puppetTexCoord != GL_NONE) {
 	glDeleteBuffers (1, &this->m_puppetTexCoord);
     }
+    if (this->m_puppetColor != GL_NONE) {
+	glDeleteBuffers (1, &this->m_puppetColor);
+    }
     if (this->m_puppetIndices != GL_NONE) {
 	glDeleteBuffers (1, &this->m_puppetIndices);
     }
@@ -380,10 +383,19 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	std::vector<GLfloat> texcoords;
 	std::vector<GLuint> indices;
 	this->m_puppetVertices.clear ();
-	for (const auto& mesh : this->m_puppet.meshes) {
+	this->m_puppetVertexMesh.clear ();
+	this->m_puppetShapes.clear ();
+	this->m_puppetShapeWeights.clear ();
+	for (size_t m = 0; m < this->m_puppet.meshes.size (); m++) {
+	    const auto& mesh = this->m_puppet.meshes[m];
 	    const auto base = static_cast<GLuint> (this->m_puppetVertices.size ());
+	    for (size_t t = 0; t < mesh.morphs.size (); t++) {
+		this->m_puppetShapes.emplace_back (m, t);
+	    }
+	    this->m_puppetShapeWeights.emplace_back (mesh.morphs.size (), 0.0f);
 	    for (const auto& vertex : mesh.vertices) {
 		this->m_puppetVertices.push_back (vertex);
+		this->m_puppetVertexMesh.push_back (static_cast<uint16_t> (m));
 		texcoords.push_back (vertex.uv.x);
 		texcoords.push_back (vertex.uv.y);
 	    }
@@ -408,6 +420,27 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 					      .key = this->m_nextAnimationLayerKey++, .name = layer->name });
 	}
 	this->m_puppetSkinned = !this->m_puppet.bones.empty () && !this->m_puppet.animations.empty ();
+	this->m_puppetMorphed = !this->m_puppetShapes.empty ();
+	// a vertex alpha (genericimage4's SKINNING_ALPHA and MORPHING both multiply v_VertexAlpha in): bone alpha tracks
+	// or target alphas below 1
+	this->m_puppetVertexAlpha = false;
+	for (const auto& animation : this->m_puppet.animations) {
+	    this->m_puppetVertexAlpha = this->m_puppetVertexAlpha || !animation.boneAlpha.empty ();
+	}
+	for (const auto& mesh : this->m_puppet.meshes) {
+	    for (const auto& target : mesh.morphs) {
+		for (const float a : target.alpha) {
+		    this->m_puppetVertexAlpha = this->m_puppetVertexAlpha || a < 0.999f;
+		}
+	    }
+	}
+	if (this->m_puppetVertexAlpha) {
+	    this->m_puppetColors.assign (this->m_puppetVertices.size () * 4, 1.0f);
+	    glGenBuffers (1, &this->m_puppetColor);
+	    glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetColor);
+	    glBufferData (GL_ARRAY_BUFFER, this->m_puppetColors.size () * sizeof (GLfloat), this->m_puppetColors.data (),
+			  GL_DYNAMIC_DRAW);
+	}
 
 	this->m_puppetRawPositions.clear ();
 	this->m_puppetRawPositions.reserve (this->m_puppetVertices.size () * 3);
@@ -466,7 +499,7 @@ glm::vec2 CImage::puppetCanvasSize (const glm::vec2& size) const {
 }
 
 void CImage::updatePuppetPose () {
-    if (!this->m_puppetSkinned) {
+    if (!this->m_puppetSkinned && !this->m_puppetMorphed) {
 	return;
     }
     const float now = static_cast<float> (this->getScene ().getTime ());
@@ -479,6 +512,11 @@ void CImage::updatePuppetPose () {
 
     // GH 0x140228470: from the bind pose, every visible layer in order; its clock runs at dt · rate
     std::vector<Puppet::Key> pose = this->m_puppetBind;
+    std::vector<float> boneAlpha (this->m_puppet.bones.size (), 1.0f);
+    std::vector<std::vector<float>> shapeWeights = this->m_puppetShapeWeights;
+    for (auto& weights : shapeWeights) {
+	std::fill (weights.begin (), weights.end (), 0.0f);
+    }
     for (auto& state : this->m_puppetLayers) {
 	const auto& layer = *state.layer;
 	const auto* match = this->puppetAnimationOf (state);
@@ -507,7 +545,15 @@ void CImage::updatePuppetPose () {
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);
 	Puppet::mix (pose, this->m_puppetBind, *match, state.clock.time, weight, layer.additive);
+	Puppet::mixExtras (boneAlpha, shapeWeights, *match, state.clock.time, weight, layer.additive);
     }
+    for (const auto& [index, weight] : this->m_shapeOverrides) {
+	if (index >= 0 && static_cast<size_t> (index) < this->m_puppetShapes.size ()) {
+	    const auto [mesh, target] = this->m_puppetShapes[index];
+	    shapeWeights[mesh][target] = weight;
+	}
+    }
+    this->m_puppetShapeWeights = shapeWeights;
     // a single animation that played is removed (playSingleAnimation)
     std::erase_if (this->m_puppetLayers, [] (const PuppetLayerState& state) { return state.single && state.clock.finished; });
 
@@ -528,13 +574,63 @@ void CImage::updatePuppetPose () {
 	skinning[b] = this->m_puppetWorld[b] * this->m_puppetBindWorldInverse[b];
     }
     for (size_t v = 0; v < this->m_puppetVertices.size (); v++) {
-	const glm::vec3 p = Puppet::skin (this->m_puppetVertices[v], skinning);
+	const auto& vertex = this->m_puppetVertices[v];
+	const auto& mesh = this->m_puppet.meshes[this->m_puppetVertexMesh[v]];
+	// MORPHING before SKINNING (genericimage4): the blend shapes move the bind-space position
+	float alpha = 1.0f;
+	const glm::vec3 morphed = this->m_puppetMorphed ? Puppet::morph (mesh, vertex, shapeWeights[this->m_puppetVertexMesh[v]], alpha)
+						     : vertex.position;
+	const glm::vec3 p = this->m_puppetSkinned ? Puppet::skin (morphed, vertex, skinning) : morphed;
+	if (this->m_puppetVertexAlpha) {
+	    // SKINNING_ALPHA: saturate (Σ weight · alpha[bone])
+	    float bones = 0.0f, total = 0.0f;
+	    for (int c = 0; c < 4; c++) {
+		if (vertex.weights[c] != 0.0f && vertex.bones[c] < boneAlpha.size ()) {
+		    bones += vertex.weights[c] * boneAlpha[vertex.bones[c]];
+		    total += vertex.weights[c];
+		}
+	    }
+	    this->m_puppetColors[v * 4 + 3] = alpha * (total == 0.0f ? 1.0f : std::clamp (bones, 0.0f, 1.0f));
+	}
 	this->m_puppetRawPositions[v * 3] = p.x;
 	this->m_puppetRawPositions[v * 3 + 1] = p.y;
 	// (inferred, as PR #625) flat: x/y bone turns would push vertices out of the FBO's depth range
 	this->m_puppetRawPositions[v * 3 + 2] = 0.0f;
     }
     this->updatePuppetPositionBuffer (this->getSize ());
+    if (this->m_puppetVertexAlpha && this->m_puppetColor != GL_NONE) {
+	glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetColor);
+	glBufferSubData (GL_ARRAY_BUFFER, 0, this->m_puppetColors.size () * sizeof (GLfloat), this->m_puppetColors.data ());
+    }
+}
+
+std::vector<std::string> CImage::blendShapeNames () const {
+    std::vector<std::string> names;
+    for (const auto& [mesh, target] : this->m_puppetShapes) {
+	names.push_back (this->m_puppet.meshes[mesh].morphs[target].name);
+    }
+    return names;
+}
+
+float CImage::blendShapeWeight (int index) {
+    if (index < 0 || static_cast<size_t> (index) >= this->m_puppetShapes.size ()) {
+	return 0.0f;
+    }
+    this->updatePuppetPose ();
+    const auto [mesh, target] = this->m_puppetShapes[index];
+    return this->m_puppetShapeWeights[mesh][target];
+}
+
+void CImage::setBlendShapeWeight (int index, const std::optional<float>& weight) {
+    if (index < 0 || static_cast<size_t> (index) >= this->m_puppetShapes.size ()) {
+	return;
+    }
+    if (weight.has_value ()) {
+	this->m_shapeOverrides[index] = *weight;
+    } else {
+	this->m_shapeOverrides.erase (index);
+    }
+    this->m_puppetPoseDirty = true;
 }
 
 bool CImage::attachmentTransform (const std::string& name, glm::vec2& offset, float& angle) {
@@ -702,6 +798,14 @@ void CImage::setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) co
 		glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetTexCoord);
 		glVertexAttribPointer (texCoord, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
 	    }
+
+	    // the vertex alphas (bone alpha, morph alpha) through genericimage4's VERTEXCOLOR
+	    if (const GLint color = glGetAttribLocation (pass->getProgramID (), "a_Color");
+		color >= 0 && this->m_puppetColor != GL_NONE) {
+		glEnableVertexAttribArray (color);
+		glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetColor);
+		glVertexAttribPointer (color, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
+	    }
 	},
 	[this] () {
 	    GLint currentFramebuffer = 0;
@@ -729,6 +833,9 @@ void CImage::setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) co
 
 	    if (texCoord >= 0) {
 		glDisableVertexAttribArray (texCoord);
+	    }
+	    if (const GLint color = glGetAttribLocation (pass->getProgramID (), "a_Color"); color >= 0) {
+		glDisableVertexAttribArray (color);
 	    }
 	}
     );
@@ -770,6 +877,16 @@ void CImage::setup () {
     }
 
     const auto& debug = this->getScene ().getContext ().getContext ().config;
+
+    // a puppet's vertex alpha (bone alpha tracks, blend-shape alphas) reaches genericimage4's fragment through its
+    // VERTEXCOLOR (a_Color = 1 1 1 alpha; color *= v_Color right after WE's color.a *= v_VertexAlpha). Ours: WE skins
+    // and morphs on the GPU (SKINNING_ALPHA, MORPHING), LWE's puppets on the CPU. genericimage2 has neither, in WE too
+    if (this->m_hasPuppetMesh && this->m_puppetVertexAlpha && !this->getImage ().model->material->passes.empty ()) {
+	auto& first = const_cast<MaterialPass&> (*this->getImage ().model->material->passes.front ());
+	if (first.shader == "genericimage4") {
+	    first.combos.insert_or_assign ("VERTEXCOLOR", 1);
+	}
+    }
 
     // copy pass to the composite layer
     for (const auto& cur : this->getImage ().model->material->passes) {
