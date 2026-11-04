@@ -48,8 +48,29 @@ struct SceneData {
      * Camera configuration
      */
     struct Camera {
-	/** Enable fade effect */
+	/**
+	 * `camerafade` (general flag 4 at +0xe0, FUN_1401c9d10): while camera paths play, the scene fades out over the
+	 * last 0.5 s of a path and in over the first 0.5 s of the next (materials/util/fade.json, GH 0x1401afbf0)
+	 */
 	UserSettingUniquePtr fade;
+	/** A camera path keyframe (a `transforms` entry, the 0x2c-byte record of GH 0x1401c6ef0) */
+	struct PathKey {
+	    float time;
+	    glm::vec3 eye;
+	    glm::vec3 center;
+	    glm::vec3 up;
+	    float zoom;
+	};
+	/** A camera path (`paths` entry of a camera paths file): its keyframes, played for `duration` seconds */
+	struct Path {
+	    float duration;
+	    std::vector<PathKey> keys;
+	};
+	/**
+	 * `camera.paths` (scene +0x2d0): the camera paths file the scene names (the loader GH 0x1401b6c60 reads each
+	 * string entry into the same list, so the last one wins), played in order while no camera object is active
+	 */
+	std::vector<Path> paths;
 	/** Used by the software to allow the users to preview the background or not? */
 	bool preview;
 

@@ -216,6 +216,13 @@ protected:
     void advanceAnimations ();
     /** The camera update (WE GH 0x1401b8af0): shake, the active camera object's zoom, general.zoom, the parallax */
     void updateCamera ();
+    /**
+     * Camera paths (GH 0x1401b8af0): the frame's sample of `camera.paths`, advanced by dt; false without paths.
+     * Sets m_fadeAlpha (camerafade, GH 0x1401afbf0)
+     */
+    bool samplePath (float dt, SceneData::Camera::PathKey& out);
+    /** camerafade's overlay: fade.json's colour (the `schemecolor` property · 0.7) at m_fadeAlpha over the scene */
+    void renderFade ();
     /** Packs the 3D scene's lights for this frame (getLights), and lays out the shadow atlas (getShadowViews) */
     void updateLights ();
     /** WE's shadow pass (GH 0x1401c4f30): the casters into each shadow viewport of the atlas */
@@ -282,6 +289,12 @@ private:
     glm::vec2 m_mousePositionNormalized = {};
     /** the smoothed parallax position (WE scene+0x300) in scene units, y up; starts at the centre */
     glm::vec2 m_parallaxPosition = {};
+    /** the camera paths' playback (scene +0xe4 path, +0xe8 key, +0xec time) */
+    size_t m_pathIndex = 0;
+    size_t m_pathKey = 0;
+    float m_pathTime = 0.0f;
+    float m_fadeAlpha = 0.0f;
+    GLuint m_fadeProgram = 0;
     glm::vec2 m_parallaxPositionNormalized = { 0.5f, 0.5f };
     std::shared_ptr<const CFBO> _rt_4FrameBuffer = nullptr;
     std::shared_ptr<const CFBO> _rt_8FrameBuffer = nullptr;

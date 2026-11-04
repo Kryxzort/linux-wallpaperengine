@@ -47,6 +47,11 @@ struct ObjectData {
     std::optional<std::string> attachment = std::nullopt;
     /** A camera object's `fov` (null otherwise, or when it has none): a 3D scene's view angle while it is active */
     UserSettingUniquePtr cameraFov = nullptr;
+    /**
+     * `sortorder` (the base object's int at +0x124, its table GH 0x14020dcc0): a 3D scene's transparent sort
+     * (GH 0x1401b6660) orders by it first, ascending, then back to front
+     */
+    int sortOrder = 0;
 };
 
 /**

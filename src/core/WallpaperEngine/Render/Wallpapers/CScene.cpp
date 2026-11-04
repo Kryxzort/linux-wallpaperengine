@@ -18,6 +18,8 @@
 #include "WallpaperEngine/Logging/Log.h"
 
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
+#include "WallpaperEngine/Data/Model/Property.h"
+#include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Parsers/ObjectParser.h"
 #include "WallpaperEngine/Render/Objects/CText.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
@@ -812,6 +814,8 @@ void CScene::renderFrame () {
 	cur->render ();
     }
 
+    this->renderFade ();
+
     if (WallpaperEngine::Health::enabled ()) {
 	this->m_healthFrames++;
 	if (this->m_healthFrames == 1 || this->m_healthFrames == 31) {
@@ -1161,13 +1165,15 @@ const std::vector<CObject*>& CScene::drawOrder () {
 	return this->m_objectsByRenderOrder;
     }
 
-    // transparentsorting: every run of objects placed in the world is drawn back to front by the distance of their
-    // origins from the eye (the order of what draws flat over the screen — full-screen layers, the bloom — stays).
-    // WE's sort key is not decoded: this is ours
+    // transparentsorting: every run of objects placed in the world is drawn sorted (the order of what draws flat over
+    // the screen — full-screen layers, the bloom — stays). WE's key (GH 0x1401b6660, stable sort, comparator
+    // GH 0x1401cc550): `sortorder` ascending, then the depth along the view direction, farthest first
+    // (dot (origin, forward), descending). Ours: the runs, and the forward as the eye's line of sight
     this->m_sortedOrder = this->m_objectsByRenderOrder;
     const glm::vec3 eye = this->m_camera->getWorldEye ();
-    auto distance = [this, &eye] (const CObject* object) {
-	return glm::length (glm::vec3 (this->worldMatrixOf (object->getObject ())[3]) - eye);
+    const glm::vec3 forward = this->m_camera->getWorldForward ();
+    auto distance = [this, &eye, &forward] (const CObject* object) {
+	return glm::dot (glm::vec3 (this->worldMatrixOf (object->getObject ())[3]) - eye, forward);
     };
 
     auto begin = this->m_sortedOrder.begin ();
@@ -1182,7 +1188,10 @@ const std::vector<CObject*>& CScene::drawOrder () {
 	    run.emplace_back (distance (*end), *end);
 	    ++end;
 	}
-	std::stable_sort (run.begin (), run.end (), [] (const auto& a, const auto& b) { return a.first > b.first; });
+	std::stable_sort (run.begin (), run.end (), [] (const auto& a, const auto& b) {
+	    const int sa = a.second->getObject ().sortOrder, sb = b.second->getObject ().sortOrder;
+	    return sa != sb ? sa < sb : a.first > b.first;
+	});
 	for (auto& [d, object] : run) {
 	    *begin++ = object;
 	}
@@ -1443,8 +1452,127 @@ std::shared_ptr<const CFBO> CScene::getShadowAtlas () const { return this->m_sha
 
 const CScene::SceneLights& CScene::getLights () const { return this->m_lights; }
 
+bool CScene::samplePath (float dt, SceneData::Camera::PathKey& out) {
+    const auto& paths = this->getScene ().camera.paths;
+    this->m_fadeAlpha = 0.0f;
+    if (paths.empty ()) {
+	return false;
+    }
+    if (this->m_pathIndex >= paths.size ()) {
+	this->m_pathIndex = 0;
+	this->m_pathKey = 0;
+	this->m_pathTime = 0.0f;
+    }
+    const auto& path = paths[this->m_pathIndex];
+    if (path.keys.empty ()) {
+	this->m_pathIndex = (this->m_pathIndex + 1) % paths.size ();
+	return false;
+    }
+    const auto& keys = path.keys;
+    const size_t k = std::min (this->m_pathKey, keys.size () - 1);
+    const auto& a = keys[k];
+    float boundary;
+
+    // GH 0x1401b8af0, literally: before its key's time a key holds (until the next key's time plus its own), the last
+    // key holds until the duration less its time; between two keys a cubic Hermite whose tangents are both half the
+    // difference: p = h00 a + h10 m + h01 b + h11 m, m = (b − a) / 2
+    if (this->m_pathTime < a.time) {
+	boundary = (k + 1 < keys.size () ? keys[k + 1].time : 0.0f) + a.time;
+	out = a;
+    } else if (k + 1 >= keys.size ()) {
+	boundary = path.duration - a.time;
+	out = a;
+    } else {
+	const auto& b = keys[k + 1];
+	boundary = b.time;
+	const float span = b.time - a.time;
+	const float s = span > 0.0f ? (this->m_pathTime - a.time) / span : 1.0f;
+	const float s2 = s * s, s3 = s2 * s;
+	const float h00 = 2.0f * s3 - 3.0f * s2 + 1.0f, h10 = s3 - 2.0f * s2 + s, h01 = 3.0f * s2 - 2.0f * s3,
+		    h11 = s3 - s2;
+	auto hermite = [&] (auto p0, auto p1) {
+	    const auto m = (p1 - p0) * 0.5f;
+	    return p0 * h00 + m * h10 + p1 * h01 + m * h11;
+	};
+	out.time = this->m_pathTime;
+	out.eye = hermite (a.eye, b.eye);
+	out.center = hermite (a.center, b.center);
+	out.up = hermite (a.up, b.up);
+	out.zoom = hermite (a.zoom, b.zoom);
+    }
+
+    this->m_pathTime += dt;
+    if (boundary < this->m_pathTime) {
+	const size_t next = k + 1;
+	if (next >= keys.size () || path.duration <= keys[next].time) {
+	    this->m_pathIndex = (this->m_pathIndex + 1) % paths.size ();
+	    this->m_pathKey = 0;
+	    this->m_pathTime = 0.0f;
+	} else {
+	    this->m_pathKey = next;
+	}
+    }
+
+    // camerafade (GH 0x1401afbf0): over the last 0.5 s of the path the scene fades out, over its first 0.5 s in
+    if (this->getScene ().camera.fade != nullptr && this->getScene ().camera.fade->value->getBool ()) {
+	const auto& now = paths[this->m_pathIndex];
+	const float remaining = now.duration - this->m_pathTime;
+	float fade = 0.0f;
+	if (remaining < 0.5f) {
+	    fade = 1.0f - 2.0f * remaining;
+	} else if (remaining > now.duration - 0.5f) {
+	    fade = 1.0f - 2.0f * (now.duration - remaining);
+	}
+	this->m_fadeAlpha = glm::clamp (fade, 0.0f, 1.0f);
+    }
+    return true;
+}
+
+void CScene::renderFade () {
+    if (this->m_fadeAlpha <= 0.0f) {
+	return;
+    }
+    if (this->m_fadeProgram == 0) {
+	const char* vs = "#version 330\nconst vec2 p[3] = vec2[3] (vec2 (-1.0, -1.0), vec2 (3.0, -1.0), vec2 (-1.0, 3.0));\n"
+			 "void main () { gl_Position = vec4 (p[gl_VertexID], 0.0, 1.0); }\n";
+	const char* fs = "#version 330\nuniform vec4 u_Color;\nout vec4 o_Color;\nvoid main () { o_Color = u_Color; }\n";
+	const GLuint v = glCreateShader (GL_VERTEX_SHADER), f = glCreateShader (GL_FRAGMENT_SHADER);
+	glShaderSource (v, 1, &vs, nullptr);
+	glCompileShader (v);
+	glShaderSource (f, 1, &fs, nullptr);
+	glCompileShader (f);
+	this->m_fadeProgram = glCreateProgram ();
+	glAttachShader (this->m_fadeProgram, v);
+	glAttachShader (this->m_fadeProgram, f);
+	glLinkProgram (this->m_fadeProgram);
+	glDeleteShader (v);
+	glDeleteShader (f);
+    }
+    // fade.frag: vec4 (color · 0.7, g_Alpha), `color` the material's tint ← the project's `schemecolor`
+    // (usershadervalues; the shader's default 0.315 0.135 0.1125). Inferred: the binding of a project property
+    // named schemecolor
+    glm::vec3 tint (0.315f, 0.135f, 0.1125f);
+    const auto& properties = this->getScene ().project.properties;
+    if (const auto it = properties.find ("schemecolor"); it != properties.end () && it->second != nullptr) {
+	tint = it->second->getVec3 ();
+    }
+    glBindFramebuffer (GL_FRAMEBUFFER, this->getWallpaperFramebuffer ());
+    glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
+    glDisable (GL_DEPTH_TEST);
+    glDisable (GL_CULL_FACE);
+    glEnable (GL_BLEND);
+    glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColorMask (true, true, true, false);
+    glUseProgram (this->m_fadeProgram);
+    glUniform4f (glGetUniformLocation (this->m_fadeProgram, "u_Color"), tint.r * 0.7f, tint.g * 0.7f, tint.b * 0.7f,
+		 this->m_fadeAlpha);
+    glDrawArrays (GL_TRIANGLES, 0, 3);
+    glColorMask (true, true, true, true);
+}
+
 void CScene::updateCamera () {
     const auto& camera = this->getScene ().camera;
+    this->m_fadeAlpha = 0.0f;
 
     if (this->m_camera->isPerspective ()) {
 	// a 3D scene's view (GH 0x1401b8af0): the active camera object's — the last visible one — places the eye at
@@ -1455,6 +1583,7 @@ void CScene::updateCamera () {
 	glm::vec3 center = this->m_camera->getCenter ();
 	glm::vec3 up = this->m_camera->getUp ();
 	float fov = this->m_camera->getFov ();
+	bool cameraObject = false;
 
 	for (auto it = this->getScene ().objects.rbegin (); it != this->getScene ().objects.rend (); ++it) {
 	    const Object& object = **it;
@@ -1462,6 +1591,7 @@ void CScene::updateCamera () {
 	    if (object.cameraZoom == nullptr || !this->isEffectivelyVisible (object)) {
 		continue;
 	    }
+	    cameraObject = true;
 
 	    const glm::mat4 world = this->worldMatrixOf (object);
 	    eye = glm::vec3 (world[3]);
@@ -1471,6 +1601,16 @@ void CScene::updateCamera () {
 		fov = object.cameraFov->value->getFloat ();
 	    }
 	    break;
+	}
+
+	// no active camera object: the camera paths play (an active one takes precedence, GH 0x1401b8af0)
+	if (SceneData::Camera::PathKey key {}; !cameraObject
+	    && this->samplePath (std::max (0.0f, this->getContext ().getContext ().renderTime
+						     - this->getContext ().getContext ().renderTimeLast),
+				 key)) {
+	    eye = key.eye;
+	    center = key.center;
+	    up = key.up;
 	}
 
 	glm::vec3 offset (0.0f);
@@ -1527,6 +1667,7 @@ void CScene::updateCamera () {
 
     // the zoom: general.zoom times the active camera object's (the last visible one whose parents are visible)
     float zoom = camera.zoom == nullptr ? 1.0f : camera.zoom->value->getFloat ();
+    bool cameraObject = false;
 
     for (auto it = this->getScene ().objects.rbegin (); it != this->getScene ().objects.rend (); ++it) {
 	const Object& object = **it;
@@ -1537,8 +1678,16 @@ void CScene::updateCamera () {
 
 	if (this->isEffectivelyVisible (object)) {
 	    zoom *= object.cameraZoom->value->getFloat ();
+	    cameraObject = true;
 	    break;
 	}
+    }
+
+    // no active camera object: the camera paths play. A key's zoom replaces general.zoom (+0x114 takes it instead
+    // of +0x13c) and its eye moves the camera from the scene's (y up, scene units)
+    if (SceneData::Camera::PathKey key {}; !cameraObject && this->samplePath (dt, key)) {
+	zoom = key.zoom;
+	cameraPosition += glm::vec2 (key.eye - this->m_camera->getEye ());
     }
 
     // the mouse parallax: a target from the cursor (y up), centred at mouseinfluence 0, eased in by

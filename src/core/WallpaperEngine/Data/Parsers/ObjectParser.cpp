@@ -54,6 +54,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	    .solid = it.optional ("solid", true),
 	    .attachment = it.optional<std::string> ("attachment"),
+	    .sortOrder = it.optional ("sortorder", 0),
 	};
     } catch (const std::exception& e) {
 	sLog.error ("Error parsing object base data: ", e.what ());
@@ -82,6 +83,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	    .solid = it.optional ("solid", true),
 	    .attachment = it.optional<std::string> ("attachment"),
+	    .sortOrder = it.optional ("sortorder", 0),
 	};
     }
 

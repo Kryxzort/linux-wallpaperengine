@@ -1,6 +1,7 @@
 #include "WallpaperParser.h"
 
 #include <cmath>
+#include <cstdlib>
 
 #include "../Model/Project.h"
 #include "../Model/Wallpaper.h"
@@ -46,6 +47,84 @@ SceneData::Fog parseFog (const JSON& general) {
 	.heightParams = range ("fogheightstart", "fogheightend", "fogheightstartdensity", "fogheightenddensity"),
     };
 }
+
+/** a "x y z" string (WE's strtod per component, 0 where missing), or 0 0 0 */
+glm::vec3 pathVec3 (const JSON& key, const char* name) {
+    const auto it = key.find (name);
+    glm::vec3 out (0.0f);
+    if (it == key.end () || !it->is_string ()) {
+	return out;
+    }
+    const std::string text = it->get<std::string> ();
+    const char* at = text.c_str ();
+    for (int i = 0; i < 3 && *at != '\0'; i++) {
+	char* end = nullptr;
+	out[i] = std::strtof (at, &end);
+	at = end == at ? at + 1 : end;
+	while (*at == ' ') {
+	    at++;
+	}
+    }
+    return out;
+}
+
+/**
+ * A camera paths file (GH 0x1401c6ef0): { "paths": [ { "duration", "disabled", "transforms": [ { "eye", "center",
+ * "up", "zoom" (1), "timestamp", "disabled" } ] } ] }. A path without transforms ends the list; a keyframe without a
+ * timestamp is spread over the duration (i / (n − 1) · duration)
+ */
+std::vector<SceneData::Camera::Path> parseCameraPaths (const JSON& camera, const Project& project) {
+    std::vector<SceneData::Camera::Path> result;
+    const auto paths = camera.optional ("paths");
+    if (!paths.has_value () || !paths->is_array ()) {
+	return result;
+    }
+    for (const auto& entry : *paths) {
+	result.clear ();
+	if (!entry.is_string ()) {
+	    continue;
+	}
+	try {
+	    const auto file = JSON::parse (project.assetLocator->readString (entry.get<std::string> ()));
+	    const auto list = file.find ("paths");
+	    if (list == file.end () || !list->is_array ()) {
+		continue;
+	    }
+	    for (const auto& path : *list) {
+		const auto transforms = path.find ("transforms");
+		if (!path.is_object () || transforms == path.end () || !transforms->is_array () || transforms->empty ()) {
+		    break;
+		}
+		if (path.value ("disabled", false)) {
+		    continue;
+		}
+		SceneData::Camera::Path out { .duration = path.value ("duration", 0.0f), .keys = {} };
+		const size_t n = transforms->size ();
+		for (size_t i = 0; i < n; i++) {
+		    const auto& key = (*transforms)[i];
+		    if (!key.is_object () || key.value ("disabled", false)) {
+			continue;
+		    }
+		    float time = 0.0f;
+		    if (const auto ts = key.find ("timestamp"); ts != key.end () && ts->is_number ()) {
+			time = ts->get<float> ();
+		    } else if (i != 0) {
+			time = static_cast<float> (i) / static_cast<float> (n - 1) * out.duration;
+		    }
+		    out.keys.push_back ({ .time = time,
+					  .eye = pathVec3 (key, "eye"),
+					  .center = pathVec3 (key, "center"),
+					  .up = pathVec3 (key, "up"),
+					  .zoom = key.contains ("zoom") && key["zoom"].is_number () ? key["zoom"].get<float> () : 1.0f });
+		}
+		result.push_back (std::move (out));
+	    }
+	} catch (const std::exception& e) {
+	    sLog.error ("Cannot load camera paths ", entry.get<std::string> (), ": ", e.what ());
+	}
+    }
+    return result;
+}
 } // namespace
 
 SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) {
@@ -79,6 +158,7 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
             },
             .camera = {
                 .fade = general.user ("camerafade", properties, false),
+                .paths = parseCameraPaths (camera, project),
                 .preview = general.optional ("camerapreview", false),
                 .bloom = {
                     .enabled = general.user ("bloom", properties, false),

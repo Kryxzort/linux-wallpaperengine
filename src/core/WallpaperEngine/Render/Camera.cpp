@@ -72,6 +72,8 @@ const glm::mat4& Camera::getWorldViewProjection () const { return this->m_worldV
 
 const glm::vec3& Camera::getWorldEye () const { return this->m_worldEye; }
 
+const glm::vec3& Camera::getWorldForward () const { return this->m_worldForward; }
+
 glm::vec3 Camera::getSceneEye () const {
     return { this->m_worldEye.x - this->m_width / 2.0f, this->m_height / 2.0f - this->m_worldEye.y, this->m_worldEye.z };
 }
@@ -111,6 +113,9 @@ void Camera::setPerspectiveView (const glm::vec3& eye, const glm::vec3& center, 
     const glm::mat4 view = glm::lookAt (eye, center, up);
 
     this->m_worldEye = eye;
+    if (glm::length (center - eye) > 1e-6f) {
+	this->m_worldForward = glm::normalize (center - eye);
+    }
     this->m_worldViewProjection = this->m_worldProjection * view;
     // LWE's scene space (x − w/2, h/2 − y, z) back to WE's world, then the view: what getProjection () · getLookAt ()
     // gives the objects that place themselves in scene space (particles)

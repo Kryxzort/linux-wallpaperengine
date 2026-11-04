@@ -38,6 +38,8 @@ public:
     [[nodiscard]] const glm::mat4& getWorldViewProjection () const;
     /** The eye in WE's world (3D: with the shake) */
     [[nodiscard]] const glm::vec3& getWorldEye () const;
+    /** The 3D view's direction in WE's world (normalised centre − eye) */
+    [[nodiscard]] const glm::vec3& getWorldForward () const;
     /**
      * The eye in LWE's scene space (x − width/2, height/2 − y, z), which particles use. In a 3D scene
      * getProjection () · getLookAt () takes LWE's scene space too: the world view after the y flip and the centring
@@ -81,6 +83,7 @@ private:
     glm::mat4 m_worldViewProjection = glm::mat4 (1.0f);
     glm::mat4 m_worldProjection = glm::mat4 (1.0f);
     glm::vec3 m_worldEye = glm::vec3 (0.0f);
+    glm::vec3 m_worldForward = glm::vec3 (0.0f, 0.0f, -1.0f);
     float m_perspectiveFov = -1.0f;
     glm::mat4 m_projection = {};
     glm::mat4 m_lookat = {};
