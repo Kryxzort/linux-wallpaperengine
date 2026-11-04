@@ -489,8 +489,20 @@ void CImage::updatePuppetPose () {
 	    continue;
 	}
 	if (state.playing) {
+	    const float before = state.started ? state.clock.time : -1.0f;
+	    const uint32_t endsBefore = state.clock.ends;
+	    const bool reversedBefore = state.clock.reversed;
 	    Puppet::advance (*match, state.clock, dt * layer.rate->value->getFloat (),
 			     state.single ? Puppet::Mode::Single : match->mode);
+	    state.started = true;
+	    // the animation's own events (MDLA) the clock passed: animationEvent (event, value) to the layer's scripts.
+	    // Inferred: WE's runtime for them wasn't traced (the keyframe timelines' events go the same way)
+	    if (!match->events.empty ()) {
+		const auto passed = Puppet::passedEvents (*match, before, state.clock, endsBefore, reversedBefore);
+		if (!passed.empty ()) {
+		    this->getScene ().getScriptEngine ().layerAnimationEvents (*this, passed);
+		}
+	    }
 	}
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);

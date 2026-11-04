@@ -340,9 +340,13 @@ void parseAnimations (Reader& r, int version, const SkeletonCounts& counts, Mode
 	    r.at += 18; // root motion
 	}
 	const uint32_t events = r.u32 ();
+	if (events > 0x10000) {
+	    throw std::runtime_error ("too many animation events");
+	}
 	for (uint32_t e = 0; e < events; e++) {
-	    r.u32 ();
-	    r.str ();
+	    // a frame, then a name (Inferred from the layout: the reader takes a u32 and a string per event)
+	    const uint32_t frame = r.u32 ();
+	    animation.events.emplace_back (frame, r.str ());
 	}
 	if (animation.fps > 0.0f && animation.frames > 0) {
 	    out.animations.push_back (std::move (animation));
@@ -470,6 +474,42 @@ void advance (const Animation& animation, Clock& clock, float dt, Mode mode) {
 	    }
 	    break;
     }
+}
+
+std::vector<std::pair<std::string, int>> passedEvents (const Animation& animation, float before, const Clock& after,
+						       uint32_t endsBefore, bool reversedBefore) {
+    std::vector<std::pair<std::string, int>> out;
+    if (animation.events.empty () || animation.fps <= 0.0f) {
+	return out;
+    }
+    // frame positions in frames (time · fps); an event at f is passed when the clock crosses f
+    const double from = before < 0.0f ? -1e-6 : static_cast<double> (before) * animation.fps;
+    const double to = static_cast<double> (after.time) * animation.fps;
+    const double last = static_cast<double> (animation.frames);
+    const auto add = [&] (double lo, double hi, bool includeLo) {
+	for (const auto& [frame, name] : animation.events) {
+	    const double f = frame;
+	    if ((includeLo ? f >= lo : f > lo) && f <= hi) {
+		out.emplace_back (name, static_cast<int> (frame));
+	    }
+	}
+    };
+    const bool wrapped = after.ends != endsBefore;
+    if (reversedBefore || after.reversed) {
+	// a mirror going back (or turning at the end): the frames between, either way
+	if (wrapped && !reversedBefore) {
+	    add (from, last, false);
+	    add (to, last, true);
+	} else {
+	    add (std::min (from, to), std::max (from, to), true);
+	}
+    } else if (wrapped && after.time < before) {
+	add (from, last, false); // a loop: up to the end, then from the start
+	add (-1.0, to, false);
+    } else {
+	add (from, to, false);
+    }
+    return out;
 }
 
 float layerWeight (const Animation& animation, const Clock& clock, float blend, bool& blendIn, bool blendOut,

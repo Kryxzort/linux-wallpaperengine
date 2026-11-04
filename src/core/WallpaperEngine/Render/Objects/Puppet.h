@@ -68,7 +68,10 @@ struct Animation {
     float fps = 30.0f;
     uint32_t frames = 0;
     std::vector<Track> tracks;
+    /** the animation's events (MDLA's last list: a frame, a name): SceneScript's animationEvent on the layer */
+    std::vector<std::pair<uint32_t, std::string>> events;
 };
+
 
 struct Attachment {
     int bone = -1;
@@ -107,6 +110,14 @@ float length (const Animation& animation);
 void advance (const Animation& animation, Clock& clock, float dt);
 /** advance, in `mode` instead of the animation's own (SceneScript's playSingleAnimation plays one once) */
 void advance (const Animation& animation, Clock& clock, float dt, Mode mode);
+
+/**
+ * The events of `animation` the clock passed going from `before` to `after` (`ends` the clock's ends counter before
+ * the step: a loop that wrapped passed its end and its start). Frame f is at f / fps; the first step (`before` < 0)
+ * includes frame 0
+ */
+std::vector<std::pair<std::string, int>> passedEvents (const Animation& animation, float before, const Clock& after,
+						       uint32_t endsBefore, bool reversedBefore);
 
 /**
  * The layer's weight (GH 0x140291f60): blend, × the blend-in ramp t / min (length / 2, blendtime) while `blendIn`

@@ -104,6 +104,8 @@ public:
 	bool playing = true;
 	/** playSingleAnimation: plays once, then the layer is removed */
 	bool single = false;
+	/** its clock went once (the next step's events start after it, not at frame 0) */
+	bool started = false;
     };
     /** the puppet's animation layers in order (none without a skinned puppet) */
     [[nodiscard]] std::vector<PuppetLayerState>& getPuppetLayers () { return this->m_puppetLayers; }

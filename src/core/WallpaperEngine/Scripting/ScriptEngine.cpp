@@ -1209,6 +1209,30 @@ void ScriptEngine::animationEvents (DynamicValue& value, const std::vector<std::
     }
 }
 
+void ScriptEngine::layerAnimationEvents (
+    const ScriptableObject& layer, const std::vector<std::pair<std::string, int>>& events
+) {
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	auto& module = *this->m_scriptModules[i];
+	if (&module.object != &layer) {
+	    continue;
+	}
+	if (!module.initialized) {
+	    module.pendingAnimationEvents.insert (module.pendingAnimationEvents.end (), events.begin (), events.end ());
+	    continue;
+	}
+	for (const auto& [name, frame] : events) {
+	    JSValue event = JS_NewObject (this->m_context);
+	    JS_SetPropertyStr (this->m_context, event, "name", JS_NewString (this->m_context, name.c_str ()));
+	    JS_SetPropertyStr (this->m_context, event, "frame", JS_NewInt32 (this->m_context, frame));
+	    JSValue args[] = { event, this->dynamicToJs (module.value, module.scriptScale) };
+	    this->callModule (module, "animationEvent", 2, args, false);
+	    JS_FreeValue (this->m_context, args[0]);
+	    JS_FreeValue (this->m_context, args[1]);
+	}
+    }
+}
+
 void ScriptEngine::dispatchEvent (const char* name, JSValueConst arg, const ScriptableObject* only) {
     JSValueConst args[] = { arg };
 

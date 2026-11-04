@@ -194,6 +194,8 @@ public:
     [[nodiscard]] JSValue generalSettings () const;
     /** Sends animationEvent ({ name, frame }, value) to the script of `value` for each event its animation passed */
     void animationEvents (DynamicValue& value, const std::vector<std::pair<std::string, int>>& events);
+    /** a puppet animation's events (MDLA): animationEvent (event, value) to every script on `layer` */
+    void layerAnimationEvents (const ScriptableObject& layer, const std::vector<std::pair<std::string, int>>& events);
     /** engine.userProperties: every user property, colours as Vec3 (a new object) */
     [[nodiscard]] JSValue userProperties ();
 
