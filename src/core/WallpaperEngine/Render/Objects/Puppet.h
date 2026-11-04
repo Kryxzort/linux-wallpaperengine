@@ -74,6 +74,13 @@ struct Bone {
     int parent = -1;
     /** the bind transform relative to the parent */
     glm::mat4 local = glm::mat4 (1.0f);
+    /**
+     * The bone's simulation JSON (MDLS, parsed by GH 0x14028bbd0): `ik` (settings flag 0x4000) makes it the end of an
+     * IK chain `ikd` bones long (≥ 1, settings +0x5c); `ikr` (flag 0x40) turns it to its target's rotation
+     */
+    bool ik = false;
+    int ikDepth = 1;
+    bool ikRotate = false;
 };
 
 /** one sample of a bone: WE converts the stored Euler angles to a quaternion at load (R = Rz · Ry · Rx) */
@@ -90,6 +97,18 @@ struct Track {
     std::vector<Key> keys;
 };
 
+/**
+ * An IK target (MDLS v2's u16 list: a name, the bone it serves, a type, a 64-byte matrix in the mesh's space, y up):
+ * type 0 is where the chain's end goes, type 1 the pole its bend turns toward (3042492564's arm: the hand's target
+ * at the hand, the pole by the elbow)
+ */
+struct IkTarget {
+    std::string name;
+    int bone = -1;
+    uint32_t type = 0;
+    glm::mat4 matrix = glm::mat4 (1.0f);
+};
+
 enum class Mode { Loop, Mirror, Single };
 
 struct Animation {
@@ -99,6 +118,8 @@ struct Animation {
     float fps = 30.0f;
     uint32_t frames = 0;
     std::vector<Track> tracks;
+    /** MDLA v2: one track per IK target (as the bones': position, angles, scale per frame) */
+    std::vector<Track> targetTracks;
     /**
      * MDLA v3+: the bones' alpha tracks (a flag byte, then per bone its flags and frames + 1 floats; empty when the
      * flag is 0). genericimage4's SKINNING_ALPHA: v_VertexAlpha = saturate (Σ weight · alpha[bone])
@@ -129,6 +150,7 @@ struct Model {
     std::vector<Bone> bones;
     std::vector<Animation> animations;
     std::vector<Attachment> attachments;
+    std::vector<IkTarget> ikTargets;
 };
 
 /** The size in bytes of a vertex of this MDLV format word, 0 when WE rejects it (GH 0x1402873f0, tables 0x1404c4da0) */
@@ -185,6 +207,20 @@ void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation&
 
 /** World matrices of a pose: world = parent world · local */
 void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vector<glm::mat4>& world);
+
+/** The IK targets' bind keys (their matrices decomposed), in the model's order */
+std::vector<Key> targetBindPose (const Model& model);
+
+/** An animation's IK target tracks mixed into `targets` as mix () mixes the bones */
+void mixTargets (std::vector<Key>& targets, const std::vector<Key>& bind, const Animation& animation, float time,
+		 float weight, bool additive);
+
+/**
+ * Turns each IK chain (a bone with `ik` and the `ikDepth` bones above it) so the end bone's origin reaches its type 0
+ * target, bending toward its type 1 target; with `ikRotate` the end bone takes the target's rotation. In the puppet's
+ * plane (z turns). Inferred: WE's solver wasn't read (two bones: the law of cosines; longer chains: CCD)
+ */
+void solveIk (const Model& model, std::vector<Key>& pose, const std::vector<Key>& targets);
 
 /** The bind world matrices (GH 0x1402261c0) */
 void bindWorldMatrices (const Model& model, std::vector<glm::mat4>& world);

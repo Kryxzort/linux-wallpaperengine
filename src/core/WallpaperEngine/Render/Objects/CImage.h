@@ -214,6 +214,8 @@ private:
     std::vector<Puppet::Vertex> m_puppetVertices = {};
     Puppet::Model m_puppet = {};
     std::vector<Puppet::Key> m_puppetBind = {};
+    /** the IK targets' bind keys (Puppet::targetBindPose) */
+    std::vector<Puppet::Key> m_puppetTargetBind = {};
     std::vector<glm::mat4> m_puppetBindWorldInverse = {};
     std::vector<glm::mat4> m_puppetWorld = {};
     std::vector<PuppetLayerState> m_puppetLayers = {};

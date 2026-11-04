@@ -426,6 +426,7 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	}
 
 	this->m_puppetBind = Puppet::bindPose (this->m_puppet);
+	this->m_puppetTargetBind = Puppet::targetBindPose (this->m_puppet);
 	Puppet::bindWorldMatrices (this->m_puppet, this->m_puppetBindWorldInverse);
 	for (auto& m : this->m_puppetBindWorldInverse) {
 	    m = glm::inverse (m);
@@ -528,6 +529,8 @@ void CImage::updatePuppetPose () {
 
     // GH 0x140228470: from the bind pose, every visible layer in order; its clock runs at dt · rate
     std::vector<Puppet::Key> pose = this->m_puppetBind;
+    // the IK targets move with the animations as the bones do (their MDLA v2 tracks)
+    std::vector<Puppet::Key> targets = this->m_puppetTargetBind;
     std::vector<float> boneAlpha (this->m_puppet.bones.size (), 1.0f);
     std::vector<std::vector<float>> shapeWeights = this->m_puppetShapeWeights;
     for (auto& weights : shapeWeights) {
@@ -561,6 +564,7 @@ void CImage::updatePuppetPose () {
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);
 	Puppet::mix (pose, this->m_puppetBind, *match, state.clock.time, weight, layer.additive);
+	Puppet::mixTargets (targets, this->m_puppetTargetBind, *match, state.clock.time, weight, layer.additive);
 	Puppet::mixExtras (boneAlpha, shapeWeights, *match, state.clock.time, weight, layer.additive);
     }
     for (const auto& [index, weight] : this->m_shapeOverrides) {
@@ -572,6 +576,9 @@ void CImage::updatePuppetPose () {
     this->m_puppetShapeWeights = shapeWeights;
     // a single animation that played is removed (playSingleAnimation)
     std::erase_if (this->m_puppetLayers, [] (const PuppetLayerState& state) { return state.single && state.clock.finished; });
+
+    // IK chains reach for their targets (3042492564's arm follows its hand's target)
+    Puppet::solveIk (this->m_puppet, pose, targets);
 
     this->m_puppetPose = pose;
     // a script's bone poses (setLocalBoneTransform …) over the animations'

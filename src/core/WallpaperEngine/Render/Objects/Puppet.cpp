@@ -7,6 +7,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
+#include <nlohmann/json.hpp>
 #undef GLM_ENABLE_EXPERIMENTAL
 
 namespace WallpaperEngine::Render::Objects::Puppet {
@@ -231,17 +232,36 @@ void parseSkeleton (Reader& r, int version, Model& out, SkeletonCounts& counts) 
 	float m[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 	std::memcpy (m, r.data + at, std::min<size_t> (length, sizeof (m)));
 	std::memcpy (&bone.local, m, sizeof (m));
-	r.str (); // simulation settings (JSON)
+	// the simulation settings (JSON, GH 0x14028bbd0): the IK keys
+	const std::string settings = r.str ();
+	if (settings.find ("\"ik\"") != std::string::npos) {
+	    const auto json = nlohmann::json::parse (settings, nullptr, false);
+	    if (json.is_object ()) {
+		const auto flag = [&json] (const char* key) {
+		    const auto it = json.find (key);
+		    return it != json.end () && it->is_boolean () && it->get<bool> ();
+		};
+		bone.ik = flag ("ik");
+		bone.ikRotate = flag ("ikr");
+		if (const auto it = json.find ("ikd"); it != json.end () && it->is_number ()) {
+		    // fewer than 2 reads as 1 (the parser's clamp)
+		    bone.ikDepth = std::max (it->get<int> (), 1);
+		}
+	    }
+	}
 	out.bones.push_back (std::move (bone));
     }
     if (version >= 2) {
 	counts.targets = r.u16 ();
 	for (uint32_t i = 0; i < counts.targets; i++) {
-	    r.str ();
-	    r.u32 ();
-	    r.u32 ();
+	    IkTarget target;
+	    target.name = r.str ();
+	    target.bone = static_cast<int> (r.u32 ());
+	    target.type = r.u32 ();
 	    r.need (64);
+	    std::memcpy (&target.matrix, r.data + r.at, 64);
 	    r.at += 64;
+	    out.ikTargets.push_back (std::move (target));
 	}
 	if (r.u8 ()) {
 	    // explicit matrices for the bones and the targets (the inverse binds WE recomputes anyway)
@@ -388,7 +408,24 @@ void parseAnimations (Reader& r, int version, const SkeletonCounts& counts, Mode
 	    animation.tracks.push_back (std::move (track));
 	}
 	if (version > 1) {
-	    skipFloatTracks (r, counts.targets);
+	    // the IK targets' tracks: keys as the bones' (an empty or odd one leaves its target at its bind)
+	    for (uint32_t t = 0; t < counts.targets; t++) {
+		Track track;
+		track.flags = r.u32 ();
+		uint32_t length;
+		const size_t at = r.blob (length);
+		if (length == samples * 36) {
+		    track.keys.resize (samples);
+		    for (size_t k = 0; k < samples; k++) {
+			float f[9];
+			std::memcpy (f, r.data + at + k * 36, sizeof (f));
+			track.keys[k].position = glm::vec3 (f[0], f[1], f[2]);
+			track.keys[k].rotation = glm::quat (glm::vec3 (f[3], f[4], f[5]));
+			track.keys[k].scale = glm::vec3 (f[6], f[7], f[8]);
+		    }
+		}
+		animation.targetTracks.push_back (std::move (track));
+	    }
 	    skipFloatTracks (r, counts.constraints);
 	}
 	if (version > 2) {
@@ -665,8 +702,24 @@ glm::quat nlerp (const glm::quat& from, const glm::quat& to, float t) {
 }
 } // namespace
 
+namespace {
+void mixTracks (std::vector<Key>& pose, const std::vector<Key>& bind, const std::vector<Track>& tracks,
+		const Animation& animation, float time, float weight, bool additive);
+}
+
 void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation& animation, float time, float weight,
 	  bool additive) {
+    mixTracks (pose, bind, animation.tracks, animation, time, weight, additive);
+}
+
+void mixTargets (std::vector<Key>& targets, const std::vector<Key>& bind, const Animation& animation, float time,
+		 float weight, bool additive) {
+    mixTracks (targets, bind, animation.targetTracks, animation, time, weight, additive);
+}
+
+namespace {
+void mixTracks (std::vector<Key>& pose, const std::vector<Key>& bind, const std::vector<Track>& tracks,
+		const Animation& animation, float time, float weight, bool additive) {
     // GH 0x1401a00a0: a = clamp (⌊t / frame⌋, 0, frames − 1), b = min (a + 1, frames), the fraction within the frame
     const float frame = 1.0f / animation.fps;
     const int frames = static_cast<int> (animation.frames);
@@ -674,8 +727,8 @@ void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation&
     const int b = std::min (a + 1, frames);
     const float f = std::fmod (time, frame) / frame;
 
-    for (size_t i = 0; i < pose.size () && i < animation.tracks.size (); i++) {
-	const Track& track = animation.tracks[i];
+    for (size_t i = 0; i < pose.size () && i < tracks.size (); i++) {
+	const Track& track = tracks[i];
 	if (track.flags & 1 || track.keys.size () <= static_cast<size_t> (b)) {
 	    continue;
 	}
@@ -700,6 +753,8 @@ void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation&
     }
 }
 
+} // namespace
+
 void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vector<glm::mat4>& world) {
     world.resize (model.bones.size ());
     for (size_t b = 0; b < model.bones.size (); b++) {
@@ -708,6 +763,100 @@ void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vecto
 	    = glm::translate (glm::mat4 (1.0f), k.position) * glm::mat4_cast (k.rotation) * glm::scale (glm::mat4 (1.0f), k.scale);
 	const int parent = model.bones[b].parent;
 	world[b] = parent >= 0 ? world[parent] * local : local;
+    }
+}
+
+std::vector<Key> targetBindPose (const Model& model) {
+    std::vector<Key> keys (model.ikTargets.size ());
+    for (size_t t = 0; t < model.ikTargets.size (); t++) {
+	glm::vec3 skew;
+	glm::vec4 perspective;
+	glm::quat rotation;
+	if (glm::decompose (model.ikTargets[t].matrix, keys[t].scale, rotation, keys[t].position, skew, perspective)) {
+	    keys[t].rotation = rotation;
+	} else {
+	    keys[t] = Key ();
+	    keys[t].position = glm::vec3 (model.ikTargets[t].matrix[3]);
+	}
+    }
+    return keys;
+}
+
+namespace {
+float angleOf (const glm::vec2& v) { return std::atan2 (v.y, v.x); }
+float zAngle (const glm::mat4& m) { return std::atan2 (m[0][1], m[0][0]); }
+/** turns bone `b` by `delta` (radians, about z) in the world: its local z turn (the puppet's plane, no mirroring) */
+void turn (std::vector<Key>& pose, int b, float delta) {
+    pose[b].rotation = glm::normalize (glm::angleAxis (delta, glm::vec3 (0.0f, 0.0f, 1.0f)) * pose[b].rotation);
+}
+} // namespace
+
+void solveIk (const Model& model, std::vector<Key>& pose, const std::vector<Key>& targets) {
+    if (model.ikTargets.empty ()) {
+	return;
+    }
+    std::vector<glm::mat4> world;
+    for (size_t e = 0; e < model.bones.size (); e++) {
+	const Bone& end = model.bones[e];
+	if (!end.ik) {
+	    continue;
+	}
+	const int endBone = static_cast<int> (e);
+	int goal = -1, pole = -1;
+	for (size_t t = 0; t < model.ikTargets.size () && t < targets.size (); t++) {
+	    if (model.ikTargets[t].bone == endBone) {
+		(model.ikTargets[t].type == 0 ? goal : pole) = static_cast<int> (t);
+	    }
+	}
+	if (goal < 0) {
+	    continue;
+	}
+	// the chain: the ikDepth bones above the end, root first
+	std::vector<int> chain;
+	for (int b = end.parent; b >= 0 && static_cast<int> (chain.size ()) < end.ikDepth; b = model.bones[b].parent) {
+	    chain.insert (chain.begin (), b);
+	}
+	if (chain.empty ()) {
+	    continue;
+	}
+	const glm::vec2 goalAt (targets[goal].position);
+	const auto at = [&world] (int b) { return glm::vec2 (world[b][3]); };
+	worldMatrices (model, pose, world);
+
+	if (chain.size () == 2) {
+	    // two bones: the law of cosines, the elbow on the pole's side (or where it bends now)
+	    const int root = chain[0], mid = chain[1];
+	    const glm::vec2 r = at (root), m = at (mid), x = at (endBone);
+	    const float a = glm::length (m - r), b = glm::length (x - m);
+	    const glm::vec2 toGoal = goalAt - r;
+	    if (a > 1e-5f && b > 1e-5f && glm::length (toGoal) > 1e-5f) {
+		const float reach = std::clamp (glm::length (toGoal), std::abs (a - b) + 1e-4f, a + b - 1e-4f);
+		const float cosA = std::clamp ((a * a + reach * reach - b * b) / (2.0f * a * reach), -1.0f, 1.0f);
+		const glm::vec2 hint = pole >= 0 ? glm::vec2 (targets[pole].position) - r : m - r;
+		const float cross = toGoal.x * hint.y - toGoal.y * hint.x;
+		const float side = cross < 0.0f ? -1.0f : 1.0f;
+		const float upper = angleOf (toGoal) + side * std::acos (cosA);
+		turn (pose, root, upper - angleOf (m - r));
+		worldMatrices (model, pose, world);
+		turn (pose, mid, angleOf (goalAt - at (mid)) - angleOf (at (endBone) - at (mid)));
+	    }
+	} else {
+	    // one bone points at the goal; longer chains: cyclic coordinate descent, end first
+	    for (int iteration = 0; iteration < (chain.size () == 1 ? 1 : 16); iteration++) {
+		for (auto it = chain.rbegin (); it != chain.rend (); ++it) {
+		    worldMatrices (model, pose, world);
+		    const glm::vec2 j = at (*it);
+		    if (glm::length (goalAt - j) > 1e-5f && glm::length (at (endBone) - j) > 1e-5f) {
+			turn (pose, *it, angleOf (goalAt - j) - angleOf (at (endBone) - j));
+		    }
+		}
+	    }
+	}
+	if (end.ikRotate) {
+	    worldMatrices (model, pose, world);
+	    const float want = zAngle (glm::mat4_cast (targets[goal].rotation));
+	    turn (pose, endBone, want - zAngle (world[e]));
+	}
     }
 }
 
