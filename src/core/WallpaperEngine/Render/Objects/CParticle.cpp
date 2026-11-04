@@ -675,6 +675,27 @@ void CParticle::update (float dt) {
 	refreshTransform ();
     }
 
+    // a world-space system (system flags bit 0, the editor's "Worldspace" — wallpaperui.exe lists it among the system's
+    // flags: disable colour / lifetime / count / speed / size overrides are 8 / 0x40 / 0x20 / 0x10 / 0x80, bit 1 the
+    // sheet blend, bit 2 perspective): its particles stay where they were emitted in the scene when the system moves,
+    // turns or scales (a pointer-following emitter leaves a trail). Inferred: LWE keeps them in the system's space and
+    // carries them across each change of its transform (parallax, a view effect, excluded)
+    if (m_parentSystem == nullptr && (m_particle.flags & 1) != 0) {
+	const glm::mat4 now = this->systemMatrix ();
+	if (m_worldSpaceSeen && now != m_worldSpaceLast) {
+	    const glm::mat4 carry = glm::inverse (now) * m_worldSpaceLast;
+	    const glm::mat3 linear (carry);
+	    for (uint32_t i = 0; i < m_particleCount; i++) {
+		auto& p = m_particles[i];
+		p.position = glm::vec3 (carry * glm::vec4 (p.position, 1.0f));
+		p.velocity = linear * p.velocity;
+		p.acceleration = linear * p.acceleration;
+	    }
+	}
+	m_worldSpaceLast = now;
+	m_worldSpaceSeen = true;
+    }
+
     // the control points this step (GH 0x140251f70 → 0x1402504f0). An instanceoverride `controlpointN` replaces the
     // offset unless the control point follows the pointer or has flags 0x10004; live, so a slider or script moves it
     // (P10). A scene-space point (bit 1, not control point 0) is turned into the system's space by the inverse of
@@ -2426,6 +2447,23 @@ glm::mat3 CParticle::localFromScene () const {
 const Object& CParticle::drawingObject () const {
     // a child draws where its top-level system draws
     return m_parentSystem != nullptr ? m_parentSystem->drawingObject () : this->getObject ();
+}
+
+glm::mat4 CParticle::systemMatrix () const {
+    // updateMatrices' model matrix without the parallax
+    glm::vec3 angles = m_particle.angles->value->getVec3 ();
+    angles.z = m_resolvedAngle;
+    glm::mat4 m = glm::translate (glm::mat4 (1.0f), m_transformedOrigin);
+    m = glm::rotate (m, -angles.z, glm::vec3 (0, 0, 1));
+    m = glm::rotate (m, angles.y, glm::vec3 (0, 1, 0));
+    m = glm::rotate (m, -angles.x, glm::vec3 (1, 0, 0));
+    glm::vec3 scale = m_resolvedScale;
+    for (int i = 0; i < 3; i++) {
+	if (std::abs (scale[i]) < 1e-6f) {
+	    scale[i] = 1e-6f;
+	}
+    }
+    return glm::scale (m, scale);
 }
 
 void CParticle::updateMatrices () {

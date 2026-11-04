@@ -193,6 +193,8 @@ protected:
     [[nodiscard]] bool childAlive () const;
     void stopEmitters ();
     /** from the scene's centred space to the system's: the inverse of its rotation and scale */
+    /** The system's model matrix without the parallax (world-space carry, flags bit 0) */
+    [[nodiscard]] glm::mat4 systemMatrix () const;
     [[nodiscard]] glm::mat3 localFromScene () const;
     /** the object whose target a system draws into (a child: its top-level system's) */
     [[nodiscard]] const Object& drawingObject () const;
@@ -393,6 +395,9 @@ private:
     static constexpr int ROPE_FLOATS_PER_VERTEX = 26;
 
     // Transformed origin (screen space to centered space conversion)
+    /** flags bit 0 (world space): the system's matrix at the last step */
+    glm::mat4 m_worldSpaceLast { 1.0f };
+    bool m_worldSpaceSeen = false;
     glm::vec3 m_transformedOrigin { 0.0f };
     glm::vec3 m_resolvedScale { 1.0f };
     float m_resolvedAngle { 0.0f };
