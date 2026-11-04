@@ -110,8 +110,10 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
 	// https://docs.wallpaperengine.io/en/scene/scenescript/reference/event/cursor.html same applies to effects
 	// TODO: create a dummy texture of correct size, fbo constructors should be enough, but this should be properly
 	// handled
+	// (a shape's picture is never sampled: DIRECTDRAW. 1 x 1, not its square of the scene's height)
+	const glm::vec2 dummy = isShape ? glm::vec2 (1.0f) : size;
 	this->m_texture = std::make_shared<CFBO> (
-	    "", TextureFormat_ARGB8888, TextureFlags_NoFlags, 1, size.x, size.y, size.x, size.y
+	    "", TextureFormat_ARGB8888, TextureFlags_NoFlags, 1, dummy.x, dummy.y, dummy.x, dummy.y
 	);
     }
 
