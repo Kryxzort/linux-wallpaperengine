@@ -43,9 +43,9 @@ MaterialPassUniquePtr MaterialParser::parsePass (const JSON& it, const Project& 
     const auto combos = it.optional ("combos");
     const auto constants = it.optional ("constantshadervalues");
 
-    return std::make_unique<MaterialPass> (MaterialPass {
-	// TODO: REMOVE THIS UGLY STD::STRING CREATION
-	.blending = parseBlendMode (it.optional ("blending", std::string ("normal"))),
+    const std::string blending = it.optional ("blending", std::string ("normal"));
+    auto pass = std::make_unique<MaterialPass> (MaterialPass {
+	.blending = parseBlendMode (blending),
 	.cullmode = parseCullMode (it.optional ("cullmode", std::string ("nocull"))),
 	.depthtest = parseDepthtestMode (it.optional ("depthtest", std::string ("disabled"))),
 	.depthwrite = parseDepthwriteMode (it.optional ("depthwrite", std::string ("disabled"))),
@@ -55,6 +55,18 @@ MaterialPassUniquePtr MaterialParser::parsePass (const JSON& it, const Project& 
 	.combos = combos.has_value () ? parseCombos (*combos) : ComboMap {},
 	.constants = constants.has_value () ? ShaderConstantParser::parse (*constants, project) : ShaderConstantMap {},
     });
+
+    // WE's material pass setup (GH 0x140183570) turns the blending into combos: `alphatocoverage` (3) sets
+    // ALPHATOCOVERAGE 1, `additive` (2) ADDITIVE 1. With ALPHATOCOVERAGE the stock shaders sharpen alpha and, on
+    // GLSL, discard below 0.5 (generic*.frag, genericimage*.frag, genericparticle.frag): a cutout drawn without
+    // blending
+    if (blending == "alphatocoverage") {
+	pass->combos["ALPHATOCOVERAGE"] = 1;
+    } else if (blending == "additive") {
+	pass->combos["ADDITIVE"] = 1;
+    }
+
+    return pass;
 }
 
 std::map<std::string, int> MaterialParser::parseCombos (const JSON& it) {
@@ -82,6 +94,11 @@ BlendingMode MaterialParser::parseBlendMode (const std::string& mode) {
 
     if (mode == "translucent") {
 	return BlendingMode_Translucent;
+    }
+
+    // alpha to coverage: no blending, the pass's ALPHATOCOVERAGE combo cuts the alpha (parsePass)
+    if (mode == "alphatocoverage") {
+	return BlendingMode_Normal;
     }
 
     sLog.error ("Unknown blending mode: ", mode, " defaulting to normal");
