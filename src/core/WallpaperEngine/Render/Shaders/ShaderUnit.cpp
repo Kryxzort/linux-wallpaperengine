@@ -164,6 +164,7 @@ void ShaderUnit::preprocessIncludes () {
 	// replace the first two letters with a comment so the filelength doesn't change
 	this->m_preprocessed = this->m_preprocessed.replace (start, 2, "//");
 
+
 	this->m_includes += content;
 
 	// go to the end of the line
@@ -495,6 +496,63 @@ std::string ShaderUnit::applyFragmentTexCoordCompatibility (std::string source) 
     return source;
 }
 
+std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const {
+    if (this->m_type != GLSLContext::UnitType_Fragment) {
+	return source;
+    }
+
+    static const std::regex declaration (
+	R"(\bvarying\s+((?:(?:lowp|mediump|highp|flat|smooth|noperspective)\s+)*[A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)"
+    );
+    static const std::regex mainOpen (R"(\bvoid\s+main\s*\(\s*(?:void)?\s*\)\s*\{)");
+    std::vector<std::pair<std::string, std::string>> written; // (type, name)
+
+    for (auto it = std::sregex_iterator (source.begin (), source.end (), declaration); it != std::sregex_iterator ();
+	 ++it) {
+	const std::string name = (*it)[2].str ();
+	// `name = …`, `name += …`, `name.xy *= …` (not `==`), or `name++` / `++name`
+	const std::regex assigned ("\\b" + name + "\\b(?:\\s*\\.\\s*[xyzwrgba]+)?\\s*(?:[-+*/]?=(?!=)|\\+\\+|--)|(?:\\+\\+|--)\\s*" + name + "\\b");
+	if (std::regex_search (source, assigned)) {
+	    // the type without its qualifiers
+	    std::string type = (*it)[1].str ();
+	    type = type.substr (type.find_last_of (" \t") == std::string::npos ? 0 : type.find_last_of (" \t") + 1);
+	    written.emplace_back (type, name);
+	}
+    }
+
+    std::smatch open;
+    if (written.empty () || !std::regex_search (source, open, mainOpen)) {
+	return source;
+    }
+
+    // every use after the declarations reads the copy; main starts by filling it
+    const size_t bodyAt = static_cast<size_t> (open.position () + open.length ());
+    std::string head = source.substr (0, bodyAt);
+    std::string body = source.substr (bodyAt);
+    std::string copies, fill;
+
+    for (const auto& [type, name] : written) {
+	const std::regex use ("\\b" + name + "\\b");
+	const std::regex decl ("\\bvarying\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+)+" + name + "\\s*;");
+	const std::string copy = "_wp_writable_" + name;
+	// keep the declaration (the vertex unit's output links by its name), the other uses go to the copy
+	std::string rebuilt;
+	size_t at = 0;
+	for (auto it = std::sregex_iterator (head.begin (), head.end (), decl); it != std::sregex_iterator (); ++it) {
+	    const size_t end = static_cast<size_t> (it->position () + it->length ());
+	    rebuilt += std::regex_replace (head.substr (at, it->position () - at), use, copy) + it->str ()
+		+ "\n" + type + " " + copy + ";";
+	    at = end;
+	}
+	head = rebuilt + std::regex_replace (head.substr (at), use, copy);
+	body = std::regex_replace (body, use, copy);
+	fill += "\n\t" + copy + " = " + name + ";";
+    }
+
+    sLog.out ("Copying the varyings the fragment unit of ", this->m_file, " writes to:", fill);
+    return head + fill + body;
+}
+
 void ShaderUnit::parseComboConfiguration (const std::string& content, const int defaultValue) {
     // TODO: SUPPORT REQUIRES SO WE PROPERLY FOLLOW THE REQUIRED CHAIN
     JSON data;
@@ -803,8 +861,8 @@ const std::string& ShaderUnit::compile () {
 
     // this should be the rest of the shader
     this->m_final
-	+= this->applyFragmentTexCoordCompatibility (this->applyFragmentVaryingDeclarations (
-	    this->applyLinkedVaryingCompatibility (this->m_preprocessed)
+	+= this->applyWritableFragmentVaryings (this->applyFragmentTexCoordCompatibility (
+	    this->applyFragmentVaryingDeclarations (this->applyLinkedVaryingCompatibility (this->m_preprocessed))
 	));
 
     // the pass itself handles shader compilation, the unit doesn't have enough information for this step

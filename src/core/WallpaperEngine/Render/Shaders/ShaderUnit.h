@@ -105,6 +105,11 @@ private:
      */
     [[nodiscard]] std::string applyFragmentTexCoordCompatibility (std::string source) const;
     /**
+     * A fragment unit that assigns to one of its varyings (HLSL lets a shader change its inputs; GLSL's are
+     * read-only) works on a copy of it: a global taken from the varying at the top of main
+     */
+    [[nodiscard]] std::string applyWritableFragmentVaryings (std::string source) const;
+    /**
      * A fragment unit that reads a varying only its vertex unit declares gets the declaration (WE compiles such
      * shaders: the packaged foliagesway reads `v_Bounds`, declared in its vertex unit only)
      */
