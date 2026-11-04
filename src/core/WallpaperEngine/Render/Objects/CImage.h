@@ -11,6 +11,7 @@
 
 #include "../TextureProvider.h"
 #include "WallpaperEngine/Scripting/ScriptableObject.h"
+#include "Puppet.h"
 
 #include <glm/vec3.hpp>
 
@@ -66,6 +67,13 @@ public:
      */
     void pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::shared_ptr<const TextureProvider>* asInput);
 
+    /**
+     * A puppet attachment's place in this layer at the current pose: its offset from the layer's origin in the
+     * layer's own pixels (y up, before the layer's scale and angle) and its z angle. False when there's none by that
+     * name (G09; the attachment is the bone's posed world · the MDAT matrix)
+     */
+    [[nodiscard]] bool attachmentTransform (const std::string& name, glm::vec2& offset, float& angle);
+
 protected:
     /**
      * Gives the layer a new size: its composite FBOs and its effects' FBOs (at their scale) are resized in place, so the
@@ -96,7 +104,14 @@ protected:
 private:
     bool loadPuppetMesh (const glm::vec2& size);
     void updatePuppetPositionBuffer (const glm::vec2& size);
-    void setupPuppetGeometryCallback (Effects::CPass* pass) const;
+    /** Poses the puppet for the scene's current time (once per time): advances the layers' clocks, mixes them and
+     *  skins the mesh */
+    void updatePuppetPose ();
+    /** autosize: the canvas grown (symmetrically) to hold the mesh in every frame of every animation */
+    [[nodiscard]] glm::vec2 puppetCanvasSize (const glm::vec2& size) const;
+    /** `toScene`: the pass draws to the scene (no effects), with the mesh in the layer's scene rectangle */
+    void setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) const;
+    void updatePuppetScenePositionBuffer ();
     ResolvedTransform updateGeometryBuffers ();
     [[nodiscard]] glm::vec2 resolveGeometrySize (float sceneWidth, float sceneHeight, glm::vec3& origin) const;
     void updateScenePosition (
@@ -116,11 +131,26 @@ private:
     GLuint m_texcoordCopy;
     GLuint m_texcoordPass;
     GLuint m_puppetSpacePosition = GL_NONE;
+    GLuint m_puppetScenePosition = GL_NONE;
     GLuint m_puppetTexCoord = GL_NONE;
     GLuint m_puppetIndices = GL_NONE;
     GLsizei m_puppetIndexCount = 0;
     bool m_hasPuppetMesh = false;
+    /** the puppet's vertices (every mesh's, in order), as posed last; y up, centred */
     std::vector<GLfloat> m_puppetRawPositions = {};
+    std::vector<Puppet::Vertex> m_puppetVertices = {};
+    Puppet::Model m_puppet = {};
+    std::vector<Puppet::Key> m_puppetBind = {};
+    std::vector<glm::mat4> m_puppetBindWorldInverse = {};
+    std::vector<glm::mat4> m_puppetWorld = {};
+    struct PuppetLayerState {
+	Puppet::Clock clock;
+	bool blendIn = false;
+    };
+    std::vector<PuppetLayerState> m_puppetLayers = {};
+    float m_puppetPoseTime = -1.0f;
+    bool m_puppetSkinned = false;
+    glm::vec2 m_puppetSize = glm::vec2 (0.0f);
 
     glm::mat4 m_modelViewProjectionScreen = {};
     glm::mat4 m_modelViewProjectionPass = {};

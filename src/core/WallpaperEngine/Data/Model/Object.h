@@ -41,6 +41,10 @@ struct ObjectData {
     /** `solid` (default true): the object receives cursor events (WE's docs: "All mouse cursor events will only work on
      *  objects marked as Solid") */
     bool solid = true;
+    /** `attachment`: the name of a parent puppet's attachment (MDAT) the object is pinned to; its origin, scale and
+     *  angle are then in the attachment's space, which follows its bone (GH 0x14020be30 looks it up by name, the
+     *  world transform GH 0x1401b5170 applies it under the parent's) */
+    std::optional<std::string> attachment = std::nullopt;
 };
 
 /**
@@ -103,6 +107,12 @@ struct ImageAnimationLayer {
     UserSettingUniquePtr visible;
     UserSettingUniquePtr blend;
     UserSettingUniquePtr animation;
+    /** The layer's reflected fields (GH 0x140292030; defaults from the constructor GH 0x140291d20): flags +0xd0 bit 0
+     *  visible (default on), bit 1 additive, bit 2 blendin, bit 3 blendout; blendtime +0x18c (0.5) */
+    bool additive = false;
+    bool blendIn = false;
+    bool blendOut = false;
+    float blendTime = 0.5f;
 };
 
 struct ImageData {

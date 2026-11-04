@@ -52,6 +52,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	    .solid = it.optional ("solid", true),
+	    .attachment = it.optional<std::string> ("attachment"),
 	};
     } catch (const std::exception& e) {
 	sLog.error ("Error parsing object base data: ", e.what ());
@@ -78,6 +79,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	    .groupParallaxDepth = it.user ("parallaxDepth", project.properties, glm::vec2 (1.0f)),
 	    .cameraZoom = isCamera ? it.user ("zoom", project.properties, 1.0f) : nullptr,
 	    .solid = it.optional ("solid", true),
+	    .attachment = it.optional<std::string> ("attachment"),
 	};
     }
 
@@ -369,9 +371,14 @@ ImageAnimationLayerUniquePtr ObjectParser::parseAnimationLayer (const JSON& it, 
     return std::make_unique<ImageAnimationLayer> (ImageAnimationLayer {
 	.id = it.require<int> ("id", "Animation layer must have an id"),
 	.rate = it.user ("rate", properties, 1.0f),
-	.visible = it.user ("visible", properties, false),
+	// WE's layer starts visible (flags 1, GH 0x140291d20)
+	.visible = it.user ("visible", properties, true),
 	.blend = it.user ("blend", properties, 1.0f),
 	.animation = it.user ("animation", properties, 0),
+	.additive = it.optional ("additive", false),
+	.blendIn = it.optional ("blendin", false),
+	.blendOut = it.optional ("blendout", false),
+	.blendTime = it.optional ("blendtime", 0.5f),
     });
 }
 
