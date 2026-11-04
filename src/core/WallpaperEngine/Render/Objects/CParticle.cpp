@@ -2835,9 +2835,7 @@ void CParticle::renderRope () {
     // compaction in update(). All particles in [0, m_particleCount) are alive.
     const uint32_t aliveCount = m_particleCount;
 
-    // Build vertex data with Catmull-Rom spline subdivision.
-    // Each segment between consecutive particles is subdivided into m_ropeSubdivision
-    // sub-segments for smooth curves instead of harsh corners at particle positions.
+    // Build vertex data with WE's rope spline, subdivided into ropeSubSegments () pieces per segment.
     //
     // Rope vertex layout (26 floats per vertex, THICKFORMAT):
     // [0-3]   a_PositionVec4:   startPos.xyz, sizeStart
@@ -2851,13 +2849,15 @@ void CParticle::renderRope () {
     const uint32_t numSegments = aliveCount - 1;
     const int subdivision = this->ropeSubSegments ();
 
-    // Catmull-Rom spline evaluation
-    auto catmullRom = [] (const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3,
+    // WE's rope segment b -> c (GH 0x140255e50 writes b, c and the neighbours a / d as CP0 / CP1, clamped to the
+    // segment's own ends) is the bezier genericropeparticle.vert builds: inner points b + 0.15 (c - a) and
+    // c + 0.15 (b - d). Uniform Catmull-Rom (what LWE had) is the same bezier with 1/6
+    auto ropeBezier = [] (const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3,
 			  float t) -> glm::vec3 {
-	float t2 = t * t, t3 = t2 * t;
-	return 0.5f
-	    * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2
-	       + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+	const glm::vec3 c1 = p1 + 0.15f * (p2 - p0);
+	const glm::vec3 c2 = p2 + 0.15f * (p1 - p3);
+	const float u = 1.0f - t;
+	return u * u * u * p1 + 3.0f * u * u * t * c1 + 3.0f * u * t * t * c2 + t * t * t * p2;
     };
 
     // First pass: evaluate spline to get all interpolated points
@@ -2877,7 +2877,7 @@ void CParticle::renderRope () {
 	    float t = static_cast<float> (k) / static_cast<float> (subdivision);
 	    uint32_t idx = i * subdivision + k;
 
-	    splinePositions[idx] = catmullRom (p0.position, p1.position, p2.position, p3.position, t);
+	    splinePositions[idx] = ropeBezier (p0.position, p1.position, p2.position, p3.position, t);
 	    splineSizes[idx] = glm::mix (p1.size, p2.size, t);
 	    splineColors[idx] = glm::mix (glm::vec4 (p1.color, p1.alpha), glm::vec4 (p2.color, p2.alpha), t);
 	}
