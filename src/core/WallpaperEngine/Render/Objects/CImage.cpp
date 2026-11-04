@@ -1,5 +1,9 @@
 #include "CImage.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+#undef GLM_ENABLE_EXPERIMENTAL
+
 #include <algorithm>
 #include <cmath>
 
@@ -12,6 +16,7 @@
 
 #include "WallpaperEngine/Data/Model/Material.h"
 #include "WallpaperEngine/Data/Model/Object.h"
+#include "WallpaperEngine/Data/Model/UserSetting.h"
 #include "WallpaperEngine/Data/Parsers/MaterialParser.h"
 #include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
@@ -124,6 +129,22 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     }
     // the puppet first: with autosize its canvas grows to hold the posed mesh, which sizes the quad and the FBOs
     this->m_hasPuppetMesh = this->loadPuppetMesh (size);
+
+    // scripts on an animation layer's rate / visible / blend run like a layer property's; thisObject is that
+    // IAnimationLayer (3363252053 starts its sway layers at an offset from them)
+    for (const auto& state : this->m_puppetLayers) {
+	const std::pair<const char*, const UserSettingUniquePtr*> values[] = {
+	    { "rate", &state.layer->rate }, { "visible", &state.layer->visible }, { "blend", &state.layer->blend }
+	};
+	for (const auto& [name, setting] : values) {
+	    if (*setting != nullptr && (*setting)->value->getScriptSource ().has_value ()) {
+		this->getScene ().getScriptEngine ().queueScript (
+		    "animationlayer_" + std::to_string (state.layer->id) + "_" + name + "_" + std::to_string (this->getId ()),
+		    *(*setting)->value, *this, nullptr, state.key
+		);
+	    }
+	}
+    }
     if (this->m_hasPuppetMesh) {
 	size = this->m_puppetSize;
     }
@@ -381,9 +402,10 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	for (auto& m : this->m_puppetBindWorldInverse) {
 	    m = glm::inverse (m);
 	}
-	this->m_puppetLayers.assign (this->getImage ().animationLayers.size (), {});
-	for (size_t i = 0; i < this->m_puppetLayers.size (); i++) {
-	    this->m_puppetLayers[i].blendIn = this->getImage ().animationLayers[i]->blendIn;
+	this->m_puppetLayers.clear ();
+	for (const auto& layer : this->getImage ().animationLayers) {
+	    this->m_puppetLayers.push_back ({ .blendIn = layer->blendIn, .layer = layer.get (),
+					      .key = this->m_nextAnimationLayerKey++, .name = layer->name });
 	}
 	this->m_puppetSkinned = !this->m_puppet.bones.empty () && !this->m_puppet.animations.empty ();
 
@@ -448,31 +470,44 @@ void CImage::updatePuppetPose () {
 	return;
     }
     const float now = static_cast<float> (this->getScene ().getTime ());
-    if (now == this->m_puppetPoseTime) {
+    if (now == this->m_puppetPoseTime && !this->m_puppetPoseDirty) {
 	return;
     }
     const float dt = this->m_puppetPoseTime < 0.0f ? 0.0f : std::max (now - this->m_puppetPoseTime, 0.0f);
     this->m_puppetPoseTime = now;
+    this->m_puppetPoseDirty = false;
 
     // GH 0x140228470: from the bind pose, every visible layer in order; its clock runs at dt · rate
     std::vector<Puppet::Key> pose = this->m_puppetBind;
-    const auto& layers = this->getImage ().animationLayers;
-    for (size_t i = 0; i < layers.size () && i < this->m_puppetLayers.size (); i++) {
-	const auto& layer = *layers[i];
-	const auto id = static_cast<uint32_t> (layer.animation->value->getInt ());
-	const auto match = std::find_if (this->m_puppet.animations.begin (), this->m_puppet.animations.end (),
-					 [id] (const Puppet::Animation& a) { return a.id == id; });
-	if (match == this->m_puppet.animations.end ()) {
+    for (auto& state : this->m_puppetLayers) {
+	const auto& layer = *state.layer;
+	const auto* match = this->puppetAnimationOf (state);
+	if (match == nullptr) {
 	    continue;
 	}
-	auto& state = this->m_puppetLayers[i];
 	if (!layer.visible->value->getBool ()) {
 	    continue;
 	}
-	Puppet::advance (*match, state.clock, dt * layer.rate->value->getFloat ());
+	if (state.playing) {
+	    Puppet::advance (*match, state.clock, dt * layer.rate->value->getFloat (),
+			     state.single ? Puppet::Mode::Single : match->mode);
+	}
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);
 	Puppet::mix (pose, this->m_puppetBind, *match, state.clock.time, weight, layer.additive);
+    }
+    // a single animation that played is removed (playSingleAnimation)
+    std::erase_if (this->m_puppetLayers, [] (const PuppetLayerState& state) { return state.single && state.clock.finished; });
+
+    this->m_puppetPose = pose;
+    // a script's bone poses (setLocalBoneTransform …) over the animations'
+    for (const auto& [bone, local] : this->m_boneOverrides) {
+	if (bone < 0 || static_cast<size_t> (bone) >= pose.size ()) {
+	    continue;
+	}
+	glm::vec3 skew;
+	glm::vec4 perspective;
+	glm::decompose (local, pose[bone].scale, pose[bone].rotation, pose[bone].position, skew, perspective);
     }
 
     Puppet::worldMatrices (this->m_puppet, pose, this->m_puppetWorld);
@@ -510,6 +545,76 @@ bool CImage::attachmentTransform (const std::string& name, glm::vec2& offset, fl
 	return true;
     }
     return false;
+}
+
+CImage::PuppetLayerState* CImage::findPuppetLayer (int key) {
+    const auto it = std::ranges::find_if (this->m_puppetLayers, [key] (const PuppetLayerState& s) { return s.key == key; });
+    return it == this->m_puppetLayers.end () ? nullptr : &*it;
+}
+
+const Puppet::Animation* CImage::puppetAnimationOf (const PuppetLayerState& state) const {
+    const auto id = static_cast<uint32_t> (state.layer->animation->value->getInt ());
+    const auto match = std::ranges::find_if (this->m_puppet.animations, [id] (const Puppet::Animation& a) { return a.id == id; });
+    return match == this->m_puppet.animations.end () ? nullptr : &*match;
+}
+
+int CImage::createPuppetLayer (const std::string& name, int id, bool single) {
+    const auto match = std::ranges::find_if (this->m_puppet.animations, [&] (const Puppet::Animation& a) {
+	return name.empty () ? static_cast<int> (a.id) == id : a.name == name;
+    });
+    if (!this->m_puppetSkinned || match == this->m_puppet.animations.end ()) {
+	return -1;
+    }
+    // its settings as a scene's layer would have them: rate 1, visible, blend 1
+    auto layer = std::make_unique<ImageAnimationLayer> (ImageAnimationLayer {
+	.id = -1,
+	.name = match->name,
+	.rate = std::make_unique<UserSetting> (UserSetting { .value = std::make_unique<DynamicValue> (1.0f) }),
+	.visible = std::make_unique<UserSetting> (UserSetting { .value = std::make_unique<DynamicValue> (true) }),
+	.blend = std::make_unique<UserSetting> (UserSetting { .value = std::make_unique<DynamicValue> (1.0f) }),
+	.animation = std::make_unique<UserSetting> (
+	    UserSetting { .value = std::make_unique<DynamicValue> (static_cast<int> (match->id)) }
+	),
+    });
+    const int key = this->m_nextAnimationLayerKey++;
+    this->m_puppetLayers.push_back ({ .layer = layer.get (), .key = key, .name = match->name, .single = single });
+    this->m_createdAnimationLayers.push_back (std::move (layer));
+    return key;
+}
+
+bool CImage::destroyPuppetLayer (int key) {
+    return std::erase_if (this->m_puppetLayers, [key] (const PuppetLayerState& s) { return s.key == key; }) > 0;
+}
+
+void CImage::puppetBonePose (std::vector<glm::mat4>& local, std::vector<glm::mat4>& world) {
+    this->updatePuppetPose ();
+    const auto& bones = this->m_puppet.bones;
+    local.assign (bones.size (), glm::mat4 (1.0f));
+    for (size_t b = 0; b < bones.size (); b++) {
+	if (const auto it = this->m_boneOverrides.find (static_cast<int> (b)); it != this->m_boneOverrides.end ()) {
+	    local[b] = it->second;
+	} else if (b < this->m_puppetPose.size ()) {
+	    const auto& key = this->m_puppetPose[b];
+	    local[b] = glm::translate (glm::mat4 (1.0f), key.position) * glm::mat4_cast (key.rotation)
+		* glm::scale (glm::mat4 (1.0f), key.scale);
+	} else {
+	    local[b] = bones[b].local;
+	}
+    }
+    world.assign (bones.size (), glm::mat4 (1.0f));
+    for (size_t b = 0; b < bones.size (); b++) {
+	const int parent = bones[b].parent;
+	world[b] = parent >= 0 && static_cast<size_t> (parent) < b ? world[parent] * local[b] : local[b];
+    }
+}
+
+void CImage::setBoneOverride (int bone, const std::optional<glm::mat4>& local) {
+    if (local.has_value ()) {
+	this->m_boneOverrides[bone] = *local;
+    } else {
+	this->m_boneOverrides.erase (bone);
+    }
+    this->m_puppetPoseDirty = true;
 }
 
 std::vector<std::string> CImage::attachmentNames () const {

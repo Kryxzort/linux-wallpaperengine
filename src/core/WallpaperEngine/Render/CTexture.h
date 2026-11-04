@@ -59,6 +59,7 @@ public:
      */
     void update () const override;
     bool isReady () const override;
+    [[nodiscard]] GLPlayer* getVideoPlayer () const override { return this->m_player.get (); }
 
 private:
     /**

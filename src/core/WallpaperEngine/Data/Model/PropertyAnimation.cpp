@@ -159,6 +159,22 @@ int PropertyAnimation::getLength () const { return this->m_length; }
 
 float PropertyAnimation::getFps () const { return 1.0f / this->m_secondsPerFrame; }
 
+void PropertyAnimation::collectEvents (float from, float to) {
+    for (const auto& event : this->m_events) {
+	const float at = static_cast<float> (event.frame) * this->m_secondsPerFrame;
+	// a frame is passed once: from its time (the start of a span) up to, not including, the next span's start
+	if (at >= from && (at < to || (to >= this->m_duration && at <= to))) {
+	    this->m_fired.emplace_back (event.name, event.frame);
+	}
+    }
+}
+
+std::vector<std::pair<std::string, int>> PropertyAnimation::takeFiredEvents () {
+    std::vector<std::pair<std::string, int>> fired;
+    fired.swap (this->m_fired);
+    return fired;
+}
+
 void PropertyAnimation::advance (float dt) {
     if ((this->m_flags & (StartPaused | Finished)) != 0) {
 	return;
@@ -169,12 +185,35 @@ void PropertyAnimation::advance (float dt) {
     if (this->m_duration <= 0.0f) {
 	return;
     }
-    if ((this->m_flags & Reverse) != 0) {
+    const float before = this->m_time;
+    const bool backwards = (this->m_flags & Reverse) != 0;
+    if (backwards) {
 	dt = -dt;
     }
 
     const float t = this->m_time + dt;
     this->m_time = t;
+
+    // the events the timeline passes (animationEvent): forwards [before, t), a loop's wrap in two spans, a mirror's
+    // way back (t, before]
+    if (!this->m_events.empty () && dt != 0.0f) {
+	const float d = this->m_duration;
+	if (!backwards) {
+	    if (t < d || (this->m_flags & (Single | Mirror)) != 0) {
+		this->collectEvents (before, std::min (t, d));
+	    } else {
+		this->collectEvents (before, d);
+		this->collectEvents (0.0f, std::fmod (t, d));
+	    }
+	} else {
+	    for (const auto& event : this->m_events) {
+		const float at = static_cast<float> (event.frame) * this->m_secondsPerFrame;
+		if (at <= before && at > std::max (t, 0.0f)) {
+		    this->m_fired.emplace_back (event.name, event.frame);
+		}
+	    }
+	}
+    }
 
     if ((this->m_flags & Single) != 0) {
 	if (t >= this->m_duration) {

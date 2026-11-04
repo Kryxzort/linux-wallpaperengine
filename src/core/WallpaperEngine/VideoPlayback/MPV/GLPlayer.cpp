@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <string>
 #include "GLPlayer.h"
 
 #include "WallpaperEngine/Context.h"
@@ -123,10 +125,77 @@ void GLPlayer::clearPaused () {
     }
 }
 
+double GLPlayer::getDuration () const {
+    double value = 0.0;
+    if (this->m_handle == nullptr || mpv_get_property (this->m_handle, "duration", MPV_FORMAT_DOUBLE, &value) < 0) {
+	return 0.0;
+    }
+    return value;
+}
+
+double GLPlayer::getTime () const {
+    // a seek not done yet (mpv hasn't loaded the video, or is still seeking this frame): where it will be
+    if (this->m_pendingSeek.has_value ()) {
+	return *this->m_pendingSeek;
+    }
+    if (this->m_seekTarget.has_value ()) {
+	return *this->m_seekTarget;
+    }
+    double value = 0.0;
+    if (this->m_handle == nullptr || mpv_get_property (this->m_handle, "time-pos", MPV_FORMAT_DOUBLE, &value) < 0) {
+	return 0.0;
+    }
+    return value;
+}
+
+void GLPlayer::seek (double seconds) {
+    seconds = std::max (seconds, 0.0);
+    double position = 0.0;
+    // mpv seeks only a loaded video: until then the seek waits (render () does it)
+    if (this->m_handle == nullptr || mpv_get_property (this->m_handle, "time-pos", MPV_FORMAT_DOUBLE, &position) < 0) {
+	this->m_pendingSeek = seconds;
+	return;
+    }
+    this->m_pendingSeek = std::nullopt;
+    this->m_seekTarget = seconds;
+    const std::string at = std::to_string (seconds);
+    const char* command[] = { "seek", at.c_str (), "absolute+exact", nullptr };
+    mpv_command (this->m_handle, command);
+}
+
+void GLPlayer::setRate (double rate) {
+    // mpv's speed range
+    this->m_rate = std::clamp (rate, 0.01, 100.0);
+    if (this->m_handle) {
+	mpv_set_property (this->m_handle, "speed", MPV_FORMAT_DOUBLE, &this->m_rate);
+    }
+}
+
+void GLPlayer::setLoop (bool loop) {
+    this->m_loop = loop;
+    if (this->m_handle) {
+	mpv_set_property_string (this->m_handle, "loop", loop ? "inf" : "no");
+    }
+}
+
+bool GLPlayer::reachedEnd () const {
+    int flag = 0;
+    if (this->m_handle == nullptr || mpv_get_property (this->m_handle, "eof-reached", MPV_FORMAT_FLAG, &flag) < 0) {
+	return false;
+    }
+    return flag != 0;
+}
+
 void GLPlayer::render () const {
     // rendering should only happen if the texture is in use
     if (this->m_handle == nullptr) {
 	return;
+    }
+    // a seek issued last frame is mpv's to report now
+    const_cast<GLPlayer*> (this)->m_seekTarget = std::nullopt;
+    // a script's seek from before mpv had the video loaded
+    if (this->m_pendingSeek.has_value ()) {
+	const_cast<GLPlayer*> (this)->seek (*this->m_pendingSeek);
     }
 
     // read all the events available
@@ -238,7 +307,10 @@ void GLPlayer::init () {
 
     // ensure video is muted and plays in a loop
     mpv_set_property_string (this->m_handle, "hwdec", "auto");
-    mpv_set_property_string (this->m_handle, "loop", "inf");
+    mpv_set_property_string (this->m_handle, "loop", this->m_loop ? "inf" : "no");
+    // at the end of a video that doesn't loop, stay on its last frame (IVideoTexture's ended callback)
+    mpv_set_property_string (this->m_handle, "keep-open", "yes");
+    mpv_set_property (this->m_handle, "speed", MPV_FORMAT_DOUBLE, &this->m_rate);
     mpv_set_property (this->m_handle, "volume", MPV_FORMAT_DOUBLE, &this->m_volume);
 
     // initialize gl context for mpv

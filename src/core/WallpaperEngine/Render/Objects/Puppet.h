@@ -96,6 +96,8 @@ struct Clock {
     float time = 0.0f;
     bool reversed = false;
     bool finished = false;
+    /** how often the animation reached its end (a loop's wrap, a mirror's turn at the end, a single's finish) */
+    uint32_t ends = 0;
 };
 
 /** The animation's length in seconds: frames / fps */
@@ -103,6 +105,8 @@ float length (const Animation& animation);
 
 /** Advances the clock by dt (already × the layer's rate): loop wraps, mirror bounces, single stops (GH 0x1401d6a00) */
 void advance (const Animation& animation, Clock& clock, float dt);
+/** advance, in `mode` instead of the animation's own (SceneScript's playSingleAnimation plays one once) */
+void advance (const Animation& animation, Clock& clock, float dt, Mode mode);
 
 /**
  * The layer's weight (GH 0x140291f60): blend, × the blend-in ramp t / min (length / 2, blendtime) while `blendIn`

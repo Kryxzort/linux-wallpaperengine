@@ -50,6 +50,21 @@ public:
 
     void render () const;
 
+    // SceneScript's IVideoTexture (a layer's video): the player's state and controls. Before mpv runs (nothing
+    // draws the video yet) they keep the state it starts with
+    [[nodiscard]] bool isPaused () const { return this->m_paused; }
+    /** the video's length in seconds (0 until mpv knows it) */
+    [[nodiscard]] double getDuration () const;
+    /** where the video is, in seconds */
+    [[nodiscard]] double getTime () const;
+    void seek (double seconds);
+    [[nodiscard]] double getRate () const { return this->m_rate; }
+    void setRate (double rate);
+    [[nodiscard]] bool getLoop () const { return this->m_loop; }
+    void setLoop (bool loop);
+    /** mpv reached the end of a video that doesn't loop (cleared by a seek) */
+    [[nodiscard]] bool reachedEnd () const;
+
     int getWidth () const;
     int getHeight () const;
 
@@ -73,6 +88,12 @@ protected:
     bool m_muted = false;
     bool m_untimed = false;
     bool m_paused = false;
+    double m_rate = 1.0;
+    bool m_loop = true;
+    /** a seek asked for before mpv ran */
+    std::optional<double> m_pendingSeek = std::nullopt;
+    /** a seek issued this frame: getTime reports it until mpv does (the next render) */
+    std::optional<double> m_seekTarget = std::nullopt;
     std::optional<std::filesystem::path> m_file;
     std::optional<MemoryStreamProtocolUniquePtr> m_stream;
     uint32_t m_usageCount = 0;

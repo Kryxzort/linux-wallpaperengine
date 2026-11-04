@@ -471,6 +471,11 @@ void CScene::updateHDRBloom () {
 bool CScene::rendersHDR () const { return this->m_hdr; }
 
 CScene::~CScene () {
+    // destroy () before the objects go ("called just before the object it belongs to gets destroyed")
+    if (this->m_scriptEngine != nullptr) {
+	this->m_scriptEngine->dispatchEvent ("destroy", JS_UNDEFINED);
+    }
+
     // bloom object is in the objects list, so no need to explicitly delete it
     this->m_bloomObject = nullptr;
 
@@ -637,6 +642,11 @@ void CScene::advanceAnimations () {
 
 	animation->advance (dt);
 	animation->apply (*value);
+
+	// the events it passed reach the property's script (animationEvent)
+	if (auto fired = animation->takeFiredEvents (); !fired.empty ()) {
+	    this->m_scriptEngine->animationEvents (*value, fired);
+	}
     }
 }
 Camera& CScene::getCamera () const { return *this->m_camera; }
@@ -705,6 +715,10 @@ void CScene::renderFrame () {
     glColorMask (true, true, true, true);
     // (a pass leaves depth writes off: the clear needs them)
     glDepthMask (GL_TRUE);
+    // the clear colour every frame: a video texture's player (mpv) leaves its own behind, and a script may change it
+    // (IScene.clearcolor)
+    const glm::vec3 clearColor = this->getScene ().colors.clear->value->getVec3 ();
+    glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // a 3D scene's lights for this frame (the models' shading reads them)
@@ -1382,6 +1396,9 @@ bool CScene::destroyLayer (CObject* layer) {
     }
     if (auto* sound = layer->asOrNull<Objects::CSound> ()) {
 	sound->stop ();
+    }
+    if (const auto* scriptable = layer->asOrNull<Scripting::ScriptableObject> ()) {
+	this->m_scriptEngine->dispatchEvent ("destroy", JS_UNDEFINED, scriptable);
     }
     this->m_destroyed.push_back (layer);
     return true;

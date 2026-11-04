@@ -1,4 +1,6 @@
 #pragma once
+#include <map>
+#include <optional>
 
 #include <optional>
 
@@ -89,6 +91,40 @@ public:
     /** IImageLayer.alignment from a script: where the quad sits on the origin, from the next frame */
     void setAlignment (const std::string& alignment);
 
+    /** One puppet animation layer as it plays (SceneScript's IAnimationLayer) */
+    struct PuppetLayerState {
+	Puppet::Clock clock;
+	bool blendIn = false;
+	/** its settings: rate, visible, blend, the animation (the scene's, or one a script created) */
+	const ImageAnimationLayer* layer = nullptr;
+	/** the scripts' handle on it (stays while layers before it go) */
+	int key = 0;
+	std::string name;
+	/** pause () / stop () hold the clock */
+	bool playing = true;
+	/** playSingleAnimation: plays once, then the layer is removed */
+	bool single = false;
+    };
+    /** the puppet's animation layers in order (none without a skinned puppet) */
+    [[nodiscard]] std::vector<PuppetLayerState>& getPuppetLayers () { return this->m_puppetLayers; }
+    [[nodiscard]] PuppetLayerState* findPuppetLayer (int key);
+    /** the animation a layer plays, nullptr if the puppet has none of that id */
+    [[nodiscard]] const Puppet::Animation* puppetAnimationOf (const PuppetLayerState& state) const;
+    /**
+     * createAnimationLayer / playSingleAnimation: a new layer, last, playing the puppet animation named `name` (or of
+     * that id), rate/blend 1, visible. Its key, or -1 when the puppet has no such animation
+     */
+    int createPuppetLayer (const std::string& name, int id, bool single);
+    bool destroyPuppetLayer (int key);
+    /** The puppet's bones (none without a puppet) */
+    [[nodiscard]] const std::vector<Puppet::Bone>& getPuppetBones () const { return this->m_puppet.bones; }
+    /** The posed bones now: local (the pose with the overrides) and world (in the mesh's space: centred, y up) */
+    void puppetBonePose (std::vector<glm::mat4>& local, std::vector<glm::mat4>& world);
+    /** A script's local matrix for a bone, over what the animations pose (nullopt: back to the animations) */
+    void setBoneOverride (int bone, const std::optional<glm::mat4>& local);
+    /** a script changed an animation layer (its frame, its blend): the pose follows now */
+    void puppetPoseChanged () { this->m_puppetPoseDirty = true; }
+
 protected:
     /**
      * Gives the layer a new size: its composite FBOs and its effects' FBOs (at their scale) are resized in place, so the
@@ -162,12 +198,17 @@ private:
     std::vector<Puppet::Key> m_puppetBind = {};
     std::vector<glm::mat4> m_puppetBindWorldInverse = {};
     std::vector<glm::mat4> m_puppetWorld = {};
-    struct PuppetLayerState {
-	Puppet::Clock clock;
-	bool blendIn = false;
-    };
     std::vector<PuppetLayerState> m_puppetLayers = {};
+    /** animation layers scripts created (createAnimationLayer, playSingleAnimation) */
+    std::vector<std::unique_ptr<ImageAnimationLayer>> m_createdAnimationLayers = {};
+    int m_nextAnimationLayerKey = 0;
+    /** the pose mixed last (local, per bone), before the bone overrides */
+    std::vector<Puppet::Key> m_puppetPose = {};
+    /** bone poses a script set (setLocalBoneTransform …): the bone's local matrix, over the animations */
+    std::map<int, glm::mat4> m_boneOverrides = {};
     float m_puppetPoseTime = -1.0f;
+    /** a script changed a layer or a bone: pose again this frame (with no time passing) */
+    bool m_puppetPoseDirty = false;
     bool m_puppetSkinned = false;
     glm::vec2 m_puppetSize = glm::vec2 (0.0f);
 

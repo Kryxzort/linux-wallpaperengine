@@ -191,7 +191,162 @@ globalThis.__layerMethods = (function () {
   // the rotation (degrees) whose −z axis points from `from` to `to`, `up` up (Mat4.lookAt is a view matrix: its
   // transpose turns the layer)
   const facing = (from, to, up) => mat(Mat4.lookAt(from, to, up || new Vec3(0, 1, 0)).m).transpose().extractEuler();
+  // IAnimationLayer: one puppet animation layer of an image layer (natives __animLayers / __animLayerSet)
+  const ended = [];
+  class IAnimationLayer {
+    constructor(layer, key) {
+      Object.defineProperty(this, '__layer', { value: layer });
+      Object.defineProperty(this, '__key', { value: key });
+    }
+    get __info() { return this.__layer.__animLayers().find((a) => a.key === this.__key); }
+    get fps() { const i = this.__info; return i ? i.fps : 0; }
+    get frameCount() { const i = this.__info; return i ? i.frames : 0; }
+    get duration() { const i = this.__info; return i && i.fps > 0 ? i.frames / i.fps : 0; }
+    get name() { const i = this.__info; return i ? i.name : ''; }
+    set name(v) { this.__layer.__animLayerSet(this.__key, 'name', String(v)); }
+    get rate() { const i = this.__info; return i ? i.rate : 0; }
+    set rate(v) { this.__layer.__animLayerSet(this.__key, 'rate', +v); }
+    get blend() { const i = this.__info; return i ? i.blend : 0; }
+    set blend(v) { this.__layer.__animLayerSet(this.__key, 'blend', +v); }
+    get visible() { const i = this.__info; return i ? i.visible : false; }
+    set visible(v) { this.__layer.__animLayerSet(this.__key, 'visible', !!v); }
+    play() { this.__layer.__animLayerSet(this.__key, 'playing', true); }
+    pause() { this.__layer.__animLayerSet(this.__key, 'playing', false); }
+    // "stop the animation and reset the current time to zero"
+    stop() { this.__layer.__animLayerSet(this.__key, 'stop'); }
+    isPlaying() { const i = this.__info; return i ? i.playing : false; }
+    getFrame() { const i = this.__info; return i ? Math.floor(i.time * i.fps + 1e-4) : 0; }
+    setFrame(frame) { const i = this.__info; if (i && i.fps > 0) { this.__layer.__animLayerSet(this.__key, 'time', frame / i.fps); } }
+    // "fired every time the animation layer reaches the end"
+    addEndedCallback(callback) {
+      if (typeof callback !== 'function') { return; }
+      const i = this.__info;
+      ended.push({ layer: this, callback, seen: i ? i.ends : 0 });
+    }
+  }
+  globalThis.IAnimationLayer = IAnimationLayer;
+  // thisObject of a script on an animation layer's value (ScriptEngine::evaluateModule)
+  globalThis.__animationLayerOf = (layer, key) => animationLayer(layer, key);
+  const animationLayer = (layer, key) => {
+    let cache = layer.__animationLayers;
+    if (cache === undefined) {
+      cache = new Map();
+      layer.__animationLayers = cache;
+    }
+    if (!cache.has(key)) { cache.set(key, new IAnimationLayer(layer, key)); }
+    return cache.get(key);
+  };
+  // createAnimationLayer's config: rate, blend, visible, name (WE: "see IAnimationLayer for config options")
+  const configure = (anim, config) => {
+    if (config === null || typeof config !== 'object') { return; }
+    for (const key of ['rate', 'blend', 'visible', 'name']) {
+      if (config[key] !== undefined) { anim[key] = config[key]; }
+    }
+    if (config.frame !== undefined) { anim.setFrame(config.frame); }
+    if (config.paused === true || config.startpaused === true) { anim.pause(); }
+  };
+  const create = (layer, animation, config, single) => {
+    let which = animation;
+    if (animation !== null && typeof animation === 'object') {
+      config = config || animation;
+      which = animation.animation !== undefined ? animation.animation : animation.name;
+    }
+    const key = layer.__animLayerCreate(typeof which === 'number' ? which : String(which), single);
+    if (key < 0) { return undefined; }
+    const anim = animationLayer(layer, key);
+    configure(anim, config);
+    return anim;
+  };
+  const bone = (layer, which) => {
+    const bones = layer.__bones();
+    const index = typeof which === 'number' ? which : bones.findIndex((b) => b.name === String(which));
+    return index >= 0 && index < bones.length ? { index, bones, bone: bones[index] } : undefined;
+  };
+  // runs once a frame (ScriptEngine::tick): ended callbacks of the layers that reached their end since
+  globalThis.__tickHooks = function () {
+    for (const entry of ended) {
+      const i = entry.layer.__info;
+      if (i === undefined || i.ends === entry.seen) { continue; }
+      entry.seen = i.ends;
+      try { entry.callback(); } catch (e) { console.error('addEndedCallback: ' + e); }
+    }
+  };
   return {
+    getAnimationLayerCount() {
+      return this.__animLayers().length;
+    },
+    // "an existing animation layer object by name or index"
+    getAnimationLayer(which) {
+      const list = this.__animLayers();
+      const info = typeof which === 'number' ? list[which] : list.find((a) => a.name === String(which));
+      return info === undefined ? undefined : animationLayer(this, info.key);
+    },
+    createAnimationLayer(animation, config) {
+      return create(this, animation, config, false);
+    },
+    // "only play the animation once, then remove it automatically"
+    playSingleAnimation(animation, config) {
+      return create(this, animation, config, true);
+    },
+    destroyAnimationLayer(which) {
+      const anim = which instanceof IAnimationLayer ? which : this.getAnimationLayer(which);
+      return anim !== undefined && this.__animLayerDestroy(anim.__key);
+    },
+    getBoneCount() {
+      return this.__bones().length;
+    },
+    getBoneIndex(name) {
+      return this.__bones().findIndex((b) => b.name === String(name));
+    },
+    getBoneParentIndex(child) {
+      const b = bone(this, child);
+      return b === undefined ? -1 : b.bone.parent;
+    },
+    // a bone in the world: the layer's world · the bone's (the mesh's space is the layer's own)
+    getBoneTransform(which) {
+      const b = bone(this, which);
+      return b === undefined ? undefined : this.getTransformMatrix().multiply(mat(b.bone.world));
+    },
+    setBoneTransform(which, transform) {
+      const b = bone(this, which);
+      if (b === undefined) { return; }
+      const parent = b.bone.parent >= 0 ? mat(b.bones[b.bone.parent].world) : new Mat4();
+      this.__boneOverride(b.index, this.getTransformMatrix().multiply(parent).inverse().multiply(transform).m);
+    },
+    getLocalBoneTransform(which) {
+      const b = bone(this, which);
+      return b === undefined ? undefined : mat(b.bone.local);
+    },
+    setLocalBoneTransform(which, transform) {
+      const b = bone(this, which);
+      if (b !== undefined) { this.__boneOverride(b.index, transform.m); }
+    },
+    getLocalBoneAngles(which) {
+      const m = this.getLocalBoneTransform(which);
+      return m === undefined ? undefined : m.decompose().rotation;
+    },
+    setLocalBoneAngles(which, angles) {
+      const m = this.getLocalBoneTransform(which);
+      if (m === undefined) { return; }
+      const d = m.decompose();
+      this.setLocalBoneTransform(which, Mat4.compose(d.translation, angles, d.scale));
+    },
+    getLocalBoneOrigin(which) {
+      const m = this.getLocalBoneTransform(which);
+      return m === undefined ? undefined : m.translation();
+    },
+    setLocalBoneOrigin(which, origin) {
+      const m = this.getLocalBoneTransform(which);
+      if (m === undefined) { return; }
+      const d = m.decompose();
+      this.setLocalBoneTransform(which, Mat4.compose(origin, d.rotation, d.scale));
+    },
+    // LWE simulates no bone physics and has no blend shapes (no library scene has either)
+    applyBonePhysicsImpulse() {},
+    resetBonePhysicsSimulation() {},
+    getBlendShapeIndex() { return -1; },
+    getBlendShapeWeight() { return 0; },
+    setBlendShapeWeight() {},
     // "the current world transform matrix"
     getTransformMatrix() {
       return mat(this.__world());
@@ -299,4 +454,26 @@ globalThis.__layerMethods = (function () {
       getter(name, get);
     }
   }
+})();
+
+// IParticleSystemInstance: a particle layer's instance overrides, live (natives __particleGet / __particleSet)
+(function () {
+  class IParticleSystemInstance {
+    constructor(layer) { Object.defineProperty(this, '__layer', { value: layer }); }
+  }
+  const names = ['alpha', 'size', 'count', 'speed', 'lifetime', 'rate', 'colorn'];
+  for (let i = 0; i < 8; i++) { names.push('controlpoint' + i); }
+  for (const name of names) {
+    Object.defineProperty(IParticleSystemInstance.prototype, name, {
+      get() { return this.__layer.__particleGet(name); },
+      set(v) { this.__layer.__particleSet(name, v); },
+      enumerable: true
+    });
+  }
+  globalThis.IParticleSystemInstance = IParticleSystemInstance;
+  const instances = new WeakMap();
+  globalThis.__particleInstanceOf = (layer) => {
+    if (!instances.has(layer)) { instances.set(layer, new IParticleSystemInstance(layer)); }
+    return instances.get(layer);
+  };
 })();

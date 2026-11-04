@@ -139,10 +139,23 @@ PropertyAnimationSharedPtr DynamicValueParser::parseAnimation (const JSON& anima
 	curves.push_back (parseCurve (*it, curves.size () < 3 ? offsets [curves.size ()] : 0.0f));
     }
 
-    return std::make_shared<PropertyAnimation> (
+    auto result = std::make_shared<PropertyAnimation> (
 	text (*options, "name"), fps, length, text (*options, "mode"), flag ("startpaused"), flag ("wraploop"),
 	std::move (curves)
     );
+
+    // `options.events`: [{ frame, name }], SceneScript's animationEvent
+    if (const auto events = options->find ("events"); events != options->end () && events->is_array ()) {
+	std::vector<PropertyAnimation::Event> parsed;
+	for (const auto& event : *events) {
+	    if (event.is_object () && event.contains ("frame") && event["frame"].is_number ()) {
+		parsed.push_back ({ .frame = static_cast<int> (event["frame"].get<double> ()), .name = text (event, "name") });
+	    }
+	}
+	result->setEvents (std::move (parsed));
+    }
+
+    return result;
 }
 
 DynamicValueUniquePtr

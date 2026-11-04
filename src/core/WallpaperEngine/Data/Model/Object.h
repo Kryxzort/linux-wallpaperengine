@@ -105,6 +105,8 @@ struct ImageEffect {
  */
 struct ImageAnimationLayer {
     int id;
+    /** the layer's custom name (SceneScript IAnimationLayer.name, getAnimationLayer (name)) */
+    std::string name;
     UserSettingUniquePtr rate;
     UserSettingUniquePtr visible;
     UserSettingUniquePtr blend;

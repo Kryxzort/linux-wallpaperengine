@@ -432,17 +432,20 @@ float length (const Animation& animation) {
     return animation.fps > 0.0f ? static_cast<float> (animation.frames) / animation.fps : 0.0f;
 }
 
-void advance (const Animation& animation, Clock& clock, float dt) {
+void advance (const Animation& animation, Clock& clock, float dt) { advance (animation, clock, dt, animation.mode); }
+
+void advance (const Animation& animation, Clock& clock, float dt, Mode mode) {
     const float len = length (animation);
     if (len <= 0.0f || clock.finished) {
 	return;
     }
-    switch (animation.mode) {
+    switch (mode) {
 	case Mode::Single:
 	    clock.time += dt;
 	    if (clock.time >= len) {
 		clock.time = len;
 		clock.finished = true;
+		clock.ends++;
 	    }
 	    break;
 	case Mode::Mirror:
@@ -450,6 +453,7 @@ void advance (const Animation& animation, Clock& clock, float dt) {
 	    if (!clock.reversed && clock.time >= len) {
 		clock.time = len - std::fmod (clock.time, len);
 		clock.reversed = true;
+		clock.ends++;
 	    } else if (clock.reversed && clock.time <= 0.0f) {
 		clock.time = std::fabs (std::fmod (clock.time, len));
 		clock.reversed = false;
@@ -462,6 +466,7 @@ void advance (const Animation& animation, Clock& clock, float dt) {
 	    }
 	    if (clock.time >= len) {
 		clock.time = std::fmod (clock.time, len);
+		clock.ends++;
 	    }
 	    break;
     }

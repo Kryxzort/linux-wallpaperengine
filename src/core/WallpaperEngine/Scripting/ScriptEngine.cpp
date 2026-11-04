@@ -568,7 +568,7 @@ constexpr const char* kLayerEvents[] = {
     "applyUserProperties",   "resizeScreen",	      "cursorEnter",	      "cursorLeave",
     "cursorMove",	     "cursorDown",	      "cursorUp",	      "cursorClick",
     "mediaPlaybackChanged",  "mediaPropertiesChanged", "mediaThumbnailChanged", "mediaTimelineChanged",
-    "mediaStatusChanged",
+    "mediaStatusChanged",    "applyGeneralSettings",
 };
 
 // __layerProp (id, name): a text-layer script property's live value (bound to a user property: follows it)
@@ -869,7 +869,8 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
 }
 
 void ScriptEngine::queueScript (
-    const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect
+    const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect,
+    int animationLayer
 ) {
     const auto source = currentValue.getScriptSource ();
 
@@ -885,6 +886,7 @@ void ScriptEngine::queueScript (
 			   .value = currentValue,
 			   .object = object,
 			   .effect = effect,
+			   .animationLayer = animationLayer,
 			   .scriptScale = scriptScaleOf (key.substr (0, key.rfind ('_'))) }
     );
     this->m_pendingModules = true;
@@ -988,11 +990,24 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
     auto* definition = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (function));
 
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding", this->m_adapters.object->instantiate (module.object));
-    JS_SetPropertyStr (
-	ctx, this->m_globalThis, "__thisObjectBinding",
-	module.effect != nullptr ? this->m_adapters.object->effect (*module.effect)
-				 : this->m_adapters.object->instantiate (module.object)
-    );
+    JSValue thisObject = module.effect != nullptr ? this->m_adapters.object->effect (*module.effect)
+						  : this->m_adapters.object->instantiate (module.object);
+    // a script on an animation layer's value: thisObject is that IAnimationLayer (builtins.js)
+    if (module.animationLayer >= 0) {
+	JSValue of = JS_GetPropertyStr (ctx, this->m_globalThis, "__animationLayerOf");
+	if (JS_IsFunction (ctx, of)) {
+	    JSValue args[] = { thisObject, JS_NewInt32 (ctx, module.animationLayer) };
+	    JSValue anim = JS_Call (ctx, of, JS_UNDEFINED, 2, args);
+	    if (!JS_IsException (anim) && !JS_IsUndefined (anim)) {
+		JS_FreeValue (ctx, thisObject);
+		thisObject = anim;
+	    } else {
+		JS_FreeValue (ctx, anim);
+	    }
+	}
+	JS_FreeValue (ctx, of);
+    }
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", thisObject);
     // createScriptProperties().finish() binds the stored script properties of the module being evaluated
     this->m_runningModule = &module;
     this->m_evaluatingModule = true;
@@ -1122,6 +1137,75 @@ void ScriptEngine::startPendingScripts () {
 	}
 
 	JS_FreeValue (this->m_context, properties);
+
+	// applyGeneralSettings, once on load too: WE's general settings are "currently only language"
+	JSValue settings = this->generalSettings ();
+	for (auto* module : started) {
+	    this->callModule (*module, "applyGeneralSettings", 1, &settings, false);
+	}
+	for (const auto handle : startedLayers) {
+	    this->callLayerHook (handle, "applyGeneralSettings", 1, &settings, true);
+	}
+	JS_FreeValue (this->m_context, settings);
+
+	for (auto* module : started) {
+	    if (!module->pendingAnimationEvents.empty ()) {
+		const auto events = std::move (module->pendingAnimationEvents);
+		module->pendingAnimationEvents.clear ();
+		this->animationEvents (module->value, events);
+	    }
+	}
+    }
+}
+
+JSValue ScriptEngine::generalSettings () const {
+    // the user's language as WE names them (en-us, de-de, zh-chs …): the locale's language and country, from LC_ALL /
+    // LC_MESSAGES / LANG; English without one. WE's Chinese is zh-chs / zh-cht
+    std::string language = "en-us";
+    for (const char* name : { "LC_ALL", "LC_MESSAGES", "LANG" }) {
+	const char* value = std::getenv (name);
+	if (value == nullptr || *value == '\0' || std::string_view (value) == "C" || std::string_view (value) == "POSIX") {
+	    continue;
+	}
+	std::string locale = value;
+	locale = locale.substr (0, locale.find_first_of (".@"));
+	std::ranges::transform (locale, locale.begin (), [] (unsigned char c) { return c == '_' ? '-' : std::tolower (c); });
+	if (locale == "zh-cn" || locale == "zh-sg") {
+	    locale = "zh-chs";
+	} else if (locale == "zh-tw" || locale == "zh-hk") {
+	    locale = "zh-cht";
+	}
+	if (!locale.empty ()) {
+	    language = locale;
+	}
+	break;
+    }
+    JSValue settings = JS_NewObject (this->m_context);
+    JS_SetPropertyStr (this->m_context, settings, "language", JS_NewString (this->m_context, language.c_str ()));
+    return settings;
+}
+
+void ScriptEngine::animationEvents (DynamicValue& value, const std::vector<std::pair<std::string, int>>& events) {
+    // animationEvent (event, value) to the script of the animated property
+    for (size_t i = 0; i < this->m_scriptModules.size (); i++) {
+	auto& module = *this->m_scriptModules[i];
+	if (&module.value != &value) {
+	    continue;
+	}
+	// the timeline runs from the scene's first frame, the script starts on its first tick: it gets them after init
+	if (!module.initialized) {
+	    module.pendingAnimationEvents.insert (module.pendingAnimationEvents.end (), events.begin (), events.end ());
+	    continue;
+	}
+	for (const auto& [name, frame] : events) {
+	    JSValue event = JS_NewObject (this->m_context);
+	    JS_SetPropertyStr (this->m_context, event, "name", JS_NewString (this->m_context, name.c_str ()));
+	    JS_SetPropertyStr (this->m_context, event, "frame", JS_NewInt32 (this->m_context, frame));
+	    JSValue args[] = { event, this->dynamicToJs (module.value, module.scriptScale) };
+	    this->callModule (module, "animationEvent", 2, args, false);
+	    JS_FreeValue (this->m_context, args[0]);
+	    JS_FreeValue (this->m_context, args[1]);
+	}
     }
 }
 
@@ -1308,6 +1392,20 @@ void ScriptEngine::cursorFrame (const std::vector<CursorHit>& hits, const glm::v
 
 void ScriptEngine::tick () {
     this->startPendingScripts ();
+
+    // IVideoTexture.addEndedCallback: the videos that reached their end
+    this->m_adapters.object->pollVideoEnded ();
+    // builtins.js's per-frame work (IAnimationLayer's ended callbacks)
+    if (JSValue hooks = JS_GetPropertyStr (this->m_context, this->m_globalThis, "__tickHooks"); JS_IsFunction (this->m_context, hooks)) {
+	JSValue result = JS_Call (this->m_context, hooks, JS_UNDEFINED, 0, nullptr);
+	if (JS_IsException (result)) {
+	    logJSException (this->m_context, "tick hooks");
+	}
+	JS_FreeValue (this->m_context, result);
+	JS_FreeValue (this->m_context, hooks);
+    } else {
+	JS_FreeValue (this->m_context, hooks);
+    }
 
     // user properties changed since the last tick: applyUserProperties gets only those
     if (!this->m_changedProperties.empty ()) {

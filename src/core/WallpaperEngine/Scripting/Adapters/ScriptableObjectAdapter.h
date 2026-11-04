@@ -6,6 +6,11 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+namespace WallpaperEngine::Render::Objects {
+class CImage;
+}
 
 namespace WallpaperEngine::Scripting::Adapters {
 /**
@@ -38,6 +43,12 @@ public:
     [[nodiscard]] JSClassID getEffectClassId () const { return m_effectClassId; }
     [[nodiscard]] JSClassID getTextureAnimationClassId () const { return m_textureAnimationClassId; }
     [[nodiscard]] JSClassID getAnimationClassId () const { return m_animationClassId; }
+    [[nodiscard]] JSClassID getVideoTextureClassId () const { return m_videoClassId; }
+
+    /** IVideoTexture.addEndedCallback: `callback` runs when the layer's video reaches its end */
+    void addVideoEndedCallback (Render::Objects::CImage& image, JSValueConst callback);
+    /** Runs the ended callbacks of the videos that reached their end since the last call (once per frame) */
+    void pollVideoEnded ();
 
 private:
     JSClassExoticMethods m_exoticMethods;
@@ -53,6 +64,15 @@ private:
     std::string m_name;
     std::unordered_map<ScriptableObject*, JSValue> m_instances;
     std::map<std::string, JSValue> m_methods;
+    JSClassExoticMethods m_videoExoticMethods {};
+    JSClassDef m_videoDefinition {};
+    JSClassID m_videoClassId = 0;
+    struct VideoEnded {
+	Render::Objects::CImage* image;
+	JSValue callback;
+	bool ended;
+    };
+    std::vector<VideoEnded> m_videoEnded = {};
     /** builtins.js `__layerMethods`, once installed */
     JSValue m_jsMethods = JS_UNDEFINED;
 };

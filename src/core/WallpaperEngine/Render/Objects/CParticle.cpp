@@ -1,4 +1,5 @@
 #include "CParticle.h"
+#include "WallpaperEngine/Data/Model/UserSetting.h"
 #include "WallpaperEngine/Health.h"
 
 #include "WallpaperEngine/Audio/AudioContext.h"
@@ -883,7 +884,58 @@ void CParticle::resetEmitter (const ParticleEmitter& emitter, EmitterState& stat
     state.stopped = false;
 }
 
+void CParticle::scriptPlay () { m_scriptHalted = false; }
+
+void CParticle::scriptPause () { m_scriptHalted = true; }
+
+void CParticle::scriptStop () {
+    m_scriptHalted = true;
+    m_particleCount = 0;
+    for (auto& p : m_particles) {
+	p.alive = false;
+    }
+}
+
+bool CParticle::scriptIsPlaying () const { return !m_scriptHalted || m_particleCount > 0; }
+
+void CParticle::scriptEmit (uint32_t count) { m_scriptEmit += count; }
+
+DynamicValue* CParticle::instanceValue (const std::string& name) {
+    auto& override = const_cast<ParticleInstanceOverride&> (m_particle.instanceOverride);
+    const std::pair<const char*, UserSettingUniquePtr*> values[] = {
+	{ "alpha", &override.alpha }, { "size", &override.size },	  { "count", &override.count },
+	{ "speed", &override.speed }, { "lifetime", &override.lifetime }, { "rate", &override.rate },
+	{ "colorn", &override.colorn },
+    };
+    for (const auto& [key, setting] : values) {
+	if (name == key) {
+	    return *setting == nullptr ? nullptr : (*setting)->value.get ();
+	}
+    }
+    // controlpointN: the override of that control point's offset, made from its offset when the scene sets none
+    if (name.rfind ("controlpoint", 0) == 0 && name.size () == 13 && name[12] >= '0' && name[12] <= '7') {
+	const int index = name[12] - '0';
+	auto& setting = override.controlPoint[index];
+	if (setting == nullptr) {
+	    const glm::vec3 offset = index < static_cast<int> (m_controlPoints.size ()) ? m_controlPoints[index].offset : glm::vec3 (0.0f);
+	    setting = std::make_unique<UserSetting> (UserSetting { .value = std::make_unique<DynamicValue> (offset) });
+	}
+	return setting->value.get ();
+    }
+    return nullptr;
+}
+
 uint32_t CParticle::emitCount (const ParticleEmitter& emitter, EmitterState& state, float dt) {
+    // emitParticles: a script's particles come first, paused, stopped or not
+    const uint32_t asked = m_scriptEmit;
+    m_scriptEmit = 0;
+    if (m_scriptHalted) {
+	return asked;
+    }
+    return asked + emitterCount (emitter, state, dt);
+}
+
+uint32_t CParticle::emitterCount (const ParticleEmitter& emitter, EmitterState& state, float dt) {
     // WE's emitter step (GH 0x14025cfe0), shared by every emitter type; a stopped emitter (bit 31) emits nothing
     if (state.stopped) {
 	return 0;

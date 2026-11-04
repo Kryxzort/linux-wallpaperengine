@@ -9,6 +9,10 @@
 #include "WallpaperEngine/Data/Assets/Texture.h"
 #include "WallpaperEngine/Data/Model/Types.h"
 
+namespace WallpaperEngine::VideoPlayback::MPV {
+class GLPlayer;
+}
+
 namespace WallpaperEngine::Render {
 using namespace WallpaperEngine::Data::Assets;
 /**
@@ -101,5 +105,7 @@ public:
      * Allows the texture contents to be updated (for example, for video textures)
      */
     virtual void update () const = 0;
+    /** A video texture's player (SceneScript's IVideoTexture), nullptr for every other texture */
+    [[nodiscard]] virtual VideoPlayback::MPV::GLPlayer* getVideoPlayer () const { return nullptr; }
 };
 } // namespace WallpaperEngine::Render

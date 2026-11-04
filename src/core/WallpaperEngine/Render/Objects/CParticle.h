@@ -110,6 +110,20 @@ public:
     void render () override;
     void update (float dt);
 
+    // SceneScript's IParticleSystem
+    /** play (): emitting again (after pause or stop) */
+    void scriptPlay ();
+    /** pause (): no new particles; the living ones go on */
+    void scriptPause ();
+    /** stop (): every particle gone now, and no new ones */
+    void scriptStop ();
+    /** isPlaying (): emitting, or particles still alive */
+    [[nodiscard]] bool scriptIsPlaying () const;
+    /** emitParticles (count): `count` more on the next step, paused or not */
+    void scriptEmit (uint32_t count);
+    /** IParticleSystemInstance: an instanceoverride value by its script name (alpha … controlpoint7), nullptr if none */
+    [[nodiscard]] DynamicValue* instanceValue (const std::string& name);
+
     [[nodiscard]] const Particle& getParticle () const;
 
     [[nodiscard]] const float& getBrightness () const override;
@@ -144,6 +158,8 @@ protected:
     /** an audio-responsive emitter's rate factor this frame, 0..1 */
     [[nodiscard]] float audioLevel (const ParticleEmitter& emitter) const;
     uint32_t emitCount (const ParticleEmitter& emitter, EmitterState& state, float dt);
+    /** the emitter's own count this step (emitCount adds a script's and holds it while halted) */
+    uint32_t emitterCount (const ParticleEmitter& emitter, EmitterState& state, float dt);
     /** WE's hidden-system reset (GH 0x140255d00): every particle gone, every emitter reloaded */
     void resetSystem ();
     /** re-evaluates the `colorn` tint for this step (WE's override patcher GH 0x1401ff240) */
@@ -235,6 +251,10 @@ private:
 
     std::vector<ParticleInstance> m_particles;
     uint32_t m_particleCount { 0 };
+    /** a script paused or stopped the system (IParticleSystem): its emitters emit nothing */
+    bool m_scriptHalted { false };
+    /** particles a script asked for (emitParticles), emitted by the next emitter step */
+    uint32_t m_scriptEmit { 0 };
     uint32_t m_maxParticles { DEFAULT_MAX_PARTICLES };
 
     std::vector<EmitterFunc> m_emitters;

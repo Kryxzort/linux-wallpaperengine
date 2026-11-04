@@ -38,6 +38,12 @@ public:
 
     using Curve = std::vector<Keyframe>;
 
+    /** `options.events`: a named frame; SceneScript's animationEvent fires as the timeline passes it */
+    struct Event {
+	int frame = 0;
+	std::string name;
+    };
+
     enum Flags : unsigned int {
 	Mirror = 0x1,
 	Single = 0x2,
@@ -79,6 +85,10 @@ public:
     [[nodiscard]] float getTime () const;
     [[nodiscard]] unsigned int getFlags () const;
 
+    void setEvents (std::vector<Event> events) { this->m_events = std::move (events); }
+    /** The events the timeline passed since the last call (name, frame), in order */
+    [[nodiscard]] std::vector<std::pair<std::string, int>> takeFiredEvents ();
+
     /** The value of a curve at a whole frame (exposed for tests) */
     [[nodiscard]] static float evaluate (const Curve& curve, int frame);
 
@@ -90,6 +100,10 @@ private:
     unsigned int m_flags = 0;
     float m_time = 0.0f;
     std::vector<Curve> m_curves;
+    std::vector<Event> m_events = {};
+    std::vector<std::pair<std::string, int>> m_fired = {};
+    /** the time span advance covered last: [from, to] in timeline seconds, forwards (wrapped spans split) */
+    void collectEvents (float from, float to);
 };
 
 using PropertyAnimationSharedPtr = std::shared_ptr<PropertyAnimation>;

@@ -60,6 +60,10 @@ public:
 	ScriptableObject& object;
 	/** a script on an effect's `visible`: thisObject is that effect (IEffect), not the layer */
 	const ImageEffect* effect = nullptr;
+	/** a script on a puppet animation layer's value: thisObject is that IAnimationLayer (its key), else -1 */
+	int animationLayer = -1;
+	/** animation events its value's timeline passed before the script started (sent after its init) */
+	std::vector<std::pair<std::string, int>> pendingAnimationEvents = {};
 	/** the script's unit per stored unit: a script sees `angles` in degrees, the layer keeps radians */
 	float scriptScale = 1.0f;
 	/** the module namespace once evaluated (JS_UNDEFINED before, or when it failed to load) */
@@ -112,7 +116,8 @@ public:
      * returns written to `currentValue`
      */
     void queueScript (
-	const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect = nullptr
+	const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect = nullptr,
+	int animationLayer = -1
     );
 
     /**
@@ -185,6 +190,10 @@ public:
     /** localStorage's file for this project (wp_config_set_storage_dir), or none */
     [[nodiscard]] std::optional<std::filesystem::path> storagePath () const;
 
+    /** applyGeneralSettings' argument: { language } (a new object) */
+    [[nodiscard]] JSValue generalSettings () const;
+    /** Sends animationEvent ({ name, frame }, value) to the script of `value` for each event its animation passed */
+    void animationEvents (DynamicValue& value, const std::vector<std::pair<std::string, int>>& events);
     /** engine.userProperties: every user property, colours as Vec3 (a new object) */
     [[nodiscard]] JSValue userProperties ();
 

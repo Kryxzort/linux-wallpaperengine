@@ -414,6 +414,7 @@ ImageAnimationLayerUniquePtr ObjectParser::parseAnimationLayer (const JSON& it, 
 
     return std::make_unique<ImageAnimationLayer> (ImageAnimationLayer {
 	.id = it.require<int> ("id", "Animation layer must have an id"),
+	.name = it.optional ("name", std::string ()),
 	.rate = it.user ("rate", properties, 1.0f),
 	// WE's layer starts visible (flags 1, GH 0x140291d20)
 	.visible = it.user ("visible", properties, true),
