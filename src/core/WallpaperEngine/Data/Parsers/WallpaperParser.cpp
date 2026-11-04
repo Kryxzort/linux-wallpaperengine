@@ -69,7 +69,7 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
 
     auto result = std::make_unique <Scene> (
         WallpaperData {
-            .filename = "",
+            .filename = file,
             .project = project
         }, SceneData {
             .colors = {

@@ -3,6 +3,8 @@
 #include "Adapters/ScriptableObjectAdapter.h"
 #include "ScriptEngine.h"
 #include "ScriptableObject.h"
+#include "WallpaperEngine/Data/Model/PropertyAnimation.h"
+#include "WallpaperEngine/Data/Model/Wallpaper.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Utils/ScopeGuard.h"
 
@@ -311,6 +313,63 @@ JSValue create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
     return layerValue (*container, container->getScene ().createLayer (config));
 }
 
+// __cameraTransforms (): [eye, center, up, zoom] of the scene's camera (camera.eye/center/up, general.zoom)
+JSValue camera_transforms (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    const auto& camera = container->getScene ().getScene ().camera;
+    JSValue result = JS_NewArray (ctx);
+    JS_SetPropertyUint32 (ctx, result, 0, container->getEngine ().newVec (camera.configuration.eye));
+    JS_SetPropertyUint32 (ctx, result, 1, container->getEngine ().newVec (camera.configuration.center));
+    JS_SetPropertyUint32 (ctx, result, 2, container->getEngine ().newVec (camera.configuration.up));
+    JS_SetPropertyUint32 (ctx, result, 3, JS_NewFloat64 (ctx, camera.zoom == nullptr ? 1.0 : camera.zoom->value->getFloat ()));
+    return result;
+}
+
+// __setCameraTransforms (eye, center, up, zoom): the camera follows from the next frame (a 3D scene's view; the zoom
+// in any scene)
+JSValue set_camera_transforms (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    auto& camera = const_cast<WallpaperEngine::Data::Model::Scene&> (container->getScene ().getScene ()).camera;
+    glm::vec3* targets[] = { &camera.configuration.eye, &camera.configuration.center, &camera.configuration.up };
+    for (int i = 0; i < 3 && i < argc; i++) {
+	DynamicValue value (*targets[i]);
+	if (container->getEngine ().jsToDynamic (argv[i], value)) {
+	    *targets[i] = value.getVec3 ();
+	}
+    }
+    if (argc > 3 && camera.zoom != nullptr && JS_IsNumber (argv[3])) {
+	container->getEngine ().jsToDynamic (argv[3], *camera.zoom->value);
+    }
+    return JS_UNDEFINED;
+}
+
+// __sceneJson (): the scene file as written (IScene.getInitialLayerConfig, builtins.js)
+JSValue scene_json (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    try {
+	const auto& scene = container->getScene ();
+	return JS_NewString (ctx, scene.getAssetLocator ().readString (scene.getScene ().filename).c_str ());
+    } catch (const std::exception&) {
+	return JS_UNDEFINED;
+    }
+}
+
+// IScene.getAnimation (name): the scene's keyframe animation of that name (the first one without a name)
+JSValue scene_get_animation (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    const std::string name = argc > 0 && JS_IsString (argv[0]) ? jsString (ctx, argv[0]) : "";
+    for (const auto& animated : container->getScene ().getScene ().animatedValues) {
+	if (animated.alive && !*animated.alive) {
+	    continue;
+	}
+	const auto& animation = animated.value->getAnimation ();
+	if (animation != nullptr && (name.empty () || animation->getName () == name)) {
+	    return container->getEngine ().getAdapters ().object->animation (*animated.value);
+	}
+    }
+    return JS_UNDEFINED;
+}
+
 // IScene.destroyLayer: true when the layer was in the scene
 JSValue destroy_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
@@ -380,7 +439,9 @@ SceneObject::SceneObject (ScriptEngine& engine, Render::Wallpapers::CScene& scen
     const std::pair<const char*, JSCFunction*> methods[] = {
 	{ "getLayer", get_layer },	       { "getLayerCount", get_layer_count }, { "enumerateLayers", enumerate_layers },
 	{ "getLayerIndex", get_layer_index }, { "sortLayer", sort_layer },	      { "createLayer", create_layer },
-	{ "destroyLayer", destroy_layer },
+	{ "destroyLayer", destroy_layer },     { "getAnimation", scene_get_animation },
+	{ "__cameraTransforms", camera_transforms }, { "__setCameraTransforms", set_camera_transforms },
+	{ "__sceneJson", scene_json },
     };
 
     for (const auto& [name, function] : methods) {

@@ -94,6 +94,7 @@ public:
 
 private:
     std::string m_name;
+    float m_fps;
     float m_secondsPerFrame;
     float m_duration;
     int m_length;

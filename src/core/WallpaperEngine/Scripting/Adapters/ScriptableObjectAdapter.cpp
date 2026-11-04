@@ -1273,6 +1273,12 @@ JSValue ScriptableObjectAdapter::instantiate (ScriptableObject& object) {
     return result;
 }
 
+JSValue ScriptableObjectAdapter::animation (DynamicValue& value) {
+    JSValue result = JS_NewObjectClass (this->m_engine.getContext (), static_cast<int> (this->m_animationClassId));
+    JS_SetOpaque (result, new OpaqueAnimation { .value = value });
+    return result;
+}
+
 JSValue ScriptableObjectAdapter::effect (const ImageEffect& effect) {
     return newEffect (this->m_engine.getContext (), *this, effect);
 }

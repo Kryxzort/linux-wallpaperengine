@@ -23,6 +23,13 @@ public:
 	if (object.groupParallaxDepth != nullptr) {
 	    this->registerProperty ("parallaxDepth", *object.groupParallaxDepth->value);
 	}
+	// a camera object's ICamera zoom / fov (scripts on them run; CScene::updateCamera reads them live)
+	if (object.cameraZoom != nullptr) {
+	    this->registerProperty ("zoom", *object.cameraZoom->value);
+	}
+	if (object.cameraFov != nullptr) {
+	    this->registerProperty ("fov", *object.cameraFov->value);
+	}
     }
 };
 } // namespace WallpaperEngine::Render::Objects

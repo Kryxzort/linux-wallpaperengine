@@ -11,7 +11,7 @@ PropertyAnimation::PropertyAnimation (
     std::string name, float fps, int length, const std::string& mode, bool startPaused, bool wrapLoop,
     std::vector<Curve> curves
 ) :
-    m_name (std::move (name)), m_secondsPerFrame (1.0f / fps), m_duration (static_cast<float> (length) / fps),
+    m_name (std::move (name)), m_fps (fps), m_secondsPerFrame (1.0f / fps), m_duration (static_cast<float> (length) / fps),
     m_length (length), m_curves (std::move (curves)) {
     if (mode == "mirror") {
 	this->m_flags |= Mirror;
@@ -157,7 +157,7 @@ void PropertyAnimation::setFrame (int frame) {
 
 int PropertyAnimation::getLength () const { return this->m_length; }
 
-float PropertyAnimation::getFps () const { return 1.0f / this->m_secondsPerFrame; }
+float PropertyAnimation::getFps () const { return this->m_fps; }
 
 void PropertyAnimation::collectEvents (float from, float to) {
     for (const auto& event : this->m_events) {

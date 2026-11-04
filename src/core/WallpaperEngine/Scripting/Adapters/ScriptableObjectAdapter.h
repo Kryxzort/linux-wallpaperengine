@@ -28,6 +28,9 @@ public:
     JSValue instantiate (ScriptableObject& object) override;
     JSValue instantiate (Data::Model::DynamicValue& value) override;
 
+    /** An IAnimation for a value's keyframe animation (a new object) */
+    [[nodiscard]] JSValue animation (Data::Model::DynamicValue& value);
+
     /** An IEffect for one effect of an image layer (a new object) */
     [[nodiscard]] JSValue effect (const Data::Model::ImageEffect& effect);
 

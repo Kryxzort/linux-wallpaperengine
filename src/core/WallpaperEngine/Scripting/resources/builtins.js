@@ -416,7 +416,33 @@ globalThis.__layerMethods = (function () {
   }
   const define = (name, value) => Object.defineProperty(scene, name, { value, enumerable: true, configurable: true });
   define('getLayerByID', (id) => scene.enumerateLayers().find((layer) => String(layer.id) === String(id)));
+  // CameraTransforms { eye, center, up, zoom }: the scene's camera (a 3D scene's view, any scene's zoom)
+  class CameraTransforms {
+    constructor(eye, center, up, zoom) { this.eye = eye; this.center = center; this.up = up; this.zoom = zoom; }
+  }
+  globalThis.CameraTransforms = CameraTransforms;
+  define('getCameraTransforms', () => new CameraTransforms(...scene.__cameraTransforms()));
+  define('setCameraTransforms', (t) => {
+    if (t !== null && typeof t === 'object') { scene.__setCameraTransforms(t.eye, t.center, t.up, t.zoom); }
+  });
+  // getInitialLayerConfig (layer): its object as the scene file has it (a copy)
+  let initial;
+  define('getInitialLayerConfig', (which) => {
+    const layer = typeof which === 'object' ? which : scene.getLayer(which);
+    if (layer === undefined || layer === null) { return undefined; }
+    if (initial === undefined) {
+      try { initial = JSON.parse(scene.__sceneJson() || '{}'); } catch (e) { initial = {}; }
+    }
+    const found = (initial.objects || []).find((o) => o && o.id === layer.id);
+    return found === undefined ? undefined : JSON.parse(JSON.stringify(found));
+  });
+  // createModelData / destroyModelData: LWE builds no meshes from script data (no library scene does)
+  define('createModelData', () => undefined);
+  define('destroyModelData', () => {});
 })();
+
+// renderContext: an empty interface in WE's definitions
+globalThis.renderContext = globalThis.renderContext || {};
 
 // V8's legacy RegExp statics (RegExp.$1…$9, lastMatch, …), which quickjs leaves out: scripts written for WE use them
 // (2932157836's clock: `fmt.replace(RegExp.$1, …)` after a `test`). Every match (exec, test, match, replace, split go
