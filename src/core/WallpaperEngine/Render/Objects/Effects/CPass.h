@@ -46,6 +46,8 @@ public:
     void setModelViewProjectionMatrix (const glm::mat4* projection);
     void setModelViewProjectionMatrixInverse (const glm::mat4* projection);
     void setModelMatrix (const glm::mat4* model);
+    /** g_LayerModelMatrix: the layer's own matrix in WE's world (GH 0x1402176a0 copies image +0x384 to ctx +0xa30) */
+    void setLayerModelMatrix (const glm::mat4* layerModel);
     void setViewProjectionMatrix (const glm::mat4* viewProjection);
     void setBlendingMode (BlendingMode blendingmode);
     [[nodiscard]] BlendingMode getBlendingMode () const;
@@ -203,6 +205,8 @@ private:
     const glm::mat4* m_modelViewProjectionMatrix;
     const glm::mat4* m_modelViewProjectionMatrixInverse;
     const glm::mat4* m_modelMatrix;
+    const glm::mat4* m_layerModelMatrix = &kIdentityMatrix;
+    static inline const glm::mat4 kIdentityMatrix = glm::mat4 (1.0f);
     const glm::mat4* m_viewProjectionMatrix;
 
     /**

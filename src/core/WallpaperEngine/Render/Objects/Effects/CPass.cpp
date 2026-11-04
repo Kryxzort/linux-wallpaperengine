@@ -638,6 +638,8 @@ void CPass::setModelViewProjectionMatrixInverse (const glm::mat4* projection) {
 
 void CPass::setModelMatrix (const glm::mat4* model) { this->m_modelMatrix = model; }
 
+void CPass::setLayerModelMatrix (const glm::mat4* layerModel) { this->m_layerModelMatrix = layerModel; }
+
 void CPass::setViewProjectionMatrix (const glm::mat4* viewProjection) { this->m_viewProjectionMatrix = viewProjection; }
 
 void CPass::setBlendingMode (BlendingMode blendingmode) { this->m_blendingmode = blendingmode; }
@@ -1076,6 +1078,10 @@ void CPass::setupUniforms () {
     this->addUniform ("g_EffectModelViewProjectionMatrix", &this->m_modelViewProjectionMatrix);
     this->addUniform ("g_ModelMatrix", &this->m_modelMatrix);
     this->addUniform ("g_EffectModelMatrix", &this->m_modelMatrix);
+    // WE's uniform 0x19 (GH 0x14010a0e0 reads ctx +0xa30): the layer's world matrix, T · Rz · Ry · Rx · S with its
+    // parents', which the layer's draw (GH 0x140214b50, vtable +0x80) stores at image +0x384 and GH 0x1402176a0 copies
+    // for its effect passes. frame_builder (3516106265) reads the layer's scale from its columns. It was unregistered
+    this->addUniform ("g_LayerModelMatrix", &this->m_layerModelMatrix);
     this->addUniform ("g_NormalModelMatrix", glm::identity<glm::mat3> ());
     this->addUniform ("g_ViewProjectionMatrix", &this->m_viewProjectionMatrix);
     this->addUniform ("g_PointerPosition", scene.getMousePosition ());

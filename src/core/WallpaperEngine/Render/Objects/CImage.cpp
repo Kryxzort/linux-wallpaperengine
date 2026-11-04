@@ -1328,6 +1328,7 @@ void CImage::setupPasses () {
 
 
 	pass->setModelMatrix (&this->m_modelMatrix);
+	pass->setLayerModelMatrix (&this->m_layerModelMatrix);
 	pass->setViewProjectionMatrix (&this->m_viewProjectionMatrix);
 
 	writesToTarget = this->configurePassTarget (pass, drawTo, asInput, effectInput, inTargetEffectSequence);
@@ -1812,6 +1813,8 @@ void CImage::updateWorldPosition () {
 
 void CImage::updateScreenSpacePosition () {
     const ResolvedTransform transform = this->updateGeometryBuffers ();
+    // g_LayerModelMatrix: WE's world matrix of the layer this frame (origin, angles, scale and the parents')
+    this->m_layerModelMatrix = this->getScene ().worldMatrixOf (this->getImage ());
 
     if (this->isWorldPlaced ()) {
 	this->updateWorldPosition ();

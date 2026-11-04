@@ -255,6 +255,8 @@ private:
     glm::mat4 m_modelViewProjectionCopyInverse = {};
 
     glm::mat4 m_modelMatrix = {};
+    /** g_LayerModelMatrix (CPass::setLayerModelMatrix) */
+    glm::mat4 m_layerModelMatrix = glm::mat4 (1.0f);
     glm::mat4 m_viewProjectionMatrix = {};
 
     /**
