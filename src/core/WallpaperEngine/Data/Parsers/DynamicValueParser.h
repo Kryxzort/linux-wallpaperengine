@@ -4,6 +4,7 @@
 #include "../Model/Types.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace WallpaperEngine::Data::Parsers {
@@ -31,12 +32,37 @@ public:
     class AnimationCollector {
     public:
 	explicit AnimationCollector (std::vector<Model::AnimatedValue>& out);
+	/** links each animation with an `options.parent.key` to its sibling's (same owner, that key) */
 	~AnimationCollector ();
 	AnimationCollector (const AnimationCollector&) = delete;
 	AnimationCollector& operator= (const AnimationCollector&) = delete;
 
+	struct Named {
+	    Model::PropertyAnimationSharedPtr animation;
+	    const void* owner;
+	    std::string key;
+	};
+
     private:
 	std::vector<Model::AnimatedValue>* m_previous;
+	std::vector<Named>* m_previousNamed;
+	std::vector<Named> m_named;
+    };
+
+    /**
+     * The property being parsed: the JSON object holding it (an object, an effect pass's constantshadervalues) and its
+     * key — what an animation's `options.parent.key` names its parent by
+     */
+    class PropertyScope {
+    public:
+	PropertyScope (const void* owner, const std::string& key);
+	~PropertyScope ();
+	PropertyScope (const PropertyScope&) = delete;
+	PropertyScope& operator= (const PropertyScope&) = delete;
+
+    private:
+	const void* m_owner;
+	const std::string* m_key;
     };
 };
 }

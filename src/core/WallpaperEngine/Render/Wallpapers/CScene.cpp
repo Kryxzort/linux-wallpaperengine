@@ -697,19 +697,22 @@ void CScene::advanceAnimations () {
 
     std::erase_if (animated, [] (const Data::Model::AnimatedValue& cur) { return cur.alive && !*cur.alive; });
 
-    for (const auto& [value, alive] : animated) {
-	const auto& animation = value->getAnimation ();
+    // the timelines that follow a parent's (`options.parent`) after the parents, so they read this frame's time
+    for (const bool children : { false, true }) {
+	for (const auto& [value, alive] : animated) {
+	    const auto& animation = value->getAnimation ();
 
-	if (animation == nullptr) {
-	    continue;
-	}
+	    if (animation == nullptr || animation->hasParent () != children) {
+		continue;
+	    }
 
-	animation->advance (dt);
-	animation->apply (*value);
+	    animation->advance (dt);
+	    animation->apply (*value);
 
-	// the events it passed reach the property's script (animationEvent)
-	if (auto fired = animation->takeFiredEvents (); !fired.empty ()) {
-	    this->m_scriptEngine->animationEvents (*value, fired);
+	    // the events it passed reach the property's script (animationEvent)
+	    if (auto fired = animation->takeFiredEvents (); !fired.empty ()) {
+		this->m_scriptEngine->animationEvents (*value, fired);
+	    }
 	}
     }
 }

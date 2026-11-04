@@ -12,6 +12,9 @@ using namespace WallpaperEngine::Data::Model;
 
 namespace {
 thread_local std::vector<AnimatedValue>* g_animatedValues = nullptr;
+thread_local std::vector<DynamicValueParser::AnimationCollector::Named>* g_named = nullptr;
+thread_local const void* g_scopeOwner = nullptr;
+thread_local const std::string* g_scopeKey = nullptr;
 
 // a `back`/`front` handle: an object, enabled unless `"enabled": false`; a disabled one is (0, 0)
 bool parseHandle (const JSON& key, const char* name, glm::vec2& out) {
@@ -72,11 +75,40 @@ PropertyAnimation::Curve parseCurve (const JSON& keys, float offset) {
 } // namespace
 
 DynamicValueParser::AnimationCollector::AnimationCollector (std::vector<AnimatedValue>& out) :
-    m_previous (g_animatedValues) {
+    m_previous (g_animatedValues), m_previousNamed (g_named) {
     g_animatedValues = &out;
+    g_named = &this->m_named;
 }
 
-DynamicValueParser::AnimationCollector::~AnimationCollector () { g_animatedValues = this->m_previous; }
+DynamicValueParser::AnimationCollector::~AnimationCollector () {
+    g_animatedValues = this->m_previous;
+    g_named = this->m_previousNamed;
+
+    for (const auto& child : this->m_named) {
+	const auto& key = child.animation->getParentKey ();
+	if (key.empty ()) {
+	    continue;
+	}
+	for (const auto& parent : this->m_named) {
+	    if (parent.owner == child.owner && parent.key == key && parent.animation != child.animation
+		&& parent.animation->getParentKey ().empty ()) {
+		child.animation->setParent (parent.animation);
+		break;
+	    }
+	}
+    }
+}
+
+DynamicValueParser::PropertyScope::PropertyScope (const void* owner, const std::string& key) :
+    m_owner (g_scopeOwner), m_key (g_scopeKey) {
+    g_scopeOwner = owner;
+    g_scopeKey = &key;
+}
+
+DynamicValueParser::PropertyScope::~PropertyScope () {
+    g_scopeOwner = this->m_owner;
+    g_scopeKey = this->m_key;
+}
 
 PropertyAnimationSharedPtr DynamicValueParser::parseAnimation (const JSON& animation, const JSON& value) {
     if (!animation.is_object ()) {
@@ -143,6 +175,13 @@ PropertyAnimationSharedPtr DynamicValueParser::parseAnimation (const JSON& anima
 	text (*options, "name"), fps, length, text (*options, "mode"), flag ("startpaused"), flag ("wraploop"),
 	std::move (curves)
     );
+
+    // `options.parent.key`: the sibling property whose timeline this one follows (linked by AnimationCollector)
+    if (const auto parent = options->find ("parent"); parent != options->end () && parent->is_object ()) {
+	if (const auto key = parent->find ("key"); key != parent->end () && key->is_string ()) {
+	    result->setParentKey (key->get<std::string> ());
+	}
+    }
 
     // `options.events`: [{ frame, name }], SceneScript's animationEvent
     if (const auto events = options->find ("events"); events != options->end () && events->is_array ()) {
@@ -242,6 +281,9 @@ DynamicValueParser::parse (const JSON& data, const Properties& properties, bool 
 
 		if (g_animatedValues != nullptr) {
 		    g_animatedValues->push_back ({ .value = value.get (), .alive = value->getAliveFlag () });
+		}
+		if (g_named != nullptr && g_scopeOwner != nullptr && g_scopeKey != nullptr) {
+		    g_named->push_back ({ .animation = value->getAnimation (), .owner = g_scopeOwner, .key = *g_scopeKey });
 		}
 	    }
 	}

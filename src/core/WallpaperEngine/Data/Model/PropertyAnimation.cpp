@@ -176,6 +176,11 @@ std::vector<std::pair<std::string, int>> PropertyAnimation::takeFiredEvents () {
 }
 
 void PropertyAnimation::advance (float dt) {
+    if (this->m_parent != nullptr) {
+	// on the parent's clock (inferred from the editor's parent / children links: the curves share one timeline)
+	this->m_time = std::clamp (this->m_parent->getTime (), 0.0f, this->m_duration);
+	return;
+    }
     if ((this->m_flags & (StartPaused | Finished)) != 0) {
 	return;
     }

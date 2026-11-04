@@ -89,6 +89,17 @@ public:
     [[nodiscard]] unsigned int getFlags () const;
 
     void setEvents (std::vector<Event> events) { this->m_events = std::move (events); }
+
+    /**
+     * `options.parent.key`: the sibling property (same object, or same effect pass's constants) whose timeline this
+     * one follows; its `options.children` lists them back (1864677589's origins follow their angles, 3163060610's
+     * scripted Radius drives Size and opacity). A child runs on the parent's clock: its time is the parent's
+     * (seconds, held at its own length), so it plays, pauses and restarts with it
+     */
+    [[nodiscard]] const std::string& getParentKey () const { return this->m_parentKey; }
+    void setParentKey (std::string key) { this->m_parentKey = std::move (key); }
+    void setParent (std::shared_ptr<const PropertyAnimation> parent) { this->m_parent = std::move (parent); }
+    [[nodiscard]] bool hasParent () const { return this->m_parent != nullptr; }
     /** The events the timeline passed since the last call (name, frame), in order */
     [[nodiscard]] std::vector<std::pair<std::string, int>> takeFiredEvents ();
 
@@ -107,6 +118,8 @@ private:
     std::vector<Curve> m_curves;
     std::vector<Event> m_events = {};
     std::vector<std::pair<std::string, int>> m_fired = {};
+    std::string m_parentKey;
+    std::shared_ptr<const PropertyAnimation> m_parent;
     /** the time span advance covered last: [from, to] in timeline seconds, forwards (wrapped spans split) */
     void collectEvents (float from, float to);
 };
