@@ -149,9 +149,10 @@ inline glm::vec3 curlNoise (const glm::vec3& p) {
 }
 
 
-// 3D simplex noise in about [-1, 1] (Gustavson's, on the Perlin permutation). WE's turbulence operator samples a 3D
-// simplex noise once per masked axis (the SSE noise object's slot 2, GH 0x14012b830 → 0x14012c280, behind
-// GH 0x140265800 case 0xe); its own gradient hash isn't ported, so the field differs while its character doesn't
+// 3D simplex noise in about [-1, 1]: WE's own (GH 0x14012c280, four points per call, behind GH 0x14012b830 and the
+// turbulence case 0xe of GH 0x140265800) is this one exactly — Gustavson's: skew 1/3, unskew 1/6, 0.6 − r², t⁴, × 32,
+// gradients the 12 edge vectors (gx/gy/gz tables 0x1404c3780/3750/3720), hash permMod12[i + perm[j + perm[k]]] with
+// perm = Perlin's permutation doubled (0x1404c3520, 512 bytes, = PERLIN_PERM) and permMod12 = perm % 12 (0x1404c37b0)
 inline float simplexNoise (float xin, float yin, float zin) {
     static const int grad3[12][3] = { { 1, 1, 0 }, { -1, 1, 0 }, { 1, -1, 0 }, { -1, -1, 0 }, { 1, 0, 1 }, { -1, 0, 1 },
 				      { 1, 0, -1 }, { -1, 0, -1 }, { 0, 1, 1 }, { 0, -1, 1 }, { 0, 1, -1 }, { 0, -1, -1 } };
