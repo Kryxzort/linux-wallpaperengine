@@ -36,6 +36,7 @@ set(TARGET_SOURCE_FILES
 
     WallpaperEngine/Render/Shaders/Shader.cpp
     WallpaperEngine/Render/Shaders/ShaderUnit.cpp
+    WallpaperEngine/Render/Shaders/WEShaderRules.cpp
     WallpaperEngine/Render/Shaders/GLSLContext.cpp
 
     WallpaperEngine/Render/Helpers/ContextAware.cpp

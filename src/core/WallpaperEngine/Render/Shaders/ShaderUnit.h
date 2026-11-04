@@ -114,6 +114,8 @@ private:
      * shaders: the packaged foliagesway reads `v_Bounds`, declared in its vertex unit only)
      */
     [[nodiscard]] std::string applyFragmentVaryingDeclarations (std::string source) const;
+    /** Declarations of gl_ built-ins (WE's system-value struct members) dropped */
+    [[nodiscard]] std::string applyBuiltinDeclarations (std::string source);
 
     /**
      * Parses a COMBO value to add the proper define to the code
@@ -143,10 +145,6 @@ private:
      */
     std::string m_content;
     /**
-     * Includes content to be added on compilation
-     */
-    std::string m_includes;
-    /**
      * Shader's content after the preprocessing step
      */
     std::string m_preprocessed;
@@ -154,6 +152,8 @@ private:
      * Shader's code after the compilation of glslang and spirv
      */
     std::string m_final;
+    /** `#extension` lines the unit needs (after `#version`) */
+    std::string m_extensions;
     /**
      * The parameters the shader needs
      */

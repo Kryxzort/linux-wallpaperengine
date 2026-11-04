@@ -68,7 +68,7 @@ public:
      * The shader sweep: builds shader `name` (relative to shaders/, no extension) from this project's files the way a
      * material pass does — the same preprocessing, glslang and SPIRV-Cross pass and the GL compile and link, on the
      * GL context current on this thread — and draws nothing. `request` is JSON: `{"combos": {NAME: value…},
-     * "textures": [slot…], "gl": bool}` (gl defaults to true). Returns JSON `{"ok", "stage" (load | glslang | gl |
+     * "textures": [slot…], "gl": bool, "source": bool}` (gl defaults to true; source adds the units as handed to glslang). Returns JSON `{"ok", "stage" (load | glslang | gl |
      * link), "message", "compat": [what…], "combos": {the effective combos}}`
      */
     std::string shaderCheck (const std::string& name, const std::string& request);

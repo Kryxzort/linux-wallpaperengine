@@ -2,13 +2,16 @@
 
 #include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
+#include <algorithm>
 #include <cstdlib>
 #include <regex>
+#include <sstream>
 #include <stack>
 #include <string>
 #include <utility>
 
 #include "GLSLContext.h"
+#include "WEShaderRules.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariable.h"
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariableFloat.h"
@@ -36,6 +39,7 @@
 	  "#define CAST3(x) (vec3(x))\n"                                                                               \
 	  "#define CAST4(x) (vec4(x))\n"                                                                               \
 	  "#define CAST3X3(x) (mat3(x))\n"                                                                             \
+	  WE_HEADER_DEFINES                                                                                            \
 	  "#define float2 vec2\n"                                                                                      \
 	  "#define float3 vec3\n"                                                                                      \
 	  "#define float4 vec4\n"                                                                                      \
@@ -51,6 +55,43 @@
 	  "#define ddx dFdx\n"                                                                                         \
 	  "#define ddy(x) dFdy(-(x))\n"                                                                                \
 	  "#define GLSL 1\n\n";
+// the rest of WE's translator header (GH 0x140125e80's #define block) — CASTF/CASTI/CASTU/CAST4U, the sampler
+// parameter macros, texLoad2D / texSample2DCompare / texSample3D, the frame buffer mappings — and the HLSL type names
+// WE's GLSL dialect lets a shader use. MapNDCToFrameBuffer has WE's y flip undone (D3D's texture rows go down;
+// inferred), sampler2DComparison is a shadow sampler, sampler2DBackBuffer a plain one (GH 0x140125e80 picks
+// texSample2DBackBuffer per backbuffer kind)
+#define WE_HEADER_DEFINES                                                                                              \
+    "#define CASTF(x) (float(x))\n"                                                                                    \
+    "#define CASTI(x) (int(x))\n"                                                                                      \
+    "#define CASTU(x) (uint(x))\n"                                                                                     \
+    "#define CAST4U(x) (uvec4(x))\n"                                                                                   \
+    "#define DECLARE_SAMPLER2D_PARAMETER(t) sampler2D t\n"                                                             \
+    "#define MAKE_SAMPLER2D_ARGUMENT(t) t\n"                                                                           \
+    "#define DECLARE_SAMPLER2D_COMPARE_PARAMETER(t) sampler2DShadow t\n"                                               \
+    "#define MAKE_SAMPLER2D_COMPARE_ARGUMENT(t) t\n"                                                                   \
+    "#define texSample2DCompare(s, u, d) texture(s, vec3((u), (d)))\n"                                                 \
+    "#define texLoad2D(s, u, r) texelFetch(s, ivec2((u) * (r)), 0)\n"                                                  \
+    "#define texSample3D texture\n"                                                                                    \
+    "#define texSample2DBackBuffer(s, u, r) texture(s, (u))\n"                                                         \
+    "#define MapTexCoordToFrameBuffer(u) (u)\n"                                                                        \
+    "#define MapNDCToFrameBuffer(n) ((n) * 0.5 + 0.5)\n"                                                               \
+    "#define MapEffectSpaceToFrameBuffer MapNDCToFrameBuffer\n"                                                        \
+    "#define sampler2DComparison sampler2DShadow\n"                                                                    \
+    "#define sampler2DBackBuffer sampler2D\n"                                                                          \
+    "#define half float\n"                                                                                             \
+    "#define half2 vec2\n"                                                                                             \
+    "#define half3 vec3\n"                                                                                             \
+    "#define half4 vec4\n"                                                                                             \
+    "#define uint2 uvec2\n"                                                                                            \
+    "#define uint3 uvec3\n"                                                                                            \
+    "#define uint4 uvec4\n"                                                                                            \
+    "#define bool2 bvec2\n"                                                                                            \
+    "#define bool3 bvec3\n"                                                                                            \
+    "#define bool4 bvec4\n"                                                                                            \
+    "#define float2x2 mat2\n"                                                                                          \
+    "#define float3x3 mat3\n"                                                                                          \
+    "#define float4x4 mat4\n"                                                                                          \
+    "#define float4x3 mat4x3\n"
 #define FRAGMENT_SHADER_DEFINES                                                                                        \
     "out vec4 out_FragColor;\n"                                                                                        \
     "#define varying in\n"
@@ -77,10 +118,11 @@ ShaderUnit::ShaderUnit (
 
 void ShaderUnit::preprocess () {
     this->m_preprocessed = this->m_content;
-    this->m_includes = "";
 
     this->preprocessIncludes ();
     this->preprocessRequires ();
+    // GH 0x140125e80: declarations are WE's cbuffers / structs, ahead of all code (the includes pasted in place too)
+    this->m_preprocessed = WERules::hoistDeclarations (this->m_preprocessed);
     this->preprocessVariables ();
 
     // replace gl_FragColor with the equivalent
@@ -135,181 +177,21 @@ void ShaderUnit::preprocessVariables () {
 }
 
 void ShaderUnit::preprocessIncludes () {
-    size_t start = 0, end = 0;
-    // prepare the include content
-    while ((start = this->m_preprocessed.find ("#include", end)) != std::string::npos) {
-	// TODO: CHECK FOR ERRORS HERE, MALFORMED INCLUDES WILL NOT BE PROPERLY HANDLED
-	const size_t quoteStart = this->m_preprocessed.find_first_of ('"', start) + 1;
-	const size_t quoteEnd = this->m_preprocessed.find_first_of ('"', quoteStart);
-	const std::string filename = this->m_preprocessed.substr (quoteStart, quoteEnd - quoteStart);
-
-	// some includes might not be present
-	// and that should not be treated as an error mainly because these could come from
-	// commented out content
-	std::string content;
-
+    // WE's rule (GH 0x140191050 / 0x1401917f0): each include in place, where its line was — LWE pasted them all
+    // before main, after the unit's last declaration, so a function above main using an include's #define
+    // (3235948233's auto_sway: M_PI from common.h) didn't compile. hoistDeclarations keeps what that order gave: an
+    // include's code seeing the unit's uniforms (common_blur.h samples g_Texture0, declared below its #include)
+    std::set<std::string> seen;
+    const auto load = [this] (const std::string& name) -> std::optional<std::string> {
 	try {
-	    content += "// begin of include from file ";
-	    content += filename;
-	    content += "\n";
-	    content += this->m_assetLocator.includeShader (filename);
-	    content += "\n// end of included from file ";
-	    content += filename;
-	    content += "\n";
+	    return std::filesystem::path (name).extension () == ".h"
+		? this->m_assetLocator.includeShader (name)
+		: this->m_assetLocator.readString (std::filesystem::path ("shaders") / name);
 	} catch (AssetLoadException&) {
-	    content += "// tried including file ";
-	    content += filename;
-	    content += " but was not found\n";
+	    return std::nullopt;
 	}
-
-	// replace the first two letters with a comment so the filelength doesn't change
-	this->m_preprocessed = this->m_preprocessed.replace (start, 2, "//");
-
-
-	this->m_includes += content;
-
-	// go to the end of the line
-	end = start;
-    }
-
-    // ensure the included files do not include other files
-    end = 0;
-
-    // then apply includes in-place
-    while ((start = this->m_includes.find ("#include", end)) != std::string::npos) {
-	const size_t lineEnd = this->m_includes.find_first_of ('\n', start);
-	// TODO: CHECK FOR ERRORS HERE, MALFORMED INCLUDES WILL NOT BE PROPERLY HANDLED
-	const size_t quoteStart = this->m_includes.find_first_of ('"', start) + 1;
-	const size_t quoteEnd = this->m_includes.find_first_of ('"', quoteStart);
-	const std::string filename = this->m_includes.substr (quoteStart, quoteEnd - quoteStart);
-
-	// some includes might not be present
-	// and that should not be treated as an error mainly because these could come from
-	// commented out content
-	std::string content;
-
-	try {
-	    content = "// begin of include from file ";
-	    content += filename;
-	    content += "\n";
-	    content += this->m_assetLocator.includeShader (filename);
-	    content += "\n// end of included from file ";
-	    content += filename;
-	    content += "\n";
-	} catch (AssetLoadException&) {
-	    content = "// tried including file ";
-	    content += filename;
-	    content += " but was not found\n";
-	}
-
-	// file contents ready, replace things
-	this->m_includes = this->m_includes.replace (start, lineEnd - start, content);
-
-	// go back to the beginning of the line to properly continue detecting things
-	end = start;
-    }
-
-    // search for the main function and add the includes before that for now
-    end = 0;
-    bool includesAdded = false;
-
-    // finally, try to place the include contents before the main function
-    while ((start = this->m_preprocessed.find (" main", end)) != std::string::npos) {
-	char value = this->m_preprocessed.at (start + 5);
-
-	end = start + 5;
-
-	if (value != ' ' && value != '(') {
-	    continue;
-	}
-
-	// main located, search for uniforms and find the latest one available
-	size_t lastAttribute = this->m_preprocessed.rfind ("attribute", start);
-	size_t lastVarying = this->m_preprocessed.rfind ("varying", start);
-	size_t lastUniform = this->m_preprocessed.rfind ("uniform", start);
-	size_t latest = lastAttribute;
-
-	if (latest == std::string::npos) {
-	    latest = lastVarying;
-	} else if (latest < lastVarying && lastVarying != std::string::npos) {
-	    latest = lastVarying;
-	}
-
-	if (latest == std::string::npos) {
-	    latest = lastUniform;
-	} else if (latest < lastUniform && lastUniform != std::string::npos) {
-	    latest = lastUniform;
-	}
-
-	if (latest < start) {
-	    // find the end of the current line
-	    latest = this->m_preprocessed.find ('\n', latest);
-	} else {
-	    // find the end of the previous line
-	    latest = this->m_preprocessed.rfind ('\n', start);
-	}
-
-	// update the function start to point to the end of the previous line
-	// as this will be used to determine the position of the includes
-	start = this->m_preprocessed.rfind ('\n', start);
-
-	// keeps track of the start and end of ifdefs to look for the right
-	// place to put the includes in
-	std::stack<size_t> ifdefStack;
-
-	// start looking for #if and #endif results and add to the stack so we find the start of the current chain of
-	// ifdefs and use that as point
-
-	// for this we'll use regex
-	const std::regex ifdef (R"((#if|#endif))");
-	std::smatch match;
-	size_t current = 0;
-
-	while (
-	    std::regex_search (this->m_preprocessed.cbegin () + current, this->m_preprocessed.cend (), match, ifdef)) {
-	    current += match.position ();
-
-	    // if it's opening an #ifdef keep track of the start of the block
-	    // and that's it
-	    if (this->m_preprocessed.substr (current, 3) == "#if") {
-		// go to the next character so the regex doesn't match with the same thing again
-		ifdefStack.push (current++);
-		continue;
-	    }
-
-	    // go to the next character so the regex doesn't match with the same thing again
-	    current++;
-
-	    // most likely a syntax error, but we'll ignore it for now...
-	    if (ifdefStack.empty ()) {
-		continue;
-	    }
-
-	    size_t stackStart = ifdefStack.top ();
-	    ifdefStack.pop ();
-
-	    if (latest > stackStart && latest <= current) {
-		// The insertion point is inside a conditional block.
-		// Move to BEFORE the #if so includes are available to all branches
-		// (e.g. genericropeparticle.vert has #if GS_ENABLED wrapping two main() functions).
-		size_t beforeIfdef = this->m_preprocessed.rfind ('\n', stackStart);
-		latest = (beforeIfdef != std::string::npos) ? beforeIfdef : 0;
-	    }
-	}
-
-	// no more matches, get the one that happens the earliest
-	// TODO: IS THIS GOOD ENOUGH? MAYBE WE SHOULD BE GETTING THE FIRST #IF BLOCK INSTEAD?
-	latest = std::min (latest, start);
-
-	// finally insert it there
-	this->m_preprocessed.insert (latest + 1, this->m_includes + '\n');
-	includesAdded = true;
-	break;
-    }
-
-    if (!includesAdded) {
-	sLog.exception ("Could not find where to place includes for shader unit ", this->m_file);
-    }
+    };
+    this->m_preprocessed = WERules::expandIncludes (this->m_preprocessed, load, seen);
 }
 
 void ShaderUnit::preprocessRequires () {
@@ -347,7 +229,6 @@ void ShaderUnit::preprocessRequires () {
 
 	if (!moduleCode.empty ()) {
 	    // insert the generated code directly into m_preprocessed at the #require location
-	    // (m_includes was already consumed by preprocessIncludes, so appending there would be lost)
 	    this->m_preprocessed.insert (start, moduleCode);
 	    end = start + moduleCode.length ();
 	} else {
@@ -444,27 +325,46 @@ std::string ShaderUnit::applyFragmentVaryingDeclarations (std::string source) co
 	return source;
     }
 
+    // GH 0x140125e80: the fragment unit's inputs are the vertex unit's VS_OUTPUT list, so a varying the fragment
+    // doesn't declare is still there, and one it declares narrower (`varying vec2 v_TexCoord` against the vertex's
+    // vec4) is the vertex's type, its uses truncated as HLSL does. LWE linked them with their own types: glslang let
+    // the vec2 input read a vec4 output and SPIRV-Cross's GLSL then had `vec2 = vec4` (NVIDIA C7011; 2846673187's
+    // audio ring and 2844906964 / 2342779250's test shaders dropped their layers)
     static const std::regex vertexVarying (
 	R"(\bvarying\s+(?:(?:lowp|mediump|highp|flat|smooth|noperspective)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)"
     );
+    static const std::map<std::string, int> width = { { "float", 1 }, { "vec2", 2 }, { "vec3", 3 }, { "vec4", 4 } };
     const std::string& vertex = this->m_link->m_preprocessed;
     std::string missing;
+    bool retyped = false;
 
     for (auto it = std::sregex_iterator (vertex.begin (), vertex.end (), vertexVarying); it != std::sregex_iterator ();
 	 ++it) {
 	const std::string type = (*it)[1].str ();
 	const std::string name = (*it)[2].str ();
-	const std::regex declared ("\\bvarying\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+)+" + name + "\\s*;");
+	const std::regex declared ("\\bvarying\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\s+)*?)([A-Za-z_][A-Za-z0-9_]*)\\s+" + name + "\\s*;");
 	const std::regex used ("\\b" + name + "\\b");
+	std::smatch own;
 
-	if (std::regex_search (source, declared) || !std::regex_search (source, used)
-	    || missing.find (" " + name + ";") != std::string::npos) {
+	if (std::regex_search (source, own, declared)) {
+	    const std::string ownType = own[2].str ();
+	    const auto v = width.find (type), f = width.find (ownType);
+	    if (v != width.end () && f != width.end () && v->second > f->second) {
+		source = std::regex_replace (source, declared, "varying $1" + type + " " + name + ";");
+		retyped = true;
+	    }
+	    continue;
+	}
+	if (!std::regex_search (source, used) || missing.find (" " + name + ";") != std::string::npos) {
 	    continue;
 	}
 
 	missing += "varying " + type + " " + name + ";\n";
     }
 
+    if (retyped) {
+	WPENGINE_HEALTH ("compat", { { "what", "WE: a fragment varying takes the vertex unit's type" } });
+    }
     if (missing.empty ()) {
 	return source;
     }
@@ -501,13 +401,16 @@ std::string ShaderUnit::applyFragmentTexCoordCompatibility (std::string source) 
 }
 
 std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const {
-    if (this->m_type != GLSLContext::UnitType_Fragment) {
-	return source;
-    }
-
-    static const std::regex declaration (
+    // the fragment's varyings and the vertex's attributes are WE's IN struct (GH 0x140125e80), which HLSL lets
+    // main write to (3088030303's shadow does `a_TexCoord = …` in its vertex unit)
+    const bool fragment = this->m_type == GLSLContext::UnitType_Fragment;
+    static const std::regex fragmentDeclaration (
 	R"(\bvarying\s+((?:(?:lowp|mediump|highp|flat|smooth|noperspective)\s+)*[A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)"
     );
+    static const std::regex vertexDeclaration (
+	R"(\battribute\s+((?:(?:lowp|mediump|highp)\s+)*[A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)"
+    );
+    const std::regex& declaration = fragment ? fragmentDeclaration : vertexDeclaration;
     static const std::regex mainOpen (R"(\bvoid\s+main\s*\(\s*(?:void)?\s*\)\s*\{)");
     std::vector<std::pair<std::string, std::string>> written; // (type, name)
 
@@ -516,7 +419,8 @@ std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const
 	const std::string name = (*it)[2].str ();
 	// `name = …`, `name += …`, `name.xy *= …` (not `==`), or `name++` / `++name`
 	const std::regex assigned ("\\b" + name + "\\b(?:\\s*\\.\\s*[xyzwrgba]+)?\\s*(?:[-+*/]?=(?!=)|\\+\\+|--)|(?:\\+\\+|--)\\s*" + name + "\\b");
-	if (std::regex_search (source, assigned)) {
+	const bool listed = std::any_of (written.begin (), written.end (), [&] (const auto& w) { return w.second == name; });
+	if (!listed && std::regex_search (source, assigned)) {
 	    // the type without its qualifiers
 	    std::string type = (*it)[1].str ();
 	    type = type.substr (type.find_last_of (" \t") == std::string::npos ? 0 : type.find_last_of (" \t") + 1);
@@ -529,7 +433,9 @@ std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const
 	return source;
     }
 
-    // every use after the declarations reads the copy; main starts by filling it
+    // every use after the declarations reads the copy; each main starts by filling it (a unit may have several
+    // under #if — 3235948233's auto_sway has one per AA_VERSION — and only filling the first left the copy of the
+    // active one zero: its v_TexCoord read 0 and 3414858021's 左白巾 drew nothing)
     const size_t bodyAt = static_cast<size_t> (open.position () + open.length ());
     std::string head = source.substr (0, bodyAt);
     std::string body = source.substr (bodyAt);
@@ -537,25 +443,47 @@ std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const
 
     for (const auto& [type, name] : written) {
 	const std::regex use ("\\b" + name + "\\b");
-	const std::regex decl ("\\bvarying\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+)+" + name + "\\s*;");
+	const std::regex decl (std::string (fragment ? "\\bvarying" : "\\battribute") + "\\s+(?:[A-Za-z_][A-Za-z0-9_]*\\s+)+" + name + "\\s*;");
 	const std::string copy = "_wp_writable_" + name;
 	// keep the declaration (the vertex unit's output links by its name), the other uses go to the copy
 	std::string rebuilt;
 	size_t at = 0;
 	for (auto it = std::sregex_iterator (head.begin (), head.end (), decl); it != std::sregex_iterator (); ++it) {
 	    const size_t end = static_cast<size_t> (it->position () + it->length ());
+	    // the copy (and a mark that it exists) where the input is declared: inside the same #if, when it's in one
 	    rebuilt += std::regex_replace (head.substr (at, it->position () - at), use, copy) + it->str ()
-		+ "\n" + type + " " + copy + ";";
+		+ "\n" + type + " " + copy + ";\n#define _WP_HAS" + copy;
 	    at = end;
 	}
 	head = rebuilt + std::regex_replace (head.substr (at), use, copy);
 	body = std::regex_replace (body, use, copy);
-	fill += "\n\t" + copy + " = " + name + ";";
+	fill += "\n#ifdef _WP_HAS" + copy + "\n\t" + copy + " = " + name + ";\n#endif";
     }
 
-    sLog.out ("Copying the varyings the fragment unit of ", this->m_file, " writes to:", fill);
-    WPENGINE_HEALTH ("compat", { { "what", "shader: fragment writes to varyings (copied to globals)" } });
+    body = std::regex_replace (body, mainOpen, "$&" + fill);
+    sLog.out ("Copying the inputs the ", fragment ? "fragment" : "vertex", " unit of ", this->m_file, " writes to:", fill);
+    WPENGINE_HEALTH ("compat", { { "what", fragment ? "shader: fragment writes to varyings (copied to globals)" : "WE: vertex writes to attributes (copied to globals)" } });
     return head + fill + body;
+}
+
+std::string ShaderUnit::applyBuiltinDeclarations (std::string source) {
+    // WE's translator turns a declared `gl_…` input or output into a member of its IN / OUT struct with that system
+    // value's semantic (gl_Position SV_POSITION: GH 0x140125e80 adds it; the stock shadow casters declare
+    // `in uint gl_InstanceID;` and `varying uint gl_ViewportIndex;` — inferred to be SV_InstanceID and
+    // SV_ViewportArrayIndex). GLSL has them built in and refuses a declaration: it's dropped, and a vertex unit
+    // that writes gl_ViewportIndex asks for the extension that allows it there
+    static const std::regex declaration (
+	R"((^|\n)[ \t]*(?:in|out|varying|attribute)\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+)+(gl_[A-Za-z0-9_]+)\s*;[^\n]*)"
+    );
+    if (!std::regex_search (source, declaration)) {
+	return source;
+    }
+    source = std::regex_replace (source, declaration, "$1// built in: $2");
+    if (this->m_type == GLSLContext::UnitType_Vertex && source.find ("gl_ViewportIndex") != std::string::npos) {
+	this->m_extensions += "#extension GL_ARB_shader_viewport_layer_array : enable\n";
+    }
+    WPENGINE_HEALTH ("compat", { { "what", "WE: a declared gl_ built-in dropped" } });
+    return source;
 }
 
 void ShaderUnit::parseComboConfiguration (const std::string& content, const int defaultValue) {
@@ -609,7 +537,18 @@ template <typename V> V vectorDefault (const JSON& value) {
 	return V (value.get<float> ());
     }
     if (value.is_string ()) {
-	return VectorBuilder::parse<V> (value.get<std::string> ());
+	// as many components as are written, the rest 0, extras ignored (the stock editorpaintbrush gives a vec4
+	// "0 0"; VectorBuilder threw and the shader didn't build). Inferred: WE's own reader isn't located
+	std::istringstream in (value.get<std::string> ());
+	V out (0.0f);
+	for (int i = 0; i < V::length (); i++) {
+	    float f = 0.0f;
+	    if (!(in >> f)) {
+		break;
+	    }
+	    out[i] = f;
+	}
+	return out;
     }
     return V (0.0f);
 }
@@ -660,10 +599,10 @@ void ShaderUnit::parseParameterConfiguration (
 	constant = this->m_constants.find (*material);
     }
 
-    if (constant == this->m_constants.end () && !defvalue.has_value ()) {
-	if (type != "sampler2D") {
-	    sLog.exception ("Cannot parse parameter data for ", name, " in shader ", this->m_file);
-	}
+    // a parameter with neither a material constant nor a default (the stock shadowcasterfoliage4's g_SpeedLeaves,
+    // set by the material it's used with) starts at zero: it threw, and the shader didn't build. Inferred
+    if (constant == this->m_constants.end () && !defvalue.has_value () && type != "sampler2D") {
+	sLog.out ("No default for parameter ", name, " in shader ", this->m_file, ", using zero");
     }
 
     Variables::ShaderVariable* parameter = nullptr;
@@ -771,6 +710,17 @@ void ShaderUnit::parseParameterConfiguration (
 	    }
 	}
 
+	// "formatcombo": WE defines TEX<n>FORMAT to the bound texture's format (common_fragment.h's FORMAT_*, read by
+	// ConvertTextureFormat; the stock fur4 uses TEX8FORMAT in code). LWE sets only TEX0FORMAT (CPass): the others
+	// are FORMAT_RGBA8888 (0), what LWE hands the shader for any texture it decoded. Inferred
+	const auto formatCombo = data.find ("formatcombo");
+	if (formatCombo != data.end () && formatCombo->is_boolean () && formatCombo->get<bool> ()) {
+	    const std::string name = "TEX" + std::to_string (index) + "FORMAT";
+	    if (!this->m_combos.contains (name) && !this->m_overrideCombos.contains (name)) {
+		this->m_discoveredCombos.emplace (name, 0);
+	    }
+	}
+
 	if (textureName != data.end ()) {
 	    this->m_defaultTextures.emplace (index, *textureName);
 	}
@@ -868,10 +818,18 @@ const std::string& ShaderUnit::compile () {
     }
 
     // this should be the rest of the shader
-    this->m_final
-	+= this->applyWritableFragmentVaryings (this->applyFragmentTexCoordCompatibility (
-	    this->applyFragmentVaryingDeclarations (this->applyLinkedVaryingCompatibility (this->m_preprocessed))
-	));
+    std::string body = this->applyWritableFragmentVaryings (this->applyFragmentTexCoordCompatibility (
+	this->applyFragmentVaryingDeclarations (this->applyLinkedVaryingCompatibility (this->m_preprocessed))
+    ));
+    body = WERules::renameReservedWords (WERules::falsifyUnreadableIfs (this->applyBuiltinDeclarations (body)));
+    this->m_final += WERules::intrinsicOverloads (body);
+    if (this->m_type == GLSLContext::UnitType_Fragment) {
+	this->m_final += WERules::clipFunctions (body);
+    }
+    this->m_final += body;
+    if (!this->m_extensions.empty ()) {
+	this->m_final.insert (this->m_final.find ('\n') + 1, this->m_extensions);
+    }
 
     // the pass itself handles shader compilation, the unit doesn't have enough information for this step
     return this->m_final;

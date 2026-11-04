@@ -690,10 +690,18 @@ std::string WallpaperEngine::Project::shaderCheck (const std::string& name, cons
 	    }
 	}
 	out["combos"] = effective;
+	if (req.value ("source", false)) {
+	    out["vertex_source"] = vertexIn;
+	    out["fragment_source"] = fragmentIn;
+	}
 	stage = "glslang";
 	const auto [vertex, fragment] = GLSLContext::get ().toGlsl (vertexIn, fragmentIn);
 	if (vertex.empty () || fragment.empty ()) {
 	    throw std::runtime_error ("");
+	}
+	if (req.value ("source", false)) {
+	    out["vertex_glsl"] = vertex;
+	    out["fragment_glsl"] = fragment;
 	}
 	if (gl) {
 	    if (active_context != &this->context) {
