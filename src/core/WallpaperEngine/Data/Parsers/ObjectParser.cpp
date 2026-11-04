@@ -510,7 +510,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 	const auto childrenIt = particleJson.optional ("children");
 	if (childrenIt.has_value () && childrenIt->is_array ()) {
 	    for (const auto& child : *childrenIt) {
-		children.push_back (parseParticleChild (child, project));
+		children.push_back (parseParticleChild (child, project, it, base));
 	    }
 	}
 
@@ -908,8 +908,15 @@ ParticleControlPoint ObjectParser::parseParticleControlPoint (const JSON& it) {
     };
 }
 
-ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& project) {
-    std::string particleFile = "";
+ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& project, const JSON& object,
+					       const ObjectData& base) {
+    // WE's child keys and defaults (GH 0x1401eec40; read at parser 0x1401fe592): the file is `name`
+    std::string name = "";
+    const auto nameIt = it.find ("name");
+    if (nameIt != it.end () && nameIt->is_string ()) {
+	name = nameIt->get<std::string> ();
+    }
+    std::string particleFile = name;
     const auto particleIt = it.find ("particle");
     if (particleIt != it.end () && particleIt->is_string ()) {
 	particleFile = particleIt->get<std::string> ();
@@ -919,12 +926,6 @@ ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& p
     const auto typeIt = it.find ("type");
     if (typeIt != it.end () && typeIt->is_string ()) {
 	type = typeIt->get<std::string> ();
-    }
-
-    std::string name = "";
-    const auto nameIt = it.find ("name");
-    if (nameIt != it.end () && nameIt->is_string ()) {
-	name = nameIt->get<std::string> ();
     }
 
     // Helper lambda to parse vec3 fields that might be strings, arrays, single numbers, or missing
@@ -947,16 +948,54 @@ ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& p
 	return defaultValue;
     };
 
+    // the child system itself: a particle object of the parent's id with the same instance overrides (WE's children
+    // share the object's override table: GH 0x140251f70 patches them from it), at the parent's place. A cycle of
+    // children is cut at depth 4
+    std::shared_ptr<Particle> particle;
+    static thread_local int depth = 0;
+    if (!particleFile.empty () && depth < 4) {
+	JSON childObject = JSON::object ();
+	childObject["particle"] = particleFile;
+	const auto overrideIt = object.find ("instanceoverride");
+	if (overrideIt != object.end ()) {
+	    childObject["instanceoverride"] = *overrideIt;
+	}
+	ObjectData childBase {
+	    .id = base.id,
+	    .name = base.name + "/" + particleFile,
+	    .dependencies = {},
+	    .parent = std::nullopt,
+	    .origin = Builders::UserSettingBuilder::fromValue (glm::vec3 (0.0f)),
+	    .groupScale = Builders::UserSettingBuilder::fromValue (glm::vec3 (1.0f)),
+	    .groupAngles = Builders::UserSettingBuilder::fromValue (glm::vec3 (0.0f)),
+	    .groupVisible = Builders::UserSettingBuilder::fromValue (true),
+	    .groupParallaxDepth = Builders::UserSettingBuilder::fromValue (glm::vec2 (1.0f)),
+	    .cameraZoom = nullptr,
+	    .solid = false,
+	};
+	depth++;
+	try {
+	    auto parsed = parseParticle (childObject, project, std::move (childBase));
+	    if (parsed != nullptr && parsed->material != nullptr && parsed->material->material != nullptr) {
+		particle = std::shared_ptr<Particle> (std::move (parsed));
+	    }
+	} catch (const std::exception& e) {
+	    sLog.error ("Cannot load child particle system ", particleFile, ": ", e.what ());
+	}
+	depth--;
+    }
+
     return ParticleChild {
 	.type = type,
 	.name = name,
-	.maxCount = it.optional ("maxcount", 20),
+	.maxCount = it.optional ("maxcount", 10),
 	.controlPointStartIndex = it.optional ("controlpointstartindex", 0),
 	.probability = it.optional ("probability", 1.0f),
 	.angles = parseVec3 ("angles", glm::vec3 (0.0f)),
 	.origin = parseVec3 ("origin", glm::vec3 (0.0f)),
 	.scale = parseVec3 ("scale", glm::vec3 (1.0f)),
 	.particleFile = particleFile,
+	.particle = std::move (particle),
     };
 }
 

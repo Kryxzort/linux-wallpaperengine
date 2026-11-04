@@ -39,7 +39,7 @@ private:
     static ParticleOperatorUniquePtr parseParticleOperator (const JSON& it, const Properties& properties);
     static ParticleRenderer parseParticleRenderer (const JSON& it);
     static ParticleControlPoint parseParticleControlPoint (const JSON& it);
-    static ParticleChild parseParticleChild (const JSON& it, const Project& project);
+    static ParticleChild parseParticleChild (const JSON& it, const Project& project, const JSON& object, const ObjectData& base);
     static ParticleInstanceOverride parseParticleInstanceOverride (const JSON& it, const Properties& properties);
 };
 } // namespace WallpaperEngine::Data::Parsers

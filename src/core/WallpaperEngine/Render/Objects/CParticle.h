@@ -48,6 +48,8 @@ struct ParticleInstance {
 
     /** one random value in [0, 1) per particle, drawn at spawn: oscillate* and turbulence read it (WE: system +0x338) */
     float random { 0.0f };
+    /** a per-system serial number: the particle a follow child is bound to (WE binds by particle id) */
+    uint32_t id { 0 };
 
     // Initial values for resets/multipliers
     struct {
@@ -96,6 +98,11 @@ class CParticle final : public CRenderable, public Scripting::ScriptableObject {
 
 public:
     CParticle (Wallpapers::CScene& scene, const Particle& particle);
+    /** a child system's instance (P2), simulated in `parent`'s space */
+    CParticle (
+	Wallpapers::CScene& scene, const Particle& particle, CParticle& parent, const ParticleChild& child,
+	bool simulateOnly
+    );
     ~CParticle ();
 
     void setup () override;
@@ -127,6 +134,8 @@ protected:
 	/** > 0: the time left of a periodic "on" window; <= 0: minus the time left of an "off" one */
 	float periodicTimer { 0.0f };
 	uint32_t burst { 0 };
+	/** a follow child's particle died: no more emission (WE's bit 31, GH 0x140254ed0) */
+	bool stopped { false };
     };
     std::shared_ptr<EmitterState> addEmitterState (const ParticleEmitter& emitter);
     static void resetEmitter (const ParticleEmitter& emitter, EmitterState& state);
@@ -140,6 +149,33 @@ protected:
     void patchColor ();
     /** a colour shifted in HSV by (colorn − reference), WE's patch op 0xb */
     glm::vec3 tintColor (const glm::vec3& color) const;
+
+    /** the starttime prewarm (GH 0x140254cc0) */
+    void prewarm ();
+
+    /** the child systems of one entry of `children` (P2): its live instances and the finished ones kept for reuse */
+    struct ChildSet {
+	const ParticleChild* child { nullptr };
+	/** 1 static, 2 eventfollow, 3 eventspawn, 4 eventdeath (WE's numbering) */
+	int type { 1 };
+	std::vector<std::unique_ptr<CParticle>> active;
+	std::vector<std::unique_ptr<CParticle>> pool;
+	/** an event child's one drawing instance (it never simulates): the live instances' particles go through it */
+	std::unique_ptr<CParticle> renderer;
+    };
+    std::unique_ptr<CParticle> makeChild (ChildSet& set, const glm::vec3& at);
+    /** the event children of a particle event: 3 = spawned (follow and spawn children), 4 = died */
+    void spawnEventChildren (int type, uint32_t id, const glm::vec3& at);
+    void updateChildren (float dt);
+    void drawChildren ();
+    /** draws these instances' particles with this system's pass */
+    void drawFrom (const std::vector<const CParticle*>& instances);
+    [[nodiscard]] bool childAlive () const;
+    void stopEmitters ();
+    /** the object whose target a system draws into (a child: its top-level system's) */
+    [[nodiscard]] const Object& drawingObject () const;
+    /** a child takes its parent's place and matrices */
+    void takeParentTransform ();
 
     // Emitter creators
     EmitterFunc createBoxEmitter (const ParticleEmitter& emitter);
@@ -204,6 +240,31 @@ private:
     std::vector<OperatorFunc> m_operators;
 
     std::vector<ControlPointData> m_controlPoints;
+    /** the control points the operators see: m_controlPoints, in the parent's space for a child */
+    std::vector<ControlPointData> m_opControlPoints;
+    /** the control points the system's JSON defines (bit per id) */
+    uint32_t m_ownControlPoints { 0 };
+
+    // child systems (P2)
+    std::vector<ChildSet> m_children;
+    bool m_hasEventChildren { false };
+    /** this step's spawned particles (id, position), for the event children */
+    std::vector<std::pair<uint32_t, glm::vec3>> m_spawned;
+    uint32_t m_nextParticleId { 0 };
+    /** a child instance's parent and definition, its offset (origin + its particle) and turn/scale */
+    CParticle* m_parentSystem { nullptr };
+    const ParticleChild* m_childDef { nullptr };
+    glm::vec3 m_childOrigin { 0.0f };
+    glm::vec3 m_childOffset { 0.0f };
+    glm::mat3 m_childLinear { 1.0f };
+    glm::mat3 m_childLinearInverse { 1.0f };
+    float m_childSizeScale { 1.0f };
+    /** an event child's instance: simulated, drawn through its child entry's renderer (no GL objects of its own) */
+    bool m_simulateOnly { false };
+    /** an event child entry's renderer: set up to draw, never simulated (no children, no prewarm) */
+    bool m_drawOnly { false };
+    /** the particle a follow child is bound to, -1 when none */
+    int64_t m_boundId { -1 };
 
     std::vector<float> m_vertices;
     std::vector<uint32_t> m_indices;

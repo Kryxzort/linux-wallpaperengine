@@ -558,9 +558,15 @@ struct ParticleRenderer {
 /**
  * Child particle system
  */
+class Particle;
+
 struct ParticleChild {
+    /** "static" (always on), "eventfollow" / "eventspawn" (one per spawned particle, following it or left where it
+     *  spawned), "eventdeath" (one per particle that dies, where it died); WE's types 1–4 (parser 0x1401feff4) */
     std::string type;
+    /** the child system's file (WE's `name`) */
     std::string name;
+    /** at most this many instances of an event child at once (WE's default 10, GH 0x1401eec40) */
     int maxCount;
     int controlPointStartIndex;
     float probability;
@@ -568,6 +574,8 @@ struct ParticleChild {
     glm::vec3 origin;
     glm::vec3 scale;
     std::string particleFile;
+    /** the child system, parsed like a particle object (null when its file doesn't load) */
+    std::shared_ptr<Particle> particle;
 };
 
 /**
