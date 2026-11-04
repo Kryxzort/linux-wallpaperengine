@@ -1,5 +1,6 @@
 #include "ScriptEngine.h"
 #include "WallpaperEngine/Health.h"
+#include <cstdlib>
 
 #include "Adapters/ScriptableObjectAdapter.h"
 #include "ScriptPropertiesObject.h"
@@ -906,14 +907,34 @@ void ScriptEngine::logModuleError (LoadedModule& module, const char* what) {
 	const bool silent = JS_VALUE_GET_TAG (exception) == JS_TAG_UNINITIALIZED;
 	if (WallpaperEngine::Health::enabled ()) {
 	    const auto cut = module.key.rfind ('_');
-	    WallpaperEngine::Health::report (
-		"script_error",
-		{ { "object", module.object.getId () }, { "object_name", module.object.getObject ().name },
-		  { "property", cut == std::string::npos ? module.key : module.key.substr (0, cut) }, { "phase", what },
-		  { "message", silent ? std::string ("a native call failed without an error (an API LWE doesn't implement?)")
-				      : WallpaperEngine::Health::brief (message ? message : "<exception>", 300) },
-		  { "stack", WallpaperEngine::Health::brief (stack, 300) } }
-	    );
+	    nlohmann::json record = {
+		{ "object", module.object.getId () }, { "object_name", module.object.getObject ().name },
+		{ "property", cut == std::string::npos ? module.key : module.key.substr (0, cut) }, { "phase", what },
+		{ "message", silent ? std::string ("a native call failed without an error (an API LWE doesn't implement?)")
+				    : WallpaperEngine::Health::brief (message ? message : "<exception>", 300) },
+		{ "stack", WallpaperEngine::Health::brief (stack, 300) }
+	    };
+	    // QuickJS names no callee in "not a function": the source line the stack's first frame points at does
+	    // ("(<key>:<line>:<column>)")
+	    if (const auto at = stack.find ("(" + module.key + ":"); at != std::string::npos) {
+		const int line = std::atoi (stack.c_str () + at + module.key.size () + 2);
+		const auto colon = stack.find (':', at + module.key.size () + 2);
+		const int column = colon != std::string::npos ? std::atoi (stack.c_str () + colon + 1) : 0;
+		size_t begin = 0;
+		for (int i = 1; i < line && begin != std::string::npos; i++) {
+		    begin = module.source.find ('\n', begin);
+		    begin = begin == std::string::npos ? begin : begin + 1;
+		}
+		if (line > 0 && begin != std::string::npos) {
+		    const auto end = module.source.find ('\n', begin);
+		    record["line"] = line;
+		    record["column"] = column;
+		    record["source_line"] = WallpaperEngine::Health::brief (
+			module.source.substr (begin, end == std::string::npos ? std::string::npos : end - begin), 200
+		    );
+		}
+	    }
+	    WallpaperEngine::Health::report ("script_error", std::move (record));
 	}
 	sLog.error (
 	    "ScriptEngine [", module.key, ".", what, "]: ",
