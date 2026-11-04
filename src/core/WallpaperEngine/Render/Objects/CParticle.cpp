@@ -683,10 +683,11 @@ void CParticle::update (float dt) {
 	}
 	if (cp.linkMouse) {
 	    if (mousePos) {
-		// Convert mouse position from normalized [0,1] to centered screen space
+		// the pointer (normalised, y down from the top: the host's) in this centred, y-down space, as the
+		// origin (refreshTransform); it was y up, so a trail went up when the pointer went down (3414858021)
 		glm::vec3 position;
 		position.x = (mousePos->x * screenWidth) - (screenWidth / 2.0f);
-		position.y = (screenHeight / 2.0f) - (mousePos->y * screenHeight);
+		position.y = (mousePos->y * screenHeight) - (screenHeight / 2.0f);
 		position.z = 0.0f;
 		// its offset, like any, is WE's y-up one
 		cp.position = toLocal * (position + glm::vec3 (offset.x, -offset.y, offset.z) - m_transformedOrigin);
