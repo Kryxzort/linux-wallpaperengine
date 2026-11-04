@@ -1001,6 +1001,13 @@ ParticleChild ObjectParser::parseParticleChild (const JSON& it, const Project& p
 
 ParticleInstanceOverride ObjectParser::parseParticleInstanceOverride (const JSON& it, const Properties& properties) {
     const bool colornSet = it.find ("colorn") != it.end ();
+    std::array<UserSettingUniquePtr, 8> controlPoints {};
+    for (int i = 0; i < 8; i++) {
+	const std::string key = "controlpoint" + std::to_string (i);
+	if (it.find (key) != it.end ()) {
+	    controlPoints[i] = it.user (key, properties, glm::vec3 (0.0f));
+	}
+    }
     return ParticleInstanceOverride {
 	.enabled = it.user ("enabled", properties, true),
 	.alpha = it.user ("alpha", properties, 1.0f),
@@ -1012,5 +1019,6 @@ ParticleInstanceOverride ObjectParser::parseParticleInstanceOverride (const JSON
 	.color = it.user ("color", properties, glm::vec3 (1.0f)),
 	.colorn = it.user ("colorn", properties, glm::vec3 (1.0f)),
 	.colornSet = colornSet,
+	.controlPoint = std::move (controlPoints),
     };
 }

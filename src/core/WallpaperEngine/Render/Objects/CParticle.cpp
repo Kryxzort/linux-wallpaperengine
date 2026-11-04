@@ -97,7 +97,7 @@ CParticle::CParticle (
     m_childDef = &child;
     glm::vec3 angles = child.angles;
     glm::mat4 linear (1.0f);
-    // the system's own rotation convention (updateMatrices) in this y-up space
+    // the system's own rotation convention (updateMatrices), in its mirrored (y-down) space
     linear = glm::rotate (linear, -angles.z, glm::vec3 (0, 0, 1));
     linear = glm::rotate (linear, angles.y, glm::vec3 (0, 1, 0));
     linear = glm::rotate (linear, -angles.x, glm::vec3 (1, 0, 0));
@@ -191,9 +191,11 @@ void CParticle::setup () {
 	if (cp.id >= 0 && cp.id < 8) {
 	    m_ownControlPoints |= 1u << cp.id;
 	    m_controlPoints[cp.id].offset = cp.offset;
+	    m_controlPoints[cp.id].flags = cp.flags;
 	    // Link to mouse if either flags bit 0 is set
 	    m_controlPoints[cp.id].linkMouse = (cp.flags & 1) != 0;
-	    m_controlPoints[cp.id].worldSpace = (cp.flags & 2) != 0;
+	    // bit 1: the offset is in the scene's space; control point 0 ignores it (GH 0x1402504f0)
+	    m_controlPoints[cp.id].worldSpace = (cp.flags & 2) != 0 && cp.id != 0;
 
 	    // Initialize position to offset for non-mouse-linked control points
 	    // Mouse-linked CPs will have their position updated in update()
@@ -666,25 +668,36 @@ void CParticle::update (float dt) {
 	refreshTransform ();
     }
 
-    // Update control points with mouse position
+    // the control points this step (GH 0x140251f70 → 0x1402504f0). An instanceoverride `controlpointN` replaces the
+    // offset unless the control point follows the pointer or has flags 0x10004; live, so a slider or script moves it
+    // (P10). A scene-space point (bit 1, not control point 0) is turned into the system's space by the inverse of
+    // its whole transform, and so is a pointer one (P34, P35: they ignored the system's scale and angles)
+    const glm::mat3 toLocal = localFromScene ();
     const glm::vec2* mousePos = getScene ().getMousePosition ();
-    if (mousePos) {
-
-	for (auto& cp : m_controlPoints) {
-	    if (cp.linkMouse) {
+    for (int i = 0; i < 8; i++) {
+	auto& cp = m_controlPoints[i];
+	glm::vec3 offset = cp.offset;
+	const auto& override = m_particle.instanceOverride.controlPoint[i];
+	if (override != nullptr && (cp.flags & 0x10005) == 0) {
+	    offset = override->value->getVec3 ();
+	}
+	if (cp.linkMouse) {
+	    if (mousePos) {
 		// Convert mouse position from normalized [0,1] to centered screen space
 		glm::vec3 position;
 		position.x = (mousePos->x * screenWidth) - (screenWidth / 2.0f);
 		position.y = (screenHeight / 2.0f) - (mousePos->y * screenHeight);
 		position.z = 0.0f;
-
-		// Apply control point offset
-		position += cp.offset;
-
-		// Convert to particle local space to prevent double transformation by model matrix
-		// Both world-space and local-space CPs are handled the same way now
-		cp.position = position - m_transformedOrigin;
+		// its offset, like any, is WE's y-up one
+		cp.position = toLocal * (position + glm::vec3 (offset.x, -offset.y, offset.z) - m_transformedOrigin);
 	    }
+	} else if (cp.worldSpace) {
+	    // the scene's space (WE's world: y up from the bottom-left) to this centred one, as the origin's
+	    const glm::vec3 centred (offset.x - screenWidth / 2.0f, screenHeight / 2.0f - offset.y, offset.z);
+	    cp.position = toLocal * (centred - m_transformedOrigin);
+	} else {
+	    // WE's particle space is y-up: mirrored, as the emitters' origins
+	    cp.position = glm::vec3 (offset.x, -offset.y, offset.z);
 	}
     }
 
@@ -1776,7 +1789,7 @@ OperatorFunc CParticle::createTurbulenceOperator (const TurbulenceOperator& op) 
     // phase range +0x80, timescale +0xd0, masked axes +0xd4). Per particle, with its one random r:
     //   phase = r·(phasemax − phasemin) + time·timescale; q = (position + phase)·scale
     //   v.x += noise (q.x, q.y, q.z)·speed·mask.x·fdt, v.y += noise (q.z, q.x, q.y)·…, v.z += noise (q.y, q.z, q.x)·…
-    // with speed = speedmin + r·(speedmax − speedmin). Each masked axis is a scalar 3D noise in WE's (y-down) space;
+    // with speed = speedmin + r·(speedmax − speedmin). Each masked axis is a scalar 3D noise in WE's (y-up) space;
     // it was a normalised curl with one phase and speed per operator. phasemin is never read by the case;
     // timescale is bound to the `rate` override (parser 0x1401fb45a)
     return [this, scaleValue, speedMinValue, speedMaxValue, timeScaleValue, maskValue, phaseMinValue, phaseMaxValue,
@@ -1798,7 +1811,7 @@ OperatorFunc CParticle::createTurbulenceOperator (const TurbulenceOperator& op) 
 	for (uint32_t i = 0; i < count; i++) {
 	    auto& p = particles[i];
 	    const float phase = p.random * phaseRange + time;
-	    // WE's particle space is y-down
+	    // in WE's (y-up) particle space
 	    const glm::vec3 q = (glm::vec3 (p.position.x, -p.position.y, p.position.z) + phase) * scale;
 	    const float speed = (speedMin + p.random * speedRange) * speedScale;
 	    glm::vec3 n (0.0f);
@@ -1841,7 +1854,7 @@ OperatorFunc CParticle::createVortexOperator (const VortexOperator& op) {
 	       std::vector<ParticleInstance>& particles, uint32_t count,
 	       const std::vector<ControlPointData>& controlPoints, float, float
 	   ) {
-	// WE's y-down axis and offset in this y-up space
+	// WE's (y-up) axis and offset in this mirrored space
 	glm::vec3 axis = axisValue->getVec3 ();
 	axis.y = -axis.y;
 	const float axisLength = glm::length (axis);
@@ -1868,7 +1881,7 @@ OperatorFunc CParticle::createVortexOperator (const VortexOperator& op) {
 		continue;
 	    }
 	    const float t = span != 0.0f ? std::clamp ((distance - inner) / span, 0.0f, 1.0f) : 0.0f;
-	    // r̂ × axis in WE's y-down space is axis × r̂ here (a mirror flips the cross product)
+	    // r̂ × axis in WE's space is axis × r̂ here (a mirror flips the cross product)
 	    const glm::vec3 tangent = glm::cross (axis, r / distance);
 	    p.velocity += tangent * (speedInner + t * speedRange) * speedScale;
 	}
@@ -2092,7 +2105,7 @@ OperatorFunc CParticle::createOscillatePositionOperator (const OscillatePosition
 	    const float b = a + glm::two_pi<float> () * p.random;
 	    const float dx = s * (std::sin (f * a) - std::sin (f * (a - dt)));
 	    const float dy = s * (std::sin (f * b) - std::sin (f * (b - dt)));
-	    // WE's y-down space
+	    // WE's particle space is y-up
 	    p.position += glm::vec3 (dx * mask.x, -dy * mask.y, dx * mask.z);
 	}
     };
@@ -2315,13 +2328,25 @@ void CParticle::refreshTransform () {
 
     m_transformedOrigin = origin;
     m_transformValid = true;
+    // (the control points follow in update (): a scene-space one stays where it is in the scene)
+}
 
-    // world-space control points stay where they are in the world
-    for (auto& cp : m_controlPoints) {
-	if (!cp.linkMouse && cp.worldSpace) {
-	    cp.position = cp.offset - m_transformedOrigin;
+glm::mat3 CParticle::localFromScene () const {
+    // the inverse of the system's rotation and scale (updateMatrices' order)
+    glm::vec3 angles = m_particle.angles->value->getVec3 ();
+    angles.z = m_resolvedAngle;
+    glm::mat4 m (1.0f);
+    m = glm::rotate (m, -angles.z, glm::vec3 (0, 0, 1));
+    m = glm::rotate (m, angles.y, glm::vec3 (0, 1, 0));
+    m = glm::rotate (m, -angles.x, glm::vec3 (1, 0, 0));
+    glm::vec3 scale = m_resolvedScale;
+    for (int i = 0; i < 3; i++) {
+	if (std::abs (scale[i]) < 1e-6f) {
+	    scale[i] = 1e-6f;
 	}
     }
+    m = glm::scale (m, scale);
+    return glm::inverse (glm::mat3 (m));
 }
 
 const Object& CParticle::drawingObject () const {

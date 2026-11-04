@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <map>
 #include <optional>
 #include <string>
@@ -593,6 +595,9 @@ struct ParticleInstanceOverride {
     UserSettingUniquePtr colorn; // Tints the system: an HSV shift against its reference colour (CParticle)
     /** colorn is in the object's instanceoverride (WE tints nothing otherwise) */
     bool colornSet = false;
+    /** `controlpoint0`..`controlpoint7`: replace the control points' offsets (WE's instance table +0xf0 + 12i, applied by
+     *  GH 0x140251f70 unless the control point's flags have 0x10005); null where the object doesn't set one */
+    std::array<UserSettingUniquePtr, 8> controlPoint {};
 };
 
 struct ParticleData {

@@ -75,6 +75,7 @@ struct ControlPointData {
     glm::vec3 offset { 0.0f };
     bool linkMouse { false };
     bool worldSpace { false };
+    uint32_t flags { 0 };
 };
 
 /**
@@ -172,6 +173,8 @@ protected:
     void drawFrom (const std::vector<const CParticle*>& instances);
     [[nodiscard]] bool childAlive () const;
     void stopEmitters ();
+    /** from the scene's centred space to the system's: the inverse of its rotation and scale */
+    [[nodiscard]] glm::mat3 localFromScene () const;
     /** the object whose target a system draws into (a child: its top-level system's) */
     [[nodiscard]] const Object& drawingObject () const;
     /** a child takes its parent's place and matrices */
