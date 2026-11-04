@@ -70,10 +70,20 @@ CObject::ResolvedTransform CObject::resolveTransform (const Object& object) cons
 	    break;
 	}
 	const auto* parentObject = this->getScene ().getObject (current->parent.value ());
-	if (parentObject == nullptr) {
+	const Object* parentData = parentObject != nullptr ? &parentObject->getObject () : nullptr;
+	if (parentData == nullptr) {
+	    // a parent that wasn't built (a layer whose shaders failed) still places its children: its scene data
+	    for (const auto& candidate : this->getScene ().getScene ().objects) {
+		if (candidate->id == current->parent.value ()) {
+		    parentData = candidate.get ();
+		    break;
+		}
+	    }
+	}
+	if (parentData == nullptr) {
 	    break;
 	}
-	current = &parentObject->getObject ();
+	current = parentData;
 	chain[count++] = current;
     }
 
