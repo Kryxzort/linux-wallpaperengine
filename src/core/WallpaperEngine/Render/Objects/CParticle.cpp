@@ -29,6 +29,24 @@ CParticle::CParticle (Wallpapers::CScene& scene, const Particle& particle) :
     this->registerProperty ("angles", *particle.angles->value);
     this->registerProperty ("visible", *particle.visible->value);
     this->registerProperty ("parallaxDepth", *particle.parallaxDepth->value);
+    // the instanceoverride values are scriptable like any property (the editor puts scripts on them: 11 library scenes,
+    // rate / size / count / speed / controlpoint1 / colorn / alpha; 2290002190's audio-driven rate). They weren't
+    // registered, so their scripts never ran and the value stayed at its default
+    const auto& io = particle.instanceOverride;
+    const std::pair<const char*, const UserSettingUniquePtr*> overrides[] = {
+	{ "alpha", &io.alpha }, { "size", &io.size }, { "lifetime", &io.lifetime }, { "rate", &io.rate },
+	{ "speed", &io.speed }, { "count", &io.count }, { "color", &io.color }, { "colorn", &io.colorn },
+    };
+    for (const auto& [name, setting] : overrides) {
+	if (*setting != nullptr) {
+	    this->registerProperty (name, *(*setting)->value);
+	}
+    }
+    for (int i = 0; i < 8; i++) {
+	if (io.controlPoint[i] != nullptr) {
+	    this->registerProperty ("controlpoint" + std::to_string (i), *io.controlPoint[i]->value);
+	}
+    }
 
     this->detectTexture ();
 
