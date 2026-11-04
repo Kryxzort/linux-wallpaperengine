@@ -195,6 +195,8 @@ protected:
     /** from the scene's centred space to the system's: the inverse of its rotation and scale */
     /** The system's model matrix without the parallax (world-space carry, flags bit 0) */
     [[nodiscard]] glm::mat4 systemMatrix () const;
+    /** A rope segment's pieces: the renderer's subdivision + 1 (WE's TRAILSUBDIVISION) */
+    [[nodiscard]] int ropeSubSegments () const;
     [[nodiscard]] glm::mat3 localFromScene () const;
     /** the object whose target a system draws into (a child: its top-level system's) */
     [[nodiscard]] const Object& drawingObject () const;

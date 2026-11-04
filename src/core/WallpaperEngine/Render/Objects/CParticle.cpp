@@ -83,8 +83,8 @@ CParticle::CParticle (Wallpapers::CScene& scene, const Particle& particle) :
 
     // Calculate buffer sizes based on renderer type
     if (m_useRopeRenderer) {
-	// Rope: connects N particles with (N-1) segments, each subdivided into sub-segments
-	const int subdivision = std::max (1, m_ropeSubdivision);
+	// Rope: connects N particles with (N-1) segments, each subdivided into sub-segments (ropeSubSegments)
+	const int subdivision = this->ropeSubSegments ();
 	const int maxSubSegments = std::max (1, static_cast<int> (m_maxParticles - 1)) * subdivision;
 	m_vertices.resize (maxSubSegments * 4 * ROPE_FLOATS_PER_VERTEX);
 	m_indices.resize (maxSubSegments * 6);
@@ -178,6 +178,7 @@ void CParticle::setup () {
 	m_spritesheetCols = static_cast<int> (texture->getSpritesheetCols ());
 	m_spritesheetRows = static_cast<int> (texture->getSpritesheetRows ());
 	m_spritesheetFrames = static_cast<int> (texture->getSpritesheetFrames ());
+
 	m_spritesheetDuration = texture->getSpritesheetDuration ();
     }
 
@@ -2243,12 +2244,15 @@ void CParticle::setupPass () {
     if (m_spritesheetFrames > 0) {
 	m_passOverride->combos["SPRITESHEET"] = 1;
 	// WE cross-fades a sheet's current and next frame (genericparticle.frag) unless the particle flags have
-	// bit 1 or the frames are random (GH 0x1401fffb0); the frames stepped. SPRITESHEETBLENDNPOT (a padded
-	// sheet) is left off: it needs g_Texture0Resolution.z to be the sheet's unpadded width, and an animated
-	// texture's is its frame width here
+	// bit 1 or the frames are random (GH 0x1401fffb0); the frames stepped
 	if ((m_particle.flags & 2) == 0 && m_particle.animationMode != "randomframe") {
 	    m_passOverride->combos["SPRITESHEETBLEND"] = 1;
 	}
+	// WE sets SPRITESHEETBLENDNPOT for a sheet padded to a power-of-two texture (GH 0x1401fffb0; 3445973124's and
+	// 3479521040 / 3490034653's birds): its frame walk (common_particles.h) wraps a row at the image's width inside
+	// the padded texture. LWE uploads a mip at the size it's stored at (these two sheets: images of their own
+	// size, not padded), where the plain walk with frameWidth = 1 / cols is that same walk (checked on the birds:
+	// the NPOT walk over that upload cut them up), so it stays off
     }
     if (m_useTrailRenderer) {
 	m_passOverride->combos["TRAILRENDERER"] = 1;
@@ -2815,6 +2819,13 @@ void CParticle::renderSprites () {
 #endif
 }
 
+int CParticle::ropeSubSegments () const {
+    // WE sets TRAILSUBDIVISION = the renderer's `subdivision` (GH 0x1401fffb0; default 4 for rope, 1 for ropetrail and
+    // spritetrail, GH 0x1401ee560 / 0x1401ee8c0) and genericropeparticle.geom emits that many points between a
+    // segment's two ends: subdivision + 1 pieces (it was max (1, subdivision): one piece fewer, a straight rope at 1)
+    return std::max (0, m_ropeSubdivision) + 1;
+}
+
 void CParticle::renderRope () {
     if (m_particleCount < 2 || m_pass == nullptr) {
 	return;
@@ -2838,7 +2849,7 @@ void CParticle::renderRope () {
     // [22-25] a_Color:          colorStart.rgba
 
     const uint32_t numSegments = aliveCount - 1;
-    const int subdivision = std::max (1, m_ropeSubdivision);
+    const int subdivision = this->ropeSubSegments ();
 
     // Catmull-Rom spline evaluation
     auto catmullRom = [] (const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3,
