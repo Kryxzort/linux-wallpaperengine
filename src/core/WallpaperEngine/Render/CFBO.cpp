@@ -256,6 +256,44 @@ void CFBO::makeShadowAtlas () {
     this->m_shadowAtlas = true;
 }
 
+void CFBO::makeDepthTexture (bool withStencil) {
+    GLint previousFramebuffer = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+    glBindTexture (GL_TEXTURE_2D, this->m_texture);
+    glTexImage2D (
+	GL_TEXTURE_2D, 0, withStencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24, static_cast<GLsizei> (this->m_resolution.x),
+	static_cast<GLsizei> (this->m_resolution.y), 0, withStencil ? GL_DEPTH_STENCIL : GL_DEPTH_COMPONENT,
+	withStencil ? GL_UNSIGNED_INT_24_8 : GL_UNSIGNED_INT, nullptr
+    );
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+    if (withStencil) {
+	glTexParameteri (GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_DEPTH_COMPONENT);
+    }
+
+    glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
+    glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D (
+	GL_FRAMEBUFFER, withStencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, this->m_texture, 0
+    );
+    glDrawBuffer (GL_NONE);
+    glReadBuffer (GL_NONE);
+
+    if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+	sLog.error ("The depth target ", this->m_name, " is an incomplete framebuffer");
+	WPENGINE_HEALTH ("pass_error", { { "message", "depth target " + this->m_name + " is an incomplete framebuffer" } });
+    }
+
+    glDepthMask (GL_TRUE);
+    glClearDepth (1.0);
+    glClear (GL_DEPTH_BUFFER_BIT);
+    glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+}
+
 bool CFBO::isShadowAtlas () const { return this->m_shadowAtlas; }
 
 void CFBO::swapContents (CFBO& other) {

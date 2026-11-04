@@ -171,6 +171,10 @@ LightUniquePtr ObjectParser::parseLight (const JSON& it, const Project& project,
 	    .cookie = it.optional ("cookie", std::string ("cookie/flashlight1")),
 	    .controlPoint = it.optional ("controlpoint", glm::vec3 (0.0f)),
 	    .lightSourceSize = it.optional ("lightsourcesize", 0.0f),
+	    .castVolumetrics = it.user ("castvolumetrics", project.properties, false),
+	    .density = it.optional ("density", 2.0f),
+	    .scattering = it.optional ("volumetricsscattering", 0.5f),
+	    .volumetricsExponent = it.optional ("volumetricsexponent", 1.0f),
 	}
     );
 }

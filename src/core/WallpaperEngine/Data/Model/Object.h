@@ -253,6 +253,15 @@ struct LightData {
     std::string cookie = "cookie/flashlight1";
     glm::vec3 controlPoint = glm::vec3 (0.0f);
     float lightSourceSize = 0.0f;
+    /**
+     * Volumetrics (GH 0x140283df0's table): `castvolumetrics` sets bit 2 of the flags at +0x2c4; `density` +0x2f8
+     * (2), `volumetricsscattering` +0x2fc (0.5), `volumetricsexponent` +0x300 (1) — the defaults the factory sets
+     * (GH 0x1401bec50). The volumetrics pass (GH 0x1401c56e0) marches the light's volume with them
+     */
+    UserSettingUniquePtr castVolumetrics = nullptr;
+    float density = 2.0f;
+    float scattering = 0.5f;
+    float volumetricsExponent = 1.0f;
 };
 
 class Light : public Object, public LightData {

@@ -1,5 +1,6 @@
 #include "WallpaperEngine/Render/Objects/CGroup.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Render/Objects/CLightVolumes.h"
 #include "WallpaperEngine/Render/Objects/CModel.h"
 #include "WallpaperEngine/Render/Objects/CParticle.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
@@ -171,6 +172,9 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     }
 
     this->setupBloom (*scene, sceneWidth, sceneHeight);
+
+    // the volumetric lights (castvolumetrics), drawn after the objects
+    this->m_lightVolumes = Objects::CLightVolumes::create (*this);
 
     if (WallpaperEngine::Health::enabled ()) {
 	this->reportHealthBuild ();
@@ -508,6 +512,7 @@ CScene::~CScene () {
 
     // bloom object is in the objects list, so no need to explicitly delete it
     this->m_bloomObject = nullptr;
+    this->m_lightVolumes.reset ();
 
     for (const auto& val : this->m_objects | std::views::values) {
 	delete val;
@@ -812,6 +817,14 @@ void CScene::renderFrame () {
 	}
 
 	cur->render ();
+    }
+
+    // WE's volumetrics pass (GH 0x1401c56e0) over what was drawn. Inferred: where WE runs it in the frame wasn't traced
+    // (it's reached through a vtable); here after the objects, before the fade
+    if (this->m_lightVolumes != nullptr) {
+	this->m_lightVolumes->render ();
+	glBindFramebuffer (GL_FRAMEBUFFER, this->getWallpaperFramebuffer ());
+	glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
     }
 
     this->renderFade ();

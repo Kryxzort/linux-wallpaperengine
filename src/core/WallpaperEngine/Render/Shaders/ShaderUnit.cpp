@@ -702,7 +702,7 @@ void ShaderUnit::parseParameterConfiguration (
 	parameter = new Variables::ShaderVariableFloat (floatDefault (defaultValue));
     } else if (type == "int") {
 	parameter = new Variables::ShaderVariableInteger (intDefault (defaultValue));
-    } else if (type == "sampler2D" || type == "sampler2DComparison") {
+    } else if (type == "sampler2D" || type == "sampler2DComparison" || type == "sampler2DBackBuffer") {
 	// samplers can have special requirements, check what sampler we're working with and create definitions
 	// if needed
 	const auto textureName = data.find ("default");

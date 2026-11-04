@@ -19,6 +19,7 @@ class CObject;
 }
 
 namespace WallpaperEngine::Render::Objects {
+class CLightVolumes;
 class CSound;
 class CImage;
 }
@@ -251,6 +252,8 @@ private:
 
     std::unique_ptr<Scripting::ScriptEngine> m_scriptEngine;
     std::unique_ptr<Camera> m_camera;
+    /** the volumetric lights' pass (a 3D scene with a light that casts volumetrics), else null */
+    std::unique_ptr<Objects::CLightVolumes> m_lightVolumes;
     ObjectUniquePtr m_bloomObjectData;
     CObject* m_bloomObject = nullptr;
     std::map<int, CObject*> m_objects = {};

@@ -50,6 +50,11 @@ public:
      * SamplerComparisonState, inferred), cleared to 1. A resize keeps it one
      */
     void makeShadowAtlas ();
+    /**
+     * A depth texture sampled as a value (no comparison), nearest: depth + stencil (DEPTH24_STENCIL8) so a scene's
+     * depth renderbuffer blits into it, or depth only (DEPTH_COMPONENT24) to draw into
+     */
+    void makeDepthTexture (bool withStencil);
     [[nodiscard]] bool isShadowAtlas () const;
     /**
      * Exchanges what the two FBOs hold (their GL framebuffer, texture, depth buffer and size) in place: a pass's
