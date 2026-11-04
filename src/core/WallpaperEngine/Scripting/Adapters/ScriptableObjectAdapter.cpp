@@ -298,15 +298,13 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	}
     }
 
-    // ITextLayer alignment
-    if (object.getObject ().is<Text> ()) {
-	const auto* text = object.getObject ().as<Text> ();
-
+    // ITextLayer alignment (live: a script can switch it)
+    if (const auto* text = object.asOrNull<CText> ()) {
 	if (strcmp (name, "horizontalalign") == 0) {
-	    return JS_NewString (ctx, text->horizontalAlign.c_str ());
+	    return JS_NewString (ctx, text->getHorizontalAlign ().c_str ());
 	}
 	if (strcmp (name, "verticalalign") == 0) {
-	    return JS_NewString (ctx, text->verticalAlign.c_str ());
+	    return JS_NewString (ctx, text->getVerticalAlign ().c_str ());
 	}
     }
 
@@ -344,6 +342,20 @@ int scriptableobject_property_set (
 
     if (strcmp (name, "solid") == 0) {
 	object.setSolid (JS_ToBool (ctx, val) != 0);
+	return 1;
+    }
+
+    // ITextLayer alignment: the layout follows on the next frame
+    if (auto* text = object.asOrNull<CText> ();
+	text != nullptr && (strcmp (name, "horizontalalign") == 0 || strcmp (name, "verticalalign") == 0)) {
+	if (const char* value = JS_ToCString (ctx, val)) {
+	    if (name[0] == 'h') {
+		text->setHorizontalAlign (value);
+	    } else {
+		text->setVerticalAlign (value);
+	    }
+	    JS_FreeCString (ctx, value);
+	}
 	return 1;
     }
 

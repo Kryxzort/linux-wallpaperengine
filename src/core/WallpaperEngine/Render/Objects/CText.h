@@ -36,6 +36,11 @@ public:
     void render () override;
 
     [[nodiscard]] const Text& getText () const;
+    /** ITextLayer.horizontalalign / verticalalign: "left" "center" "right" / "top" "center" "bottom", live */
+    [[nodiscard]] const std::string& getHorizontalAlign () const;
+    [[nodiscard]] const std::string& getVerticalAlign () const;
+    void setHorizontalAlign (const std::string& value);
+    void setVerticalAlign (const std::string& value);
 
 private:
     /** Lays the text out again when it, its size or its layout settings changed; true when it did */
@@ -61,5 +66,7 @@ private:
     } m_laidOut;
     Scripting::ScriptLayerHandle m_layerHandle = Scripting::kInvalidLayerHandle;
     bool m_hasFont = false;
+    std::string m_horizontalAlign;
+    std::string m_verticalAlign;
 };
 } // namespace WallpaperEngine::Render::Objects

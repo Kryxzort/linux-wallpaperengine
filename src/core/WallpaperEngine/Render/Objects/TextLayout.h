@@ -33,6 +33,8 @@ struct TextLayoutParams {
     bool blockAlign = false;
     /** 0 left, 1 centre, 2 right (WE's enum, GH 0x14027e130) */
     int horizontalAlign = 1;
+    /** 0 bottom, 1 centre, 2 top: only where the block sits on the origin (CText), not the layout */
+    int verticalAlign = 1;
 
     bool operator== (const TextLayoutParams&) const = default;
 };

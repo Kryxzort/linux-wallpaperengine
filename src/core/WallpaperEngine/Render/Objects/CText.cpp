@@ -52,7 +52,12 @@ int verticalAlignOf (const std::string& value) {
 CText::CText (Wallpapers::CScene& scene, const Text& text) :
     CObject (scene, text), CImage (scene, withTarget (scene, text)), m_text (text) {
     this->m_target = scene.find (targetName (text));
+    this->m_horizontalAlign = text.horizontalAlign;
+    this->m_verticalAlign = text.verticalAlign;
     this->registerProperty ("pointSize", *text.pointSize->value);
+    // ITextLayer.maxwidth / maxrows (a script on maxwidth sizes song titles to their box)
+    this->registerProperty ("maxwidth", *text.maxWidth->value);
+    this->registerProperty ("maxrows", *text.maxRows->value);
     // the text's script runs as a layer script (initScriptLayer), not a second time as a property script
     this->registerProperty ("text", *text.text->value, false);
 }
@@ -65,6 +70,14 @@ CText::~CText () {
 }
 
 const Text& CText::getText () const { return this->m_text; }
+
+const std::string& CText::getHorizontalAlign () const { return this->m_horizontalAlign; }
+
+const std::string& CText::getVerticalAlign () const { return this->m_verticalAlign; }
+
+void CText::setHorizontalAlign (const std::string& value) { this->m_horizontalAlign = value; }
+
+void CText::setVerticalAlign (const std::string& value) { this->m_verticalAlign = value; }
 
 void CText::setup () {
     const auto& font = this->m_text.font;
@@ -151,7 +164,15 @@ std::string CText::currentText () {
 bool CText::relayout (const std::string& text) {
     TextLayoutParams params;
     params.pointSize = this->m_text.pointSize->value->getFloat ();
-    params.horizontalAlign = horizontalAlignOf (this->m_text.horizontalAlign);
+    params.horizontalAlign = horizontalAlignOf (this->m_horizontalAlign);
+    params.verticalAlign = verticalAlignOf (this->m_verticalAlign);
+    params.spacingX = this->m_text.spacing.x;
+    params.spacingY = this->m_text.spacing.y;
+    // the limits count only while switched on (GH 0x14027c600: maxwidth with flag 4, maxrows with flag 8)
+    params.maxWidth = this->m_text.limitWidth ? std::max (0.0f, this->m_text.maxWidth->value->getFloat ()) : 0.0f;
+    params.maxRows = this->m_text.limitRows ? std::max (0, this->m_text.maxRows->value->getInt ()) : 0;
+    params.ellipsis = this->m_text.limitUseEllipsis;
+    params.blockAlign = this->m_text.blockAlign;
 
     // WE pads the text's texture while the layer has effects (GH 0x14027dd90, 0x14027d250)
     const bool padded = !this->getImage ().effects.empty ();
@@ -227,11 +248,11 @@ void CText::rasterise () {
     glm::vec2 offset (0.0f);
     if (!layout.empty) {
 	const float halfWidth = (layout.maxX - layout.minX) * 0.5f;
-	const int horizontal = horizontalAlignOf (this->m_text.horizontalAlign);
+	const int horizontal = this->m_laidOut.params.horizontalAlign;
 	offset.x = horizontal == 0 ? halfWidth : horizontal == 2 ? -halfWidth : 0.0f;
 
 	const float below = static_cast<float> (layout.rows - 1) * layout.lineHeight;
-	const int vertical = verticalAlignOf (this->m_text.verticalAlign);
+	const int vertical = this->m_laidOut.params.verticalAlign;
 	const float reference = vertical == 0 ? layout.descender - below
 	    : vertical == 1		      ? (layout.ascender - below) * 0.5f
 					      : layout.ascender;
