@@ -20,6 +20,31 @@ public:
     ~Camera ();
 
     void setOrthogonalProjection (const float width, const float height);
+    /**
+     * A 3D scene (no `orthogonalprojection`): WE's perspective (GH 0x1401b3f70) of the general fov (vertical, degrees,
+     * clamped to 0.1–179.9 by the camera update GH 0x1401b8af0), width / height, nearz, farz. The scene's FBO rows run
+     * top-down (textures do), so clip y is flipped
+     */
+    void setPerspectiveProjection (const float width, const float height);
+    /** A 3D scene's view this frame: lookAt (eye, center, up) in WE's world (x right, y up), the shake applied */
+    void setPerspectiveView (const glm::vec3& eye, const glm::vec3& center, const glm::vec3& up);
+    /** A 3D scene's view angle this frame (vertical, degrees): general.fov, or the active camera object's */
+    void setPerspectiveFov (float fov);
+    [[nodiscard]] bool isPerspective () const;
+    /**
+     * A 3D scene's view-projection for WE's world (x right, y up, z as written): what models and 3D image layers
+     * draw with (their model matrix in WE's world)
+     */
+    [[nodiscard]] const glm::mat4& getWorldViewProjection () const;
+    /** The eye in WE's world (3D: with the shake) */
+    [[nodiscard]] const glm::vec3& getWorldEye () const;
+    /**
+     * The eye in LWE's scene space (x − width/2, height/2 − y, z), which particles use. In a 3D scene
+     * getProjection () · getLookAt () takes LWE's scene space too: the world view after the y flip and the centring
+     */
+    [[nodiscard]] glm::vec3 getSceneEye () const;
+    /** The 2D projection of the scene's rectangle (LWE's scene space at z 0): a 3D scene's full-screen layers */
+    [[nodiscard]] const glm::mat4& getScreenProjection () const;
 
     [[nodiscard]] const glm::vec3& getCenter () const;
     [[nodiscard]] const glm::vec3& getEye () const;
@@ -41,6 +66,12 @@ private:
     float m_width;
     float m_height;
     bool m_isOrthogonal = false;
+    bool m_isPerspective = false;
+    glm::mat4 m_screenProjection = glm::mat4 (1.0f);
+    glm::mat4 m_worldViewProjection = glm::mat4 (1.0f);
+    glm::mat4 m_worldProjection = glm::mat4 (1.0f);
+    glm::vec3 m_worldEye = glm::vec3 (0.0f);
+    float m_perspectiveFov = -1.0f;
     glm::mat4 m_projection = {};
     glm::mat4 m_lookat = {};
     glm::mat4 m_view = {};

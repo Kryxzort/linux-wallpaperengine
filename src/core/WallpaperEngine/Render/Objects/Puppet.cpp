@@ -149,6 +149,12 @@ void parseMeshes (Reader& r, int version, Model& out) {
 	    if (hasUv) {
 		std::memcpy (&vertex.uv, base + uvAt, sizeof (glm::vec2));
 	    }
+	    if (format & 0x2) {
+		std::memcpy (&vertex.normal, base + offsets[3], sizeof (glm::vec3));
+	    }
+	    if (format & 0x4) {
+		std::memcpy (&vertex.tangent, base + offsets[4], sizeof (glm::vec4));
+	    }
 	    vertex.bones = glm::uvec4 (0);
 	    vertex.weights = glm::vec4 (0.0f);
 	    if (hasBones) {

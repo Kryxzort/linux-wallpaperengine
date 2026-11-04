@@ -303,11 +303,13 @@ void TextureParser::parseAnimations (Texture& header, const BinaryReader& file) 
 }
 
 uint32_t TextureParser::parseTextureFlags (uint32_t value) {
-    if (value < TextureFlags_All) {
-	return value;
+    // a flag LWE doesn't know is left alone, not a reason to drop the texture: the PBR masks of 3509243656's models
+    // carry 0x800000 (they failed with "unknown texture flags: 8388610" and their materials lost the mask)
+    if ((value & ~static_cast<uint32_t> (TextureFlags_All)) != 0) {
+	sLog.debug ("texture flags with bits LWE doesn't know: ", value);
     }
 
-    sLog.exception ("unknown texture flags: ", value);
+    return value;
 }
 
 FIF TextureParser::parseFIF (uint32_t value) {

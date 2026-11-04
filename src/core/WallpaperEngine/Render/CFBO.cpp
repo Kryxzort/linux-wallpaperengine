@@ -148,6 +148,12 @@ void CFBO::resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidt
 
     this->m_resolution = { textureWidth, textureHeight, realWidth, realHeight };
 
+    if (this->m_depthbuffer != GL_NONE) {
+	glBindRenderbuffer (GL_RENDERBUFFER, this->m_depthbuffer);
+	glRenderbufferStorage (GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, textureWidth, textureHeight);
+	glBindRenderbuffer (GL_RENDERBUFFER, 0);
+    }
+
     for (const auto& frame : this->m_frames) {
 	frame->width1 = textureWidth;
 	frame->height1 = textureHeight;
@@ -156,7 +162,42 @@ void CFBO::resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidt
     }
 }
 
+void CFBO::attachDepthBuffer () const {
+    if (this->m_depthbuffer != GL_NONE) {
+	return;
+    }
+
+    GLint previousFramebuffer = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+    glGenRenderbuffers (1, &this->m_depthbuffer);
+    glBindRenderbuffer (GL_RENDERBUFFER, this->m_depthbuffer);
+    glRenderbufferStorage (
+	GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, static_cast<GLsizei> (this->m_resolution.x),
+	static_cast<GLsizei> (this->m_resolution.y)
+    );
+    glBindRenderbuffer (GL_RENDERBUFFER, 0);
+    glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
+    glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, this->m_depthbuffer);
+
+    if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+	sLog.error ("The depth buffer of ", this->m_name, " left the framebuffer incomplete, drawing without depth");
+	glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
+	glDeleteRenderbuffers (1, &this->m_depthbuffer);
+	this->m_depthbuffer = GL_NONE;
+    } else {
+	glDepthMask (GL_TRUE);
+	glClearDepth (1.0);
+	glClear (GL_DEPTH_BUFFER_BIT);
+    }
+
+    glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+}
+
 CFBO::~CFBO () {
+    if (this->m_depthbuffer != GL_NONE) {
+	glDeleteRenderbuffers (1, &this->m_depthbuffer);
+    }
     // free opengl texture and framebuffer
     glDeleteTextures (1, &this->m_texture);
     glDeleteFramebuffers (1, &this->m_framebuffer);

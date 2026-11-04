@@ -39,6 +39,11 @@ public:
      * their pointer to it, and to its resolution, so they follow. A text layer's targets change size with its text
      */
     void resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidth, uint32_t textureHeight);
+    /**
+     * Gives the FBO a depth buffer (made once; it follows resize): a 3D scene's target, which its models depth test
+     * against. Cleared to the far plane
+     */
+    void attachDepthBuffer () const;
 
     void incrementUsageCount () const override;
     void decrementUsageCount () const override;
@@ -47,7 +52,7 @@ public:
 
 private:
     GLuint m_framebuffer = GL_NONE;
-    GLuint m_depthbuffer = GL_NONE;
+    mutable GLuint m_depthbuffer = GL_NONE;
     GLuint m_texture = GL_NONE;
     glm::vec4 m_resolution = {};
     float m_scale = 0;

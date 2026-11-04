@@ -1,5 +1,6 @@
 #include "WallpaperEngine/Render/Objects/CGroup.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Render/Objects/CModel.h"
 #include "WallpaperEngine/Render/Objects/CParticle.h"
 #include "WallpaperEngine/Render/Objects/CSound.h"
 
@@ -80,8 +81,16 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	height = boundingBox.w - boundingBox.y;
     }
 
-    // TODO: CONVERSION
-    this->m_camera->setOrthogonalProjection (width, height);
+    if (scene->camera.projection.isPerspective) {
+	// a 3D scene: WE renders it at the output's size (GH 0x1401b3f70 takes the aspect from the render target's);
+	// LWE renders the scene before it knows the output, so it takes a 1920x1080 target (scaled to the output)
+	width = 1920.0f;
+	height = 1080.0f;
+	this->m_camera->setPerspectiveProjection (width, height);
+    } else {
+	// TODO: CONVERSION
+	this->m_camera->setOrthogonalProjection (width, height);
+    }
     // WE starts the smoothed parallax position at the centre (GH 0x1401b6c60), g_ParallaxPosition at 0.5 0.5
     this->m_parallaxPosition = { width / 2.0f, height / 2.0f };
 
@@ -93,6 +102,11 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 
     // setup framebuffers here as they're required for the scene setup
     this->setupFramebuffers ();
+
+    // a 3D scene's models depth test against the scene's target
+    if (this->m_camera->isPerspective ()) {
+	this->getFBO ()->attachDepthBuffer ();
+    }
 
     const uint32_t sceneWidth = this->m_camera->getWidth ();
     const uint32_t sceneHeight = this->m_camera->getHeight ();
@@ -411,6 +425,8 @@ Render::CObject* CScene::dispatchObjectType (const Object& object) {
 	}
 
 	renderObject = new Objects::CParticle (*this, particleData);
+    } else if (object.is<MeshObject> ()) {
+	renderObject = new Objects::CModel (*this, *object.as<MeshObject> ());
     } else if (object.cameraZoom != nullptr) {
 	// a camera object: nothing to draw, CScene::updateCamera reads its data
 	renderObject = new Objects::CGroup (*this, object);
@@ -554,9 +570,16 @@ void CScene::renderFrame () {
     // the last frame's last pass left alpha masked: the clear sets the scene's alpha (opaque) every frame, as a compose
     // layer's background copy and a blend mode's output alpha read it
     glColorMask (true, true, true, true);
+    // (a pass leaves depth writes off: the clear needs them)
+    glDepthMask (GL_TRUE);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    for (const auto& cur : this->m_objectsByRenderOrder) {
+    // a 3D scene's lights for this frame (the models' shading reads them)
+    if (this->m_camera->isPerspective ()) {
+	this->updateLights ();
+    }
+
+    for (const auto& cur : this->drawOrder ()) {
 	const auto& debug = this->getContext ().getContext ().config;
 	if (debug.objectFilter.has_value () && cur->getId () != debug.objectFilter.value ()) {
 	    continue;
@@ -849,8 +872,195 @@ glm::vec2 CScene::getParallaxOffset (const Object& object) const {
     return (origin - this->m_parallaxPosition) * amount * parallaxDepthOf (*root);
 }
 
+glm::mat4 CScene::localMatrixOf (const Object& object) {
+    glm::vec3 angles (0.0f);
+    glm::vec3 scale (1.0f);
+
+    if (object.is<Image> ()) {
+	angles = object.as<Image> ()->angles->value->getVec3 ();
+	scale = object.as<Image> ()->scale->value->getVec3 ();
+    } else if (object.is<Particle> ()) {
+	angles = object.as<Particle> ()->angles->value->getVec3 ();
+	scale = object.as<Particle> ()->scale->value->getVec3 ();
+    } else {
+	angles = object.groupAngles->value->getVec3 ();
+	scale = object.groupScale->value->getVec3 ();
+    }
+
+    // WE's object matrix (GH 0x1401b5170): the rotation rows from the angles (GH 0x14020af40: R = Rz · Ry · Rx in
+    // column form) scaled per axis, then the origin
+    glm::mat4 local = glm::translate (glm::mat4 (1.0f), object.origin->value->getVec3 ());
+    local = glm::rotate (local, angles.z, glm::vec3 (0.0f, 0.0f, 1.0f));
+    local = glm::rotate (local, angles.y, glm::vec3 (0.0f, 1.0f, 0.0f));
+    local = glm::rotate (local, angles.x, glm::vec3 (1.0f, 0.0f, 0.0f));
+    return glm::scale (local, scale);
+}
+
+glm::mat4 CScene::worldMatrixOf (const Object& object) const {
+    // world = parent world · local (GH 0x1401b5170), bounded as resolveTransform is
+    const Object* chain[33];
+    int count = 0;
+    const Object* cur = &object;
+    chain[count++] = cur;
+
+    while (cur->parent.has_value () && count < 33) {
+	const CObject* parent = this->getObject (cur->parent.value ());
+	if (parent == nullptr || &parent->getObject () == &object) {
+	    break;
+	}
+	cur = &parent->getObject ();
+	chain[count++] = cur;
+    }
+
+    glm::mat4 world (1.0f);
+    for (int i = count - 1; i >= 0; --i) {
+	world = world * localMatrixOf (*chain[i]);
+    }
+
+    return world;
+}
+
+bool CScene::drawsInWorld (const CObject& object) const {
+    if (object.is<Objects::CModel> () || object.is<Objects::CParticle> ()) {
+	return true;
+    }
+
+    return object.is<Objects::CImage> () && object.as<Objects::CImage> ()->isWorldPlaced ();
+}
+
+const std::vector<CObject*>& CScene::drawOrder () {
+    if (!this->m_camera->isPerspective () || !this->getScene ().transparentSorting) {
+	return this->m_objectsByRenderOrder;
+    }
+
+    // transparentsorting: every run of objects placed in the world is drawn back to front by the distance of their
+    // origins from the eye (the order of what draws flat over the screen — full-screen layers, the bloom — stays).
+    // WE's sort key is not decoded: this is ours
+    this->m_sortedOrder = this->m_objectsByRenderOrder;
+    const glm::vec3 eye = this->m_camera->getWorldEye ();
+    auto distance = [this, &eye] (const CObject* object) {
+	return glm::length (glm::vec3 (this->worldMatrixOf (object->getObject ())[3]) - eye);
+    };
+
+    auto begin = this->m_sortedOrder.begin ();
+    while (begin != this->m_sortedOrder.end ()) {
+	if (!this->drawsInWorld (**begin)) {
+	    ++begin;
+	    continue;
+	}
+	auto end = begin;
+	std::vector<std::pair<float, CObject*>> run;
+	while (end != this->m_sortedOrder.end () && this->drawsInWorld (**end)) {
+	    run.emplace_back (distance (*end), *end);
+	    ++end;
+	}
+	std::stable_sort (run.begin (), run.end (), [] (const auto& a, const auto& b) { return a.first > b.first; });
+	for (auto& [d, object] : run) {
+	    *begin++ = object;
+	}
+	begin = end;
+    }
+
+    return this->m_sortedOrder;
+}
+
+void CScene::updateLights () {
+    // the point and spot lights the models' generated PerformLighting_V1 loops over (GH 0x1401bf270 fills
+    // g_LCluster_Origin/Color/Direction/Extra the same way; WE culls them into clusters, LWE takes the first ones):
+    //  origin (world position, radius), color (rgb · intensity, exponent), direction (a spot's world x axis,
+    //  1 / (cos inner − cos outer)), extra.x (−cos outer / (cos inner − cos outer)); a point light: 0 and 1
+    auto& lights = this->m_lights;
+    lights.count = 0;
+
+    for (const auto& object : this->getScene ().objects) {
+	if (!object->is<Light> () || lights.count >= SceneLights::Max) {
+	    continue;
+	}
+
+	const auto& light = *object->as<Light> ();
+	if (light.kind == LightData::Kind::Other || !this->isEffectivelyVisible (light)) {
+	    continue;
+	}
+
+	const glm::mat4 world = this->worldMatrixOf (light);
+	const int i = lights.count++;
+	const float intensity = light.intensity->value->getFloat ();
+
+	lights.origin[i] = glm::vec4 (glm::vec3 (world[3]), light.radius);
+	lights.color[i] = glm::vec4 (light.color->value->getVec3 () * intensity, light.exponent);
+
+	if (light.kind == LightData::Kind::Spot) {
+	    const glm::vec3 axis = glm::vec3 (world[0]);
+	    const glm::vec3 direction = glm::length (axis) > 0.0f ? glm::normalize (axis) : glm::vec3 (1.0f, 0.0f, 0.0f);
+	    const float outer = std::cos (glm::radians (light.outerCone));
+	    const float inner = std::cos (glm::radians (light.innerCone));
+	    const float scale = 1.0f / std::max (inner - outer, 1e-4f);
+
+	    lights.direction[i] = glm::vec4 (direction, scale);
+	    lights.extra[i] = glm::vec4 (-outer * scale, 0.0f, 0.0f, 0.0f);
+	} else {
+	    lights.direction[i] = glm::vec4 (0.0f, 0.0f, -1.0f, 0.0f);
+	    lights.extra[i] = glm::vec4 (1.0f, 0.0f, 0.0f, 0.0f);
+	}
+    }
+}
+
+const CScene::SceneLights& CScene::getLights () const { return this->m_lights; }
+
 void CScene::updateCamera () {
     const auto& camera = this->getScene ().camera;
+
+    if (this->m_camera->isPerspective ()) {
+	// a 3D scene's view (GH 0x1401b8af0): the active camera object's — the last visible one — places the eye at
+	// its world position, looking down its −z axis with its y axis up, at its fov; else the scene's camera at
+	// general.fov. Then the shake moves the eye and the centre alike (GH 0x1401c7680 with z = sin t, the amplitude
+	// in world units · 0.1). The parallax, the zoom and camera paths of a 3D camera are not done
+	glm::vec3 eye = this->m_camera->getEye ();
+	glm::vec3 center = this->m_camera->getCenter ();
+	glm::vec3 up = this->m_camera->getUp ();
+	float fov = this->m_camera->getFov ();
+
+	for (auto it = this->getScene ().objects.rbegin (); it != this->getScene ().objects.rend (); ++it) {
+	    const Object& object = **it;
+
+	    if (object.cameraZoom == nullptr || !this->isEffectivelyVisible (object)) {
+		continue;
+	    }
+
+	    const glm::mat4 world = this->worldMatrixOf (object);
+	    eye = glm::vec3 (world[3]);
+	    center = eye - glm::vec3 (world[2]);
+	    up = glm::vec3 (world[1]);
+	    if (object.cameraFov != nullptr) {
+		fov = object.cameraFov->value->getFloat ();
+	    }
+	    break;
+	}
+
+	glm::vec3 offset (0.0f);
+
+	if (camera.shake.enabled->value->getBool ()) {
+	    const float speed = camera.shake.speed->value->getFloat ();
+	    const float t = speed * speed * this->getContext ().getContext ().renderTime;
+	    glm::vec3 shake (std::cos (t), std::sin (t * 1.333f), std::sin (t));
+	    const float roughness = std::pow (camera.shake.roughness->value->getFloat (), 3.0f);
+
+	    if (roughness > 0.001f && roughness != 1.0f) {
+		const float length = glm::length (shake);
+
+		if (length > 0.0f) {
+		    shake *= std::pow (length, roughness) / length;
+		}
+	    }
+
+	    offset = shake * (camera.shake.amplitude->value->getFloat () * 0.1f);
+	}
+
+	this->m_camera->setPerspectiveFov (fov);
+	this->m_camera->setPerspectiveView (eye + offset, center + offset, up);
+	return;
+    }
+
     const float width = this->m_camera->getWidth ();
     const float height = this->m_camera->getHeight ();
     const float dt = std::max (

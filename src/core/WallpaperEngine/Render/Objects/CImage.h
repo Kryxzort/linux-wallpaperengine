@@ -38,6 +38,8 @@ public:
     /** A passthrough (compose) layer built with a group target: it draws its subtree into it (CScene::renderComposed) */
     [[nodiscard]] bool drawsSubtree () const;
     [[nodiscard]] glm::vec2 getSize () const;
+    /** In a 3D scene's world (drawn with its world matrix and the perspective camera), not over the screen */
+    [[nodiscard]] bool isWorldPlaced () const;
 
     /**
      * Whether a point of the scene (WE's world: x right, y up, scene pixels) is on this layer as it was last drawn:
@@ -102,6 +104,10 @@ protected:
     [[nodiscard]] bool effectCanBeVisible (const ImageEffect& effect) const;
 
     void updateScreenSpacePosition ();
+    /** A 3D scene's layer: its quad in its own space and its world matrix through the perspective camera */
+    void updateWorldPosition ();
+    /** The view-projection of a layer over the screen: the camera's, a 3D scene's 2D one */
+    [[nodiscard]] glm::mat4 screenViewProjection () const;
 
 private:
     bool loadPuppetMesh (const glm::vec2& size);

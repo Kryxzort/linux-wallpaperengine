@@ -113,11 +113,33 @@ struct SceneData {
 	    UserSettingUniquePtr nearz;
 	    UserSettingUniquePtr farz;
 	    UserSettingUniquePtr fov;
+	    /**
+	     * No `orthogonalprojection` (absent or null): a 3D scene, seen through a perspective camera from
+	     * `camera.eye/center/up` with general fov/nearz/farz (the scene loader GH 0x1401b6c60 sets the ortho flag
+	     * 0x8 only when the member is an object with a width and height)
+	     */
+	    bool isPerspective = false;
 	} projection;
 
 	/** `general.zoom`: scales the view about the scene's centre (with an active camera object's zoom) */
 	UserSettingUniquePtr zoom;
     } camera;
+
+    /**
+     * Fog (general +0x344…+0x378, registered in GH 0x1401c7880, uploaded by GH 0x1401ba300): distance fog by the
+     * distance to the eye, height fog by the world height. g_Fog*Params = (start, end − start, start density, end
+     * density − start density)
+     */
+    struct Fog {
+	bool distance = false;
+	bool height = false;
+	glm::vec3 distanceColor = glm::vec3 (0.0f);
+	glm::vec3 heightColor = glm::vec3 (0.0f);
+	glm::vec4 distanceParams = glm::vec4 (0.0f, 1.0f, 0.0f, 0.0f);
+	glm::vec4 heightParams = glm::vec4 (0.0f, 1.0f, 0.0f, 0.0f);
+    } fog = {};
+    /** `transparentsorting`: a 3D scene draws its translucent objects back to front */
+    bool transparentSorting = false;
 
     ObjectList objects;
     /** Every value in this scene with a keyframe animation (the scene advances them every frame) */

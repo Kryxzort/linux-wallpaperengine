@@ -58,6 +58,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Render/Objects/CRenderable.cpp
     WallpaperEngine/Render/Objects/CImage.cpp
     WallpaperEngine/Render/Objects/Puppet.cpp
+    WallpaperEngine/Render/Objects/CModel.cpp
     WallpaperEngine/Render/Objects/CSound.cpp
     WallpaperEngine/Render/Objects/CText.cpp
     WallpaperEngine/Render/Objects/TextLayout.cpp

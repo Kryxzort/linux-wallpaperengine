@@ -91,6 +91,24 @@ public:
     void renderComposed (int ownerId, const CFBO& target);
 
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
+
+    /** An object's own matrix in WE's world: T (origin) · Rz · Ry · Rx · S (GH 0x1401b5170 / 0x14020af40) */
+    [[nodiscard]] static glm::mat4 localMatrixOf (const Object& object);
+    /** An object's matrix in WE's world with its parents' (a 3D scene's models, image layers and lights) */
+    [[nodiscard]] glm::mat4 worldMatrixOf (const Object& object) const;
+    /** Placed in a 3D scene's world (a model, a particle system, an image that isn't full-screen) */
+    [[nodiscard]] bool drawsInWorld (const CObject& object) const;
+
+    /** A 3D scene's point and spot lights this frame, packed as the generated PerformLighting_V1 reads them */
+    struct SceneLights {
+	static constexpr int Max = 8;
+	int count = 0;
+	glm::vec4 origin[Max] = {};
+	glm::vec4 color[Max] = {};
+	glm::vec4 direction[Max] = {};
+	glm::vec4 extra[Max] = {};
+    };
+    [[nodiscard]] const SceneLights& getLights () const;
     /** The scene's one random source for particles (WE: scene+0x1f08, GH 0x140223090), shared by every system */
     [[nodiscard]] std::mt19937& getParticleRng ();
     [[nodiscard]] const CObject* getObject (int id) const;
@@ -116,6 +134,10 @@ protected:
     void advanceAnimations ();
     /** The camera update (WE GH 0x1401b8af0): shake, the active camera object's zoom, general.zoom, the parallax */
     void updateCamera ();
+    /** Packs the 3D scene's lights for this frame (getLights) */
+    void updateLights ();
+    /** The order objects draw in this frame: the render order, a 3D scene's world objects sorted by `transparentsorting` */
+    const std::vector<CObject*>& drawOrder ();
 
     friend class CWallpaper;
 
@@ -137,6 +159,9 @@ private:
     std::map<int, CObject*> m_objects = {};
     std::vector<CObject*> m_objectsByRenderOrder = {};
     std::vector<CObject*> m_layers = {};
+    /** drawOrder's sorted copy of the render order */
+    std::vector<CObject*> m_sortedOrder = {};
+    SceneLights m_lights = {};
     /** the sound objects, ticked on the host's clock every frame (they don't render) */
     std::vector<Objects::CSound*> m_sounds = {};
     std::vector<DynamicValue*> m_scriptedValues = {};

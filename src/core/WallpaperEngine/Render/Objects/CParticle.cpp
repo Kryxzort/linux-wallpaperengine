@@ -2412,7 +2412,11 @@ void CParticle::applyParallaxToModelMatrix () {
 }
 
 void CParticle::updateParticleViewProjection () {
-    if ((m_particle.flags & 4) != 0) {
+    if (getScene ().getCamera ().isPerspective ()) {
+	// a 3D scene: the scene's perspective camera, which takes LWE's scene space the system's matrices are in
+	m_viewProjectionMatrix = getScene ().getCamera ().getProjection () * getScene ().getCamera ().getLookAt ();
+	m_eyePosition = getScene ().getCamera ().getSceneEye ();
+    } else if ((m_particle.flags & 4) != 0) {
 	// Perspective particles use a dedicated perspective projection
 	float width = getScene ().getCamera ().getWidth ();
 	float height = getScene ().getCamera ().getHeight ();

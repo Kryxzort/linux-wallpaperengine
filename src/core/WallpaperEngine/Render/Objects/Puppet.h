@@ -25,6 +25,10 @@ struct Vertex {
     glm::vec2 uv;
     glm::uvec4 bones;
     glm::vec4 weights;
+    /** format bit 0x2 (static meshes light with it; 0 0 1 when absent) */
+    glm::vec3 normal = glm::vec3 (0.0f, 0.0f, 1.0f);
+    /** format bit 0x4: xyz and the bitangent's sign in w (1 0 0 1 when absent) */
+    glm::vec4 tangent = glm::vec4 (1.0f, 0.0f, 0.0f, 1.0f);
 };
 
 struct Mesh {

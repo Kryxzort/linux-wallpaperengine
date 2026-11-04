@@ -287,8 +287,7 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     this->m_sceneCenter
 	= glm::vec3 ((this->m_pos.x + this->m_pos.z) / 2.0f, (this->m_pos.y + this->m_pos.w) / 2.0f, 0.0f);
 
-    this->m_modelViewProjectionScreen
-	= this->getScene ().getCamera ().getProjection () * this->getScene ().getCamera ().getLookAt ();
+    this->m_modelViewProjectionScreen = this->screenViewProjection ();
 
     if (this->getImage ().model->passthrough) {
 	this->m_modelViewProjectionCopy = this->m_modelViewProjectionScreen;
@@ -1357,8 +1356,64 @@ CImage::ResolvedTransform CImage::updateGeometryBuffers () {
     return transform;
 }
 
+bool CImage::isWorldPlaced () const {
+    // in a 3D scene every layer is in the world but the ones that cover the screen (full-screen and passthrough
+    // layers, and LWE's own bloom image, id -1)
+    return this->getScene ().getCamera ().isPerspective () && !this->getImage ().model->fullscreen
+	&& !this->getImage ().model->passthrough && this->getId () >= 0;
+}
+
+glm::mat4 CImage::screenViewProjection () const {
+    const auto& camera = this->getScene ().getCamera ();
+
+    // a 3D scene's screen layers keep the 2D layout over the scene's target
+    return camera.isPerspective () ? camera.getScreenProjection () : camera.getProjection () * camera.getLookAt ();
+}
+
+void CImage::updateWorldPosition () {
+    const glm::vec2 size = this->m_size;
+    // the quad in the layer's own space (x right, y up, its pixels), its centre at the origin or moved by
+    // `alignment` (the anchor is on the origin, GH 0x140230a80) or by a text block's offset; scale, angles, z and
+    // the parents are the world matrix's
+    glm::vec2 centre (0.0f);
+
+    if (this->m_localOffset.has_value ()) {
+	centre = *this->m_localOffset;
+    } else {
+	const std::string& alignment = this->getImage ().alignment;
+	if (alignment.find ("top") != std::string::npos) {
+	    centre.y = -size.y / 2.0f;
+	} else if (alignment.find ("bottom") != std::string::npos) {
+	    centre.y = size.y / 2.0f;
+	}
+	if (alignment.find ("left") != std::string::npos) {
+	    centre.x = size.x / 2.0f;
+	} else if (alignment.find ("right") != std::string::npos) {
+	    centre.x = -size.x / 2.0f;
+	}
+    }
+
+    const float left = centre.x - size.x / 2.0f, right = centre.x + size.x / 2.0f;
+    const float bottom = centre.y - size.y / 2.0f, top = centre.y + size.y / 2.0f;
+    // the order and texture rows of the 2D quad: (left, bottom) takes v 1
+    const GLfloat position[] = { left, bottom, 0.0f, left, top, 0.0f, right, bottom, 0.0f,
+				 right, bottom, 0.0f, left, top, 0.0f, right, top, 0.0f };
+
+    glBindBuffer (GL_ARRAY_BUFFER, this->m_sceneSpacePosition);
+    glBufferData (GL_ARRAY_BUFFER, sizeof (position), position, GL_DYNAMIC_DRAW);
+
+    this->m_modelViewProjectionScreen
+	= this->getScene ().getCamera ().getWorldViewProjection () * this->getScene ().worldMatrixOf (this->getImage ());
+    this->m_modelViewProjectionScreenInverse = glm::inverse (this->m_modelViewProjectionScreen);
+}
+
 void CImage::updateScreenSpacePosition () {
     const ResolvedTransform transform = this->updateGeometryBuffers ();
+
+    if (this->isWorldPlaced ()) {
+	this->updateWorldPosition ();
+	return;
+    }
 
     // Build rotation from angles (already in radians from scene.json — see CParticle.cpp:2119)
     // Negate X and Z rotations to account for Y-flipped coordinate system (CParticle.cpp:2120)
@@ -1373,7 +1428,7 @@ void CImage::updateScreenSpacePosition () {
     // the mouse parallax moves the object in the world, after its own transform (WE: view · translate(offset), GH
     // 0x1401b9b50); WE's y is up, this world's y is down
     const glm::vec2 parallax = this->getScene ().getParallaxOffset (this->getImage ());
-    const glm::mat4 mvp = this->getScene ().getCamera ().getProjection () * this->getScene ().getCamera ().getLookAt ()
+    const glm::mat4 mvp = this->screenViewProjection ()
 	* glm::translate (glm::mat4 (1.0f), glm::vec3 (parallax.x, -parallax.y, 0.0f)) * rotModel;
 
     this->m_modelViewProjectionScreen = mvp;
@@ -1387,6 +1442,11 @@ void CImage::updateScreenSpacePosition () {
 const Image& CImage::getImage () const { return this->m_image; }
 
 bool CImage::hitTest (const glm::vec2& world, glm::vec2& local) const {
+    // a layer in a 3D scene's world isn't hit-tested (the cursor would have to be cast into the world)
+    if (this->isWorldPlaced ()) {
+	return false;
+    }
+
     const float sceneWidth = static_cast<float> (this->getScene ().getWidth ());
     const float sceneHeight = static_cast<float> (this->getScene ().getHeight ());
     // the drawing's space (m_pos): x from the centre, y down

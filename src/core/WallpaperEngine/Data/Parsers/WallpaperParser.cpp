@@ -1,5 +1,7 @@
 #include "WallpaperParser.h"
 
+#include <cmath>
+
 #include "../Model/Project.h"
 #include "../Model/Wallpaper.h"
 #include "DynamicValueParser.h"
@@ -22,12 +24,39 @@ WallpaperUniquePtr WallpaperParser::parse (const JSON& file, Project& project) {
     }
 }
 
+namespace {
+SceneData::Fog parseFog (const JSON& general) {
+    // the general fields and their upload (GH 0x1401c7880 registers them, GH 0x1401ba300 builds the shader params);
+    // the defaults are ours (no corpus scene leaves them out)
+    const auto range = [&general] (const char* start, const char* end, const char* startDensity, const char* endDensity) {
+	const float s = general.optional (start, 0.0f);
+	const float e = general.optional (end, 1000.0f);
+	const float sd = general.optional (startDensity, 0.0f);
+	const float ed = general.optional (endDensity, 1.0f);
+	// a zero span would divide by zero in CalculateFogPixelState
+	return glm::vec4 (s, std::abs (e - s) < 1e-6f ? 1e-6f : e - s, sd, ed - sd);
+    };
+
+    return SceneData::Fog {
+	.distance = general.optional ("fogdistance", false),
+	.height = general.optional ("fogheight", false),
+	.distanceColor = general.optional ("fogdistancecolor", glm::vec3 (0.0f)),
+	.heightColor = general.optional ("fogheightcolor", glm::vec3 (0.0f)),
+	.distanceParams = range ("fogdistancestart", "fogdistanceend", "fogdistancestartdensity", "fogdistanceenddensity"),
+	.heightParams = range ("fogheightstart", "fogheightend", "fogheightstartdensity", "fogheightenddensity"),
+    };
+}
+} // namespace
+
 SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) {
     const auto scene = JSON::parse (project.assetLocator->readString (file));
     const auto camera = scene.require ("camera", "Scenes must have a camera section");
     const auto general = scene.require ("general", "Scenes must have a general section");
-    const auto projection
-	= general.require ("orthogonalprojection", "General section must have orthogonal projection info");
+    // a 3D scene has no `orthogonalprojection` (absent or null): WE's loader (GH 0x1401b6c60) flags a scene orthographic
+    // only for an object member, and sees the rest through the perspective camera
+    const auto orthogonal = general.optional ("orthogonalprojection");
+    const bool perspective = !orthogonal.has_value () || !orthogonal->is_object ();
+    const JSON projection = perspective ? JSON::object () : *orthogonal;
     const auto objects = scene.require ("objects", "Scenes must have an objects section");
     const auto& properties = project.properties;
 
@@ -84,16 +113,19 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .up = camera.require <glm::vec3> ("up", "Camera must have an up position"),
                 },
                 .projection = {
-                    .width  = projection.optional ("auto", false) ? 0 : projection.require <int> ("width",  "Projection must have a width"),
-                    .height = projection.optional ("auto", false) ? 0 : projection.require <int> ("height", "Projection must have a height"),
-                    .isAuto = projection.optional ("auto", false),
+                    .width  = perspective || projection.optional ("auto", false) ? 0 : projection.require <int> ("width",  "Projection must have a width"),
+                    .height = perspective || projection.optional ("auto", false) ? 0 : projection.require <int> ("height", "Projection must have a height"),
+                    .isAuto = !perspective && projection.optional ("auto", false),
                     // `general` fields in Wallpaper Engine (the camera block has none), defaults as in WE
                     .nearz = general.user ("nearz", properties, 0.1f),
                     .farz = general.user ("farz", properties, 10000.0f),
-                    .fov = general.user ("fov", properties, 50.0f)
+                    .fov = general.user ("fov", properties, 50.0f),
+                    .isPerspective = perspective,
                 },
                 .zoom = general.user ("zoom", properties, 1.0f)
             },
+            .fog = parseFog (general),
+            .transparentSorting = general.optional ("transparentsorting", false),
             .objects = parseObjects (objects, project),
         }
     );

@@ -83,6 +83,16 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	};
     }
 
+    if (isCamera && it.find ("fov") != it.end ()) {
+	basedata.cameraFov = it.user ("fov", project.properties, 50.0f);
+    }
+
+    // a model object: static MDL meshes (an image object has a string `image`, a model one `image: null`)
+    if (const auto modelIt = it.find ("model");
+	modelIt != it.end () && modelIt->is_string () && (imageIt == it.end () || !imageIt->is_string ())) {
+	return std::make_unique<MeshObject> (std::move (basedata), MeshObjectData { .file = *modelIt });
+    }
+
     if (imageIt != it.end () && imageIt->is_string ()) {
 	return parseImage (it, project, std::move (basedata), *imageIt);
     } else if (soundIt != it.end () && (soundIt->is_array () || soundIt->is_string ())) {
@@ -91,8 +101,8 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	return parseParticle (it, project, std::move (basedata));
     } else if (textIt != it.end ()) {
 	return parseText (it, project, std::move (basedata));
-    } else if (lightIt != it.end ()) {
-	sLog.error ("Light objects are not supported yet");
+    } else if (lightIt != it.end () && lightIt->is_string ()) {
+	return parseLight (it, project, std::move (basedata));
     } else if (shapeIt != it.end ()) {
 	sLog.error ("VolumeLight objects are not supported yet");
     } else if (isCamera) {
@@ -107,6 +117,26 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     }
 
     return std::make_unique<Object> (std::move (basedata));
+}
+
+LightUniquePtr ObjectParser::parseLight (const JSON& it, const Project& project, ObjectData base) {
+    const std::string type = it.optional ("light", std::string ("lpoint"));
+
+    return std::make_unique<Light> (
+	std::move (base),
+	LightData {
+	    .kind = type == "lpoint"	 ? LightData::Kind::Point
+		: type == "lspot" ? LightData::Kind::Spot
+				  : LightData::Kind::Other,
+	    .type = type,
+	    .color = it.color ("color", project.properties, Builders::ColorBuilder::White),
+	    .intensity = it.user ("intensity", project.properties, 1.0f),
+	    .radius = it.optional ("radius", 1000.0f),
+	    .exponent = it.optional ("exponent", 1.0f),
+	    .innerCone = it.optional ("innercone", 0.0f),
+	    .outerCone = it.optional ("outercone", 45.0f),
+	}
+    );
 }
 
 std::vector<int> ObjectParser::parseDependencies (const JSON& it) {

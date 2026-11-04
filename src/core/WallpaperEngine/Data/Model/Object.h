@@ -45,6 +45,8 @@ struct ObjectData {
      *  angle are then in the attachment's space, which follows its bone (GH 0x14020be30 looks it up by name, the
      *  world transform GH 0x1401b5170 applies it under the parent's) */
     std::optional<std::string> attachment = std::nullopt;
+    /** A camera object's `fov` (null otherwise, or when it has none): a 3D scene's view angle while it is active */
+    UserSettingUniquePtr cameraFov = nullptr;
 };
 
 /**
@@ -181,6 +183,47 @@ public:
     explicit Sound (ObjectData data, SoundData soundData) noexcept :
 	Object (std::move (data)), SoundData (std::move (soundData)) { };
     ~Sound () override = default;
+};
+
+/**
+ * A model object (`"model": "models/x.mdl"`): static MDL meshes in the 3D world, each drawn with the material its
+ * mesh names (WE's object factory tries `model` first, GH 0x1401be650). Its transform, visibility and parent are the
+ * base object's (groupScale/groupAngles/groupVisible)
+ */
+struct MeshObjectData {
+    /** the .mdl file */
+    std::string file;
+};
+
+class MeshObject : public Object, public MeshObjectData {
+public:
+    explicit MeshObject (ObjectData data, MeshObjectData meshData) noexcept :
+	Object (std::move (data)), MeshObjectData (std::move (meshData)) { };
+    ~MeshObject () override = default;
+};
+
+/**
+ * A light object (`"light": "lpoint" | "lspot" | …`). WE's light property table (GH 0x140283df0): color +0x2cc,
+ * intensity +0x2e4, radius +0x2e8, exponent +0x2ec, innercone +0x2f0, outercone +0x2f4 (degrees). Its transform is
+ * the base object's; a spot shines along its world x axis (GH 0x1401bf270)
+ */
+struct LightData {
+    enum class Kind { Point, Spot, Other };
+    Kind kind = Kind::Point;
+    std::string type;
+    UserSettingUniquePtr color;
+    UserSettingUniquePtr intensity;
+    float radius = 1000.0f;
+    float exponent = 1.0f;
+    float innerCone = 0.0f;
+    float outerCone = 45.0f;
+};
+
+class Light : public Object, public LightData {
+public:
+    explicit Light (ObjectData data, LightData lightData) noexcept :
+	Object (std::move (data)), LightData (std::move (lightData)) { };
+    ~Light () override = default;
 };
 
 /**
