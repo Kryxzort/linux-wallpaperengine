@@ -1,453 +1,253 @@
 #include "CText.h"
 
-#include <filesystem>
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <vector>
 
-#include <ft2build.h>
-#include FT_FREETYPE_H
-
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include "../../../common/WallpaperEngine/Logging/Log.h"
-#include "../../../core/WallpaperEngine/Data/Model/DynamicValue.h"
-#include "../../../core/WallpaperEngine/Data/Model/Object.h"
-#include "../../../core/WallpaperEngine/Data/Model/UserSetting.h"
-#include "WallpaperEngine/Render/Camera.h"
+#include "WallpaperEngine/Data/Model/DynamicValue.h"
+#include "WallpaperEngine/Data/Model/Object.h"
+#include "WallpaperEngine/Data/Model/UserSetting.h"
+#include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 
 using namespace WallpaperEngine::Render::Objects;
 
 namespace {
-// TODO: Phase 2 – load font from wallpaper's materials/fonts/ using AssetLocator
-// Phase 1 uses a system font instead of the font shipped by the wallpaper.
-// Wallpaper Engine bundles .ttf files in `materials/fonts/`; wiring those in
-// is deferred to Phase 2 along with dynamic/scripted text.
-const std::vector<std::string> kFontCandidates = {
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-};
+std::string targetName (const Text& text) { return "_rt_textLayer_" + std::to_string (text.id); }
 
-const char* kVertexShader = R"glsl(
-#version 330 core
-layout(location = 0) in vec2 aPos;
-layout(location = 1) in vec2 aUV;
-uniform mat4 uMVP;
-out vec2 vUV;
-void main() {
-    vUV = aUV;
-    gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
+/**
+ * The layer's texture, registered before CImage looks its material's texture up (it is what the text is drawn into;
+ * sized by the editor's `size` until the text is laid out)
+ */
+const Text& withTarget (Wallpapers::CScene& scene, const Text& text) {
+    const glm::vec2 size = glm::max (text.size, glm::vec2 (2.0f));
+    scene.create (targetName (text), TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0f, size, size);
+    return text;
 }
-)glsl";
 
-const char* kFragmentShader = R"glsl(
-#version 330 core
-in vec2 vUV;
-uniform sampler2D uTexture;
-uniform vec4 uColor;
-out vec4 FragColor;
-void main() {
-    float coverage = texture(uTexture, vUV).r;
-    FragColor = vec4(uColor.rgb, uColor.a * coverage);
-}
-)glsl";
-
-GLuint compileShader (GLenum type, const char* source) {
-    GLuint shader = glCreateShader (type);
-    glShaderSource (shader, 1, &source, nullptr);
-    glCompileShader (shader);
-
-    GLint status = GL_FALSE;
-    glGetShaderiv (shader, GL_COMPILE_STATUS, &status);
-    if (status != GL_TRUE) {
-	char log[1024];
-	glGetShaderInfoLog (shader, sizeof (log), nullptr, log);
-	sLog.error ("CText shader compile failed: ", log);
-	glDeleteShader (shader);
+/** WE's enums (GH 0x14027e130): horizontal left 0 centre 1 right 2; vertical bottom 0 centre 1 top 2 */
+int horizontalAlignOf (const std::string& value) {
+    if (value == "left") {
 	return 0;
     }
-    return shader;
+    if (value == "right") {
+	return 2;
+    }
+    return 1;
+}
+
+int verticalAlignOf (const std::string& value) {
+    if (value == "bottom") {
+	return 0;
+    }
+    if (value == "top") {
+	return 2;
+    }
+    return 1;
 }
 } // namespace
 
 CText::CText (Wallpapers::CScene& scene, const Text& text) :
-    CObject (scene, text), ScriptableObject (scene, text), m_text (text) {
-    this->registerProperty ("color", *text.color->value);
-    this->registerProperty ("alpha", *text.alpha->value);
-    this->registerProperty ("origin", *text.origin->value);
-    this->registerProperty ("scale", *text.scale->value);
-    this->registerProperty ("visible", *text.visible->value);
+    CObject (scene, text), CImage (scene, withTarget (scene, text)), m_text (text) {
+    this->m_target = scene.find (targetName (text));
     this->registerProperty ("pointSize", *text.pointSize->value);
-    // a text object has no angles of its own: the object's (not rendered yet)
-    this->registerProperty ("angles", *text.groupAngles->value);
     // the text's script runs as a layer script (initScriptLayer), not a second time as a property script
     this->registerProperty ("text", *text.text->value, false);
 }
 
 CText::~CText () {
-    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
-	this->getScene ().getScriptEngine ().destroyLayer (m_layerHandle);
-	m_layerHandle = Scripting::kInvalidLayerHandle;
-    }
-    if (m_vbo != 0) {
-	glDeleteBuffers (1, &m_vbo);
-    }
-    if (m_vao != 0) {
-	glDeleteVertexArrays (1, &m_vao);
-    }
-    if (m_program != 0) {
-	glDeleteProgram (m_program);
-    }
-    if (m_texture != 0) {
-	glDeleteTextures (1, &m_texture);
-    }
-    if (m_ftFace != nullptr) {
-	FT_Done_Face (m_ftFace);
-    }
-    if (m_ftLibrary != nullptr) {
-	FT_Done_FreeType (m_ftLibrary);
+    if (this->m_layerHandle != Scripting::kInvalidLayerHandle) {
+	this->getScene ().getScriptEngine ().destroyLayer (this->m_layerHandle);
+	this->m_layerHandle = Scripting::kInvalidLayerHandle;
     }
 }
+
+const Text& CText::getText () const { return this->m_text; }
 
 void CText::setup () {
-    const bool scripted = m_text.text->value->getScriptSource ().has_value ();
-    const auto& text = m_text.text->value->getString ();
+    const auto& font = this->m_text.font;
+    bool systemFont = font.empty () || font.rfind ("systemfont_", 0) == 0;
+    std::string from;
 
-    // Nothing to render and no script to produce text later → bail.
-    if (text.empty () && !scripted) {
-	return;
-    }
-
-    // without a font nothing draws, but a script still runs (it may drive other layers)
-    if (!initFreeType () || (!loadEmbeddedFont () && !loadSystemFont ())) {
-	if (scripted) {
-	    initScriptLayer ();
-	}
-	return;
-    }
-
-    m_lastPixelSize = computeEffectivePixelSize ();
-    FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
-
-    buildShader ();
-    // Scripted text may have an empty placeholder; use a single space so the
-    // glyph texture has non-zero dimensions until the script produces a value.
-    rebuildTextureFrom (text.empty () ? std::string (" ") : text);
-
-    if (scripted) {
-	initScriptLayer ();
-    }
-
-    m_valid = m_texture != 0 && m_program != 0 && m_vao != 0;
-}
-
-bool CText::initFreeType () {
-    if (FT_Init_FreeType (&m_ftLibrary) == 0) {
-	return true;
-    }
-    sLog.error ("CText: FT_Init_FreeType failed for object ", m_text.name);
-    return false;
-}
-
-bool CText::loadEmbeddedFont () {
-    // Wallpapers packed in .pkg don't expose physical paths, so we read the font
-    // into memory and use FT_New_Memory_Face. m_fontData must outlive the face.
-    // `systemfont_*` references signal "use a system font"; let the fallback handle them.
-    if (m_text.font.empty () || m_text.font.rfind ("systemfont_", 0) == 0) {
-	return false;
-    }
-
-    try {
-	auto stream = getAssetLocator ().read (m_text.font);
-	stream->seekg (0, std::ios::end);
-	const auto size = stream->tellg ();
-	stream->seekg (0, std::ios::beg);
-	m_fontData.resize (static_cast<size_t> (size));
-	stream->read (reinterpret_cast<char*> (m_fontData.data ()), size);
-
-	if (FT_New_Memory_Face (
-		m_ftLibrary, m_fontData.data (), static_cast<FT_Long> (m_fontData.size ()), 0, &m_ftFace
-	    )
-	    == 0) {
-	    return true;
-	}
-
-	sLog.error ("CText: FT_New_Memory_Face failed for '", m_text.font, "', falling back to system font");
-    } catch (const std::exception& e) {
-	sLog.error ("CText: cannot read font '", m_text.font, "': ", e.what (), ", falling back to system font");
-    }
-
-    m_fontData.clear ();
-    return false;
-}
-
-bool CText::loadSystemFont () {
-    std::string fontPath;
-    for (const auto& candidate : kFontCandidates) {
-	if (std::filesystem::exists (candidate)) {
-	    fontPath = candidate;
-	    break;
+    // the scene's (or WE's) font file; one that can't be read or opened falls back to arial (GH 0x1401d9d70)
+    if (!systemFont) {
+	try {
+	    const auto stream = this->getAssetLocator ().read (font);
+	    std::vector<uint8_t> data { std::istreambuf_iterator<char> (*stream), std::istreambuf_iterator<char> () };
+	    if (this->m_fonts.loadMemory (std::move (data))) {
+		from = font;
+	    } else {
+		sLog.error ("CText: cannot open font '", font, "' of '", this->m_text.name, "', using systemfont_arial");
+	    }
+	} catch (const std::exception& e) {
+	    sLog.error ("CText: cannot read font '", font, "' of '", this->m_text.name, "': ", e.what (), ", using systemfont_arial");
 	}
     }
-    if (fontPath.empty ()) {
-	sLog.error ("CText: no usable system font found");
-	return false;
-    }
-    if (FT_New_Face (m_ftLibrary, fontPath.c_str (), 0, &m_ftFace) != 0) {
-	sLog.error ("CText: FT_New_Face failed for ", fontPath);
-	return false;
-    }
-    return true;
-}
 
-unsigned int CText::computeEffectivePixelSize () const {
-    // WE text objects often come with scale ~0.09 that, combined with a modest
-    // pointsize, would rasterize glyphs to ~2px on screen (invisible). Rasterize
-    // at higher resolution so that after the model scale is applied in render()
-    // the on-screen size matches the intended pointsize.
-    const glm::vec3 initialScale = m_text.scale->value->getVec3 ();
-    const float avgScale = (initialScale.x + initialScale.y) * 0.5f;
-    const float compensate = (avgScale > 0.0f && avgScale < 1.0f) ? std::min (1.0f / avgScale, 32.0f) : 1.0f;
-    return std::max<unsigned int> (1u, static_cast<unsigned int> (m_text.pointSize->value->getFloat () * compensate));
+    if (!this->m_fonts.loaded ()) {
+	const auto found = TextFonts::systemFont (systemFont ? font : std::string ("systemfont_arial"));
+	if (found.has_value () && this->m_fonts.loadFile (found->first, found->second)) {
+	    from = found->first;
+	}
+    }
+
+    this->m_hasFont = this->m_fonts.loaded ();
+    if (this->m_hasFont) {
+	sLog.out ("CText: '", this->m_text.name, "' (", this->m_text.id, ") font ", font.empty () ? "(none)" : font, " -> ", from);
+    } else {
+	sLog.error ("CText: no usable font for '", this->m_text.name, "' (", font, "): fontconfig found none");
+    }
+
+    // laid out before the passes are built: the effects' FBOs take the layer's size
+    this->relayout (this->m_text.text->value->getString ());
+    this->rasterise ();
+
+    // the editor saves the layer's size (laid out from the same text): WPENGINE_TEXT_DEBUG compares the two
+    if (getenv ("WPENGINE_TEXT_DEBUG") != nullptr) {
+	sLog.out ("CText size: ", this->m_text.id, " '", this->m_text.name, "' laid out ", this->getSize ().x, " x ",
+		  this->getSize ().y, ", saved ", this->m_text.size.x, " x ", this->m_text.size.y, ", colour ", this->m_laidOut.colour.r, " ",
+		  this->m_laidOut.colour.g, " ", this->m_laidOut.colour.b, ", ", this->m_layout.glyphs.size (), " glyphs");
+    }
+
+    CImage::setup ();
+
+    if (this->m_text.text->value->getScriptSource ().has_value ()) {
+	this->initScriptLayer ();
+    }
 }
 
 void CText::initScriptLayer () {
-    const auto& script = m_text.text->value->getScriptSource ();
+    const auto& script = this->m_text.text->value->getScriptSource ();
 
-    if (!script.has_value ()) {
-	return;
-    }
-
-    m_layerHandle = this->getScene ().getScriptEngine ().createLayerScript (
-	*script, m_text.text->value->getProperties (), m_text.text->value->getString (), *this
+    this->m_layerHandle = this->getScene ().getScriptEngine ().createLayerScript (
+	*script, this->m_text.text->value->getProperties (), this->m_text.text->value->getString (), *this
     );
 
-    if (m_layerHandle == Scripting::kInvalidLayerHandle) {
-	sLog.error ("CText: createLayerScript failed for '", m_text.name, "'");
+    if (this->m_layerHandle == Scripting::kInvalidLayerHandle) {
+	sLog.error ("CText: createLayerScript failed for '", this->m_text.name, "'");
     }
 }
 
-void CText::rebuildTextureFrom (const std::string& text) {
-    // Two-pass rasterization: first measure the bounding box, then rasterize
-    // every glyph into a single grayscale bitmap. Phase 1 renders one line —
-    // multi-line wrapping, alignment, and padding come with Phase 2.
-    //
-    // Safe to call repeatedly: GL handles (texture, VAO, VBO) are reused when
-    // already allocated, so dynamic/scripted text can regenerate the glyph
-    // bitmap every time the rendered string changes without leaking.
-    FT_GlyphSlot slot = m_ftFace->glyph;
-
-    int penX = 0;
-    int maxAscent = 0;
-    int maxDescent = 0;
-
-    for (unsigned char c : text) {
-	if (FT_Load_Char (m_ftFace, static_cast<FT_ULong> (c), FT_LOAD_RENDER) != 0) {
-	    continue;
-	}
-	penX += slot->advance.x >> 6;
-	maxAscent = std::max (maxAscent, slot->bitmap_top);
-	maxDescent = std::max (maxDescent, static_cast<int> (slot->bitmap.rows) - slot->bitmap_top);
+std::string CText::currentText () {
+    if (this->m_layerHandle != Scripting::kInvalidLayerHandle) {
+	auto& se = this->getScene ().getScriptEngine ();
+	se.tickLayer (
+	    this->m_layerHandle, static_cast<double> (this->getScene ().getTime ()),
+	    static_cast<double> (this->getScene ().getDeltaTime ()), static_cast<double> (this->getScene ().getFps ())
+	);
+	return se.layerText (this->m_layerHandle);
     }
 
-    const int width = std::max (1, penX);
-    const int height = std::max (1, maxAscent + maxDescent);
-    std::vector<uint8_t> pixels (static_cast<size_t> (width) * height, 0);
+    // a literal, a user property, or a value another layer's script wrote
+    if (this->m_text.text->value->getType () == DynamicValue::String) {
+	return this->m_text.text->value->getString ();
+    }
 
-    penX = 0;
-    for (unsigned char c : text) {
-	if (FT_Load_Char (m_ftFace, static_cast<FT_ULong> (c), FT_LOAD_RENDER) != 0) {
-	    continue;
-	}
+    return this->m_laidOut.text;
+}
 
-	const auto& bmp = slot->bitmap;
-	const int originX = penX + slot->bitmap_left;
-	const int originY = maxAscent - slot->bitmap_top;
+bool CText::relayout (const std::string& text) {
+    TextLayoutParams params;
+    params.pointSize = this->m_text.pointSize->value->getFloat ();
+    params.horizontalAlign = horizontalAlignOf (this->m_text.horizontalAlign);
 
-	for (unsigned int row = 0; row < bmp.rows; ++row) {
-	    for (unsigned int col = 0; col < bmp.width; ++col) {
-		const int dstX = originX + static_cast<int> (col);
-		const int dstY = originY + static_cast<int> (row);
-		if (dstX < 0 || dstX >= width || dstY < 0 || dstY >= height) {
+    // WE pads the text's texture while the layer has effects (GH 0x14027dd90, 0x14027d250)
+    const bool padded = !this->getImage ().effects.empty ();
+
+    if (this->m_laidOut.valid && this->m_laidOut.text == text && this->m_laidOut.params == params
+	&& this->m_laidOut.padded == padded) {
+	return false;
+    }
+
+    this->m_laidOut.text = text;
+    this->m_laidOut.params = params;
+    this->m_laidOut.padded = padded;
+    this->m_laidOut.valid = true;
+    this->m_layout = layoutText (this->m_fonts, decodeUtf8 (text), params);
+    return true;
+}
+
+void CText::rasterise () {
+    const auto& layout = this->m_layout;
+    const glm::vec2 padding = this->m_laidOut.padded ? glm::min (this->m_text.padding, glm::vec2 (512.0f)) : glm::vec2 (0.0f);
+
+    // the layer's size: the block (2 × 2 without one) and the padding on each side (GH 0x14027dd90)
+    const glm::vec2 block = layout.empty ? glm::vec2 (2.0f) : glm::vec2 (layout.maxX - layout.minX, layout.maxY - layout.minY);
+    const auto width = static_cast<int> (std::max (1.0f, std::ceil (block.x + 2.0f * padding.x)));
+    const auto height = static_cast<int> (std::max (1.0f, std::ceil (block.y + 2.0f * padding.y)));
+
+    // the text's colour with the coverage as alpha (the base pass multiplies alpha in). Row 0 is the top
+    const glm::vec3 colour = glm::clamp (this->m_text.color->value->getVec3 (), glm::vec3 (0.0f), glm::vec3 (1.0f));
+    this->m_laidOut.colour = colour;
+    const uint8_t rgb[3] = { static_cast<uint8_t> (std::lround (colour.r * 255.0f)), static_cast<uint8_t> (std::lround (colour.g * 255.0f)),
+			     static_cast<uint8_t> (std::lround (colour.b * 255.0f)) };
+    std::vector<uint8_t> pixels (static_cast<size_t> (width) * height * 4, 0);
+    for (size_t i = 0; i < pixels.size (); i += 4) {
+	pixels[i] = rgb[0];
+	pixels[i + 1] = rgb[1];
+	pixels[i + 2] = rgb[2];
+    }
+
+    for (const auto& glyph : layout.glyphs) {
+	const auto* bitmap = glyph.bitmap;
+	const int x0 = static_cast<int> (std::lround (padding.x + glyph.x - layout.minX));
+	const int y0 = static_cast<int> (std::lround (padding.y + layout.maxY - glyph.y));
+
+	for (int row = 0; row < bitmap->rows; row++) {
+	    const int y = y0 + row;
+	    if (y < 0 || y >= height) {
+		continue;
+	    }
+	    for (int col = 0; col < bitmap->width; col++) {
+		const int x = x0 + col;
+		if (x < 0 || x >= width) {
 		    continue;
 		}
-		pixels[static_cast<size_t> (dstY) * width + dstX] = bmp.buffer[row * bmp.pitch + col];
+		uint8_t& alpha = pixels[(static_cast<size_t> (y) * width + x) * 4 + 3];
+		alpha = std::max (alpha, bitmap->pixels[static_cast<size_t> (row) * bitmap->pitch + col]);
 	    }
 	}
-
-	penX += slot->advance.x >> 6;
     }
 
-    const bool firstUpload = (m_texture == 0);
-    if (firstUpload) {
-	glGenTextures (1, &m_texture);
-    }
-    glBindTexture (GL_TEXTURE_2D, m_texture);
+    this->m_target->resize (width, height, width, height);
+    glBindTexture (GL_TEXTURE_2D, this->m_target->getTextureID (0));
     glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D (GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data ());
-    if (firstUpload) {
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data ());
+    glPixelStorei (GL_UNPACK_ALIGNMENT, 4);
+    // the text is usually drawn smaller than it is rasterised (300 dpi): mipmaps keep it from aliasing
+    glGenerateMipmap (GL_TEXTURE_2D);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+
+    this->resizeTargets ({ static_cast<float> (width), static_cast<float> (height) });
+
+    // where the block sits on the origin (GH 0x14027c600): horizontally its left edge, centre or right edge; vertically
+    // the first line's ascender (top), half of it less the lines below (centre) or the last line's descender (bottom)
+    glm::vec2 offset (0.0f);
+    if (!layout.empty) {
+	const float halfWidth = (layout.maxX - layout.minX) * 0.5f;
+	const int horizontal = horizontalAlignOf (this->m_text.horizontalAlign);
+	offset.x = horizontal == 0 ? halfWidth : horizontal == 2 ? -halfWidth : 0.0f;
+
+	const float below = static_cast<float> (layout.rows - 1) * layout.lineHeight;
+	const int vertical = verticalAlignOf (this->m_text.verticalAlign);
+	const float reference = vertical == 0 ? layout.descender - below
+	    : vertical == 1		      ? (layout.ascender - below) * 0.5f
+					      : layout.ascender;
+	offset.y = (layout.maxY - (layout.maxY - layout.minY) * 0.5f) - reference;
     }
-
-    m_textureSize = { width, height };
-    m_quadSize = { static_cast<float> (width), static_cast<float> (height) };
-    m_lastRenderedText = text;
-
-    uploadQuadVertices ();
-}
-
-void CText::buildShader () {
-    GLuint vs = compileShader (GL_VERTEX_SHADER, kVertexShader);
-    GLuint fs = compileShader (GL_FRAGMENT_SHADER, kFragmentShader);
-    if (vs == 0 || fs == 0) {
-	if (vs) {
-	    glDeleteShader (vs);
-	}
-	if (fs) {
-	    glDeleteShader (fs);
-	}
-	return;
-    }
-
-    m_program = glCreateProgram ();
-    glAttachShader (m_program, vs);
-    glAttachShader (m_program, fs);
-    glLinkProgram (m_program);
-    glDeleteShader (vs);
-    glDeleteShader (fs);
-
-    GLint status = GL_FALSE;
-    glGetProgramiv (m_program, GL_LINK_STATUS, &status);
-    if (status != GL_TRUE) {
-	char log[1024];
-	glGetProgramInfoLog (m_program, sizeof (log), nullptr, log);
-	sLog.error ("CText program link failed: ", log);
-	glDeleteProgram (m_program);
-	m_program = 0;
-	return;
-    }
-
-    m_uMVP = glGetUniformLocation (m_program, "uMVP");
-    m_uColor = glGetUniformLocation (m_program, "uColor");
-    m_uTexture = glGetUniformLocation (m_program, "uTexture");
-}
-
-void CText::uploadQuadVertices () {
-    // Quad centered at the origin, sized in pixels. Scene-space placement is
-    // done via the model matrix using the object's origin/scale. VBO contents
-    // are re-uploaded whenever the glyph bitmap is rebuilt so the quad always
-    // matches the current texture dimensions.
-    const float hx = m_quadSize.x * 0.5f;
-    const float hy = m_quadSize.y * 0.5f;
-    // With vflip=true (Wayland/GLFW), GL y- = screen top. So the quad bottom (y=-hy,
-    // lower GL y) appears at screen top. UV.v=0 here = FT glyph top → shows at screen top ✓
-    const float verts[] = {
-	// pos        // uv
-	-hx, -hy, 0.0f, 0.0f, hx, -hy, 1.0f, 0.0f, hx,  hy, 1.0f, 1.0f,
-	-hx, -hy, 0.0f, 0.0f, hx, hy,  1.0f, 1.0f, -hx, hy, 0.0f, 1.0f,
-    };
-
-    const bool firstUpload = (m_vao == 0);
-    if (firstUpload) {
-	glGenVertexArrays (1, &m_vao);
-	glGenBuffers (1, &m_vbo);
-    }
-    glBindVertexArray (m_vao);
-    glBindBuffer (GL_ARRAY_BUFFER, m_vbo);
-    glBufferData (GL_ARRAY_BUFFER, sizeof (verts), verts, GL_DYNAMIC_DRAW);
-    if (firstUpload) {
-	glEnableVertexAttribArray (0);
-	glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), reinterpret_cast<void*> (0));
-	glEnableVertexAttribArray (1);
-	glVertexAttribPointer (
-	    1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), reinterpret_cast<void*> (2 * sizeof (float))
-	);
-    }
-    glBindVertexArray (0);
+    this->setLocalOffset (offset);
 }
 
 void CText::render () {
-    // the script runs while the layer is hidden too (it may be what shows it again), and before the font check
-    std::string renderedText = m_lastRenderedText;
-    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
-	auto& se = this->getScene ().getScriptEngine ();
-	se.tickLayer (
-	    m_layerHandle, static_cast<double> (getScene ().getTime ()),
-	    static_cast<double> (getScene ().getDeltaTime ()), static_cast<double> (getScene ().getFps ())
-	);
-	const std::string current = se.layerText (m_layerHandle);
-	renderedText = current.empty () ? std::string (" ") : current;
-    } else if (m_text.text->value->getType () == DynamicValue::String && !m_text.text->value->getString ().empty ()) {
-	// a text another layer's script (or a user property) writes
-	renderedText = m_text.text->value->getString ();
+    // the script runs while the layer is hidden too (it may be what shows it again)
+    const std::string text = this->currentText ();
+
+    // a new text or layout, or a new colour (a script, a user property): drawn again
+    if (this->relayout (text) || this->m_text.color->value->getVec3 () != this->m_laidOut.colour) {
+	this->rasterise ();
     }
 
-    if (!m_valid) {
-	return;
-    }
-    // a hidden ancestor hides it too (WE's "effectively visible", GH 0x1401b50e0)
-    if (!this->getScene ().isEffectivelyVisible (m_text)) {
-	return;
-    }
-
-#if !NDEBUG
-    std::string str = "Text " + this->getObject ().name + " (" + std::to_string (this->getObject ().id) + ")";
-    glPushDebugGroup (GL_DEBUG_SOURCE_APPLICATION, 0, -1, str.c_str ());
-#endif /* DEBUG */
-    const unsigned int pixelSize = computeEffectivePixelSize ();
-    if (pixelSize != m_lastPixelSize) {
-	m_lastPixelSize = pixelSize;
-	FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
-	rebuildTextureFrom (renderedText);
-    } else if (renderedText != m_lastRenderedText) {
-	rebuildTextureFrom (renderedText);
-    }
-
-    const glm::vec4 color = m_text.color->value->getVec4 ();
-    const float alpha = m_text.alpha->value->getFloat ();
-    const glm::vec3 scale = m_text.scale->value->getVec3 ();
-    const glm::vec3 origin = m_text.origin->value->getVec3 ();
-
-    // WE uses a Y-down coordinate system (origin at top-left, y increases downward).
-    // The final FBO is presented to screen with vflip=true on Wayland/GLFW, which maps
-    // GL y- to screen top and GL y+ to screen bottom. This effectively inverts Y again,
-    // so we need: gl_y = origin.y - scene_h/2  (not the CImage-style scene_h/2 - origin.y).
-    // CImage pre-compensates for X11 (no vflip) and gets corrected by the Wayland vflip.
-    // CText renders with direct vflip-aware coordinates.
-    const float scene_w = getScene ().getCamera ().getWidth ();
-    const float scene_h = getScene ().getCamera ().getHeight ();
-    const glm::vec3 gl_origin = {
-	origin.x - scene_w * 0.5f,
-	origin.y - scene_h * 0.5f,
-	origin.z,
-    };
-
-    glm::mat4 model = glm::translate (glm::mat4 (1.0f), gl_origin);
-    model = glm::scale (model, scale);
-
-    const glm::mat4 mvp = getScene ().getCamera ().getProjection () * getScene ().getCamera ().getLookAt () * model;
-
-    glEnable (GL_BLEND);
-    glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    glUseProgram (m_program);
-    glUniformMatrix4fv (m_uMVP, 1, GL_FALSE, glm::value_ptr (mvp));
-    glUniform4f (m_uColor, color.r, color.g, color.b, color.a * alpha);
-
-    glActiveTexture (GL_TEXTURE0);
-    glBindTexture (GL_TEXTURE_2D, m_texture);
-    glUniform1i (m_uTexture, 0);
-
-    glBindVertexArray (m_vao);
-    glDrawArrays (GL_TRIANGLES, 0, 6);
-    glBindVertexArray (0);
-#if !NDEBUG
-    glPopDebugGroup ();
-#endif /* DEBUG */
+    CImage::render ();
 }

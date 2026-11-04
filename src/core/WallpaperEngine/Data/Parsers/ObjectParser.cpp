@@ -151,20 +151,76 @@ SoundUniquePtr ObjectParser::parseSound (const JSON& it, const Project& project,
 }
 
 TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, ObjectData base) {
+    const auto& properties = project.properties;
+    const auto& effects = it.optional ("effects");
+    const std::string target = "_rt_textLayer_" + std::to_string (base.id);
+
+    // the layer's picture is its laid-out text in its colour, drawn into `target` (CText); the base pass is an image's
+    // (genericimage2: × brightness, × alpha), then the effects run on it as on any image (GH 0x14027ce30). WE draws the
+    // glyphs with shaders/font (colour, coverage × alpha) into that picture first: the same result
+    // (genericimage2 doesn't take g_Color4 here, so the colour is in the texture)
+    auto material = std::make_unique<Material> (Material { .filename = target, .passes = {} });
+    material->passes.push_back (std::make_unique<MaterialPass> (MaterialPass {
+	.blending = BlendingMode_Translucent,
+	.cullmode = CullingMode_Disable,
+	.depthtest = DepthtestMode_Disabled,
+	.depthwrite = DepthwriteMode_Disabled,
+	.shader = "genericimage2",
+	.textures = { { 0, target } },
+	.usertextures = {},
+	.combos = {},
+	.constants = {},
+    }));
+
+    auto model = std::make_unique<ModelStruct> (ModelStruct {
+	.filename = target,
+	.material = std::move (material),
+	.solidlayer = false,
+	.fullscreen = false,
+	.passthrough = false,
+	.autosize = false,
+	.nopadding = false,
+	.width = std::nullopt,
+	.height = std::nullopt,
+	.puppet = std::nullopt,
+    });
+
+    // `alignment` is the text's own: CText places the quad from the laid-out block (GH 0x14027c600)
     return std::make_unique<Text> (
 	std::move (base),
-	TextData {
-	    .text = it.user ("text", project.properties),
-	    .font = it.optional ("font", std::string ()),
-	    .pointSize = it.user ("pointsize", project.properties, 32.0f),
+	ImageData {
+	    .scale = it.user ("scale", properties, glm::vec3 (1.0f)),
+	    .angles = it.user ("angles", properties, glm::vec3 (0.0f)),
+	    .visible = it.user ("visible", properties, true),
+	    .alpha = it.user ("alpha", properties, 1.0f),
+	    .color = it.color ("color", properties, Builders::ColorBuilder::White),
+	    .alignment = "center",
 	    .size = it.optional ("size", glm::vec2 (0.0f)),
-	    .scale = it.user ("scale", project.properties, glm::vec3 (1.0f)),
-	    .color = it.color ("color", project.properties, Builders::ColorBuilder::White),
-	    .alpha = it.user ("alpha", project.properties, 1.0f),
-	    .visible = it.user ("visible", project.properties, true),
-	    .alignment = it.optional ("horizontalalign", it.optional ("alignment", std::string ("center"))),
-	    .verticalalign = it.optional ("verticalalign", std::string ("center")),
-	    .padding = it.optional ("padding", glm::vec2 (0.0f)),
+	    .parallaxDepth = it.user ("parallaxDepth", properties, glm::vec2 (1.0f)),
+	    .colorBlendMode = it.user ("colorBlendMode", properties, 0),
+	    .brightness = it.user ("brightness", properties, 1.0f),
+	    .copyBackground = it.user ("copybackground", properties, true),
+	    .clampUVs = it.user ("clampuvs", properties, true),
+	    .noInterpolation = it.user ("nointerpolation", properties, false),
+	    .model = std::move (model),
+	    .effects = effects.has_value () ? parseEffects (*effects, project) : std::vector<ImageEffectUniquePtr> {},
+	    .animationLayers = {},
+	},
+	TextData {
+	    .text = it.user ("text", properties),
+	    .font = it.optional ("font", std::string ("systemfont_arial")),
+	    .pointSize = it.user ("pointsize", properties, 32.0f),
+	    .horizontalAlign = it.optional ("horizontalalign", it.optional ("alignment", std::string ("center"))),
+	    .verticalAlign = it.optional ("verticalalign", std::string ("center")),
+	    .anchor = it.optional ("anchor", std::string ("none")),
+	    .padding = it.optional ("padding", glm::vec2 (32.0f)),
+	    .spacing = it.optional ("spacing", glm::vec2 (0.0f)),
+	    .limitWidth = it.optional ("limitwidth", false),
+	    .maxWidth = it.user ("maxwidth", properties, 500.0f),
+	    .limitRows = it.optional ("limitrows", false),
+	    .maxRows = it.user ("maxrows", properties, 1),
+	    .limitUseEllipsis = it.optional ("limituseellipsis", false),
+	    .blockAlign = it.optional ("blockalign", false),
 	}
     );
 }

@@ -296,20 +296,17 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	if (const auto* image = object.asOrNull<CImage> ()) {
 	    return engine.newVec (image->getSize ());
 	}
-	if (object.getObject ().is<Text> ()) {
-	    return engine.newVec (object.getObject ().as<Text> ()->size);
-	}
     }
 
-    // ITextLayer alignment (read; the renderer doesn't lay out by it yet)
+    // ITextLayer alignment
     if (object.getObject ().is<Text> ()) {
 	const auto* text = object.getObject ().as<Text> ();
 
 	if (strcmp (name, "horizontalalign") == 0) {
-	    return JS_NewString (ctx, text->alignment.c_str ());
+	    return JS_NewString (ctx, text->horizontalAlign.c_str ());
 	}
 	if (strcmp (name, "verticalalign") == 0) {
-	    return JS_NewString (ctx, text->verticalalign.c_str ());
+	    return JS_NewString (ctx, text->verticalAlign.c_str ());
 	}
     }
 

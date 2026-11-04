@@ -36,13 +36,11 @@ CObject::ResolvedTransform CObject::localTransform (const Object& object) {
     glm::vec3 scale = glm::vec3 (1.0f);
     float angle = 0.0f;
 
+    // (a text object is an image: its scale and angles are the image's)
     if (object.is<Image> ()) {
 	const auto* image = object.as<Image> ();
 	scale = image->scale->value->getVec3 ();
 	angle = image->angles->value->getVec3 ().z;
-    } else if (object.is<Text> ()) {
-	const auto* text = object.as<Text> ();
-	scale = text->scale->value->getVec3 ();
     } else if (object.is<Particle> ()) {
 	const auto* particle = object.as<Particle> ();
 	scale = particle->scale->value->getVec3 ();

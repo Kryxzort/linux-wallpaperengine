@@ -204,12 +204,16 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
 	       ? TextureFlags_NoInterpolation
 	       : 0);
 
-    this->m_currentMainFBO = this->m_mainFBO = scene.create (
+    const auto mainFBO = scene.create (
 	nameA.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
-    this->m_currentSubFBO = this->m_subFBO = scene.create (
+    const auto subFBO = scene.create (
 	nameB.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
+    this->m_currentMainFBO = this->m_mainFBO = mainFBO;
+    this->m_currentSubFBO = this->m_subFBO = subFBO;
+    this->m_sizedTargets.emplace_back (mainFBO, 1.0f);
+    this->m_sizedTargets.emplace_back (subFBO, 1.0f);
 
     // build a list of vertices, these might need some change later (or maybe invert the camera)
     GLfloat sceneSpacePosition[] = { this->m_pos.x, this->m_pos.y, 0.0f, this->m_pos.x, this->m_pos.w, 0.0f,
@@ -626,7 +630,9 @@ void CImage::setup () {
 
 	    // create all the fbos for this effect
 	    for (const auto& fbo : cur->effect->fbos) {
-		fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize ());
+		this->m_sizedTargets.emplace_back (
+		    fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize ()), fbo->scale
+		);
 	    }
 
 	    // TODO: MAKE USE OF ZIP OPERATOR IN BOOST? WAY OVERKILL JUST FOR THIS...
@@ -990,6 +996,18 @@ void CImage::pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::share
     this->m_currentSubFBO = currentMainFBO;
 }
 
+void CImage::resizeTargets (const glm::vec2& size) {
+    this->m_size = size;
+
+    for (const auto& [fbo, scale] : this->m_sizedTargets) {
+	const auto width = static_cast<uint32_t> (std::max (1.0f, size.x / scale));
+	const auto height = static_cast<uint32_t> (std::max (1.0f, size.y / scale));
+	fbo->resize (width, height, width, height);
+    }
+}
+
+void CImage::setLocalOffset (const glm::vec2& offset) { this->m_localOffset = offset; }
+
 bool CImage::drawsSubtree () const { return this->m_initialized && this->m_composeTarget != nullptr; }
 
 void CImage::renderComposeTarget (bool copyBackground) {
@@ -1147,12 +1165,16 @@ void CImage::updateScenePosition (
     const glm::vec3& origin, const glm::vec2& size, const glm::vec3& scale, float sceneWidth, float sceneHeight
 ) {
     const glm::vec2 scaledSize = size * glm::vec2 (scale);
-    this->m_pos.x = origin.x - (scaledSize.x / 2.0f);
-    this->m_pos.w = origin.y + (scaledSize.y / 2.0f);
-    this->m_pos.z = origin.x + (scaledSize.x / 2.0f);
-    this->m_pos.y = origin.y - (scaledSize.y / 2.0f);
+    // the quad's centre: the origin, or the given offset from it in the layer's own (scaled) pixels
+    const glm::vec2 centre = glm::vec2 (origin) + (this->m_localOffset.has_value () ? *this->m_localOffset * glm::vec2 (scale) : glm::vec2 (0.0f));
+    this->m_pos.x = centre.x - (scaledSize.x / 2.0f);
+    this->m_pos.w = centre.y + (scaledSize.y / 2.0f);
+    this->m_pos.z = centre.x + (scaledSize.x / 2.0f);
+    this->m_pos.y = centre.y - (scaledSize.y / 2.0f);
 
-    if (this->getImage ().alignment.find ("top") != std::string::npos) {
+    if (this->m_localOffset.has_value ()) {
+	// placed by the offset alone
+    } else if (this->getImage ().alignment.find ("top") != std::string::npos) {
 	this->m_pos.y -= scaledSize.y / 2.0f;
 	this->m_pos.w -= scaledSize.y / 2.0f;
     } else if (this->getImage ().alignment.find ("bottom") != std::string::npos) {
@@ -1160,7 +1182,9 @@ void CImage::updateScenePosition (
 	this->m_pos.w += scaledSize.y / 2.0f;
     }
 
-    if (this->getImage ().alignment.find ("left") != std::string::npos) {
+    if (this->m_localOffset.has_value ()) {
+	// placed by the offset alone
+    } else if (this->getImage ().alignment.find ("left") != std::string::npos) {
 	this->m_pos.x += scaledSize.x / 2.0f;
 	this->m_pos.z += scaledSize.x / 2.0f;
     } else if (this->getImage ().alignment.find ("right") != std::string::npos) {

@@ -623,41 +623,44 @@ public:
 };
 
 /**
- * Text object data. Phase 1 of text support covers only static text;
- * dynamic (script-driven) text captures the script source for a future
- * pass but renders whatever initial value the scene provides.
+ * Text object data. A text object is an image layer whose picture is its laid-out text (WE's text class extends its
+ * image class: the constructor GH 0x14027c1b0 calls the image's, GH 0x140212c50), so it takes effects, a parent,
+ * angles, parallax, alpha, colour and a blend mode like any image. These are the fields the text adds (WE's property
+ * table GH 0x14027e130 with the defaults its constructor sets)
  */
 struct TextData {
-    /** Initial text content to render (for scripted text, this is the `value` placeholder) */
+    /** The text (a user property, a script, or a literal; `\n` breaks a line) */
     UserSettingUniquePtr text;
-    /** Font reference from scene (e.g. "fonts/VCR_OSD_MONO.ttf" or "systemfont_arial") */
+    /** Font reference from scene (e.g. "fonts/VCR_OSD_MONO.ttf" or "systemfont_arial"; WE's default systemfont_arial) */
     std::string font;
-    /** Font size in points, optionally bound to a user setting or script */
+    /** Font size in points (default 32), rasterised at 300 dpi (FT_Set_Char_Size (0, pt·64, 300), GH 0x1401d94c0) */
     UserSettingUniquePtr pointSize;
-    /** Bounding box size */
-    glm::vec2 size;
-    /** Scale (x, y, z) */
-    UserSettingUniquePtr scale;
-    /** Text color as linear-space RGB */
-    UserSettingUniquePtr color;
-    /** Alpha multiplier */
-    UserSettingUniquePtr alpha;
-    /** Whether the text is visible */
-    UserSettingUniquePtr visible;
-    /** Horizontal alignment: "left", "center", "right" */
-    std::string alignment;
-    /** Vertical alignment: "top", "center", "bottom" */
-    std::string verticalalign;
-    /** Padding inside the bounding box (x, y). WE writes this either as a "x y" string or as a
-     *  bare scalar meaning both axes; JsonExtensions::get<vec> accepts both forms. */
+    /** "left", "center" (default) or "right": the lines within the block and the origin on the block */
+    std::string horizontalAlign;
+    /** "top", "center" (default) or "bottom": the origin on the block */
+    std::string verticalAlign;
+    /** "none" (default) … "topleft": pins the layer to an edge of the visible area (GH 0x14027da50) */
+    std::string anchor;
+    /** Padding around the text when it renders through a texture (effects): WE's default 32 32, clamped to 512 */
     glm::vec2 padding;
-    // TODO: PARSE LIMITS TOO!
+    /** Extra advance per glyph (x) and per line (y) */
+    glm::vec2 spacing;
+    /** `limitwidth`: lines wrap at `maxwidth` pixels */
+    bool limitWidth = false;
+    UserSettingUniquePtr maxWidth;
+    /** `limitrows`: at most `maxrows` lines */
+    bool limitRows = false;
+    UserSettingUniquePtr maxRows;
+    /** `limituseellipsis`: a line cut by `maxrows` ends in "…" */
+    bool limitUseEllipsis = false;
+    /** `blockalign`: a wrapped line is justified to `maxwidth` (its spaces widen) */
+    bool blockAlign = false;
 };
 
-class Text : public Object, public TextData {
+class Text : public Image, public TextData {
 public:
-    explicit Text (ObjectData data, TextData textData) noexcept :
-	Object (std::move (data)), TextData (std::move (textData)) { };
+    explicit Text (ObjectData data, ImageData imageData, TextData textData) noexcept :
+	Image (std::move (data), std::move (imageData)), TextData (std::move (textData)) { };
     ~Text () override = default;
 };
 } // namespace WallpaperEngine::Data::Model

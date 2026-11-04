@@ -59,6 +59,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Render/Objects/CImage.cpp
     WallpaperEngine/Render/Objects/CSound.cpp
     WallpaperEngine/Render/Objects/CText.cpp
+    WallpaperEngine/Render/Objects/TextLayout.cpp
     WallpaperEngine/Render/Objects/CParticle.cpp
 
     WallpaperEngine/Render/CFBO.cpp
@@ -114,6 +115,7 @@ set(TARGET_LIBRARIES
     PkgConfig::mpv
     kissfft::kissfft
     Freetype::Freetype
+    PkgConfig::fontconfig
     glslang
     spirv-cross-core
     spirv-cross-glsl
@@ -159,6 +161,7 @@ pkg_check_modules(mpv REQUIRED IMPORTED_TARGET mpv)
 pkg_check_modules(ffmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
 find_package(SDL2 REQUIRED CONFIG REQUIRED COMPONENTS SDL2)
 find_package(Freetype REQUIRED)
+pkg_check_modules(fontconfig REQUIRED IMPORTED_TARGET fontconfig)
 
 # generate the version file that will be exported with the installation
 configure_file(

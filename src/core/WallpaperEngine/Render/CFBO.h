@@ -34,6 +34,12 @@ public:
     [[nodiscard]] uint32_t getSpritesheetFrames () const override;
     [[nodiscard]] float getSpritesheetDuration () const override;
 
+    /**
+     * Gives the FBO a new size in place (its texture's storage is reallocated and cleared to transparent): passes keep
+     * their pointer to it, and to its resolution, so they follow. A text layer's targets change size with its text
+     */
+    void resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidth, uint32_t textureHeight);
+
     void incrementUsageCount () const override;
     void decrementUsageCount () const override;
     void update () const override;

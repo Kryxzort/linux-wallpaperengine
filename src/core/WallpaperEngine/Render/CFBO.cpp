@@ -81,6 +81,35 @@ CFBO::CFBO (
     this->m_frames.push_back (frame);
 }
 
+void CFBO::resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidth, uint32_t textureHeight) {
+    if (this->m_resolution == glm::vec4 (textureWidth, textureHeight, realWidth, realHeight)) {
+	return;
+    }
+
+    GLint previousFramebuffer = 0;
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+
+    glBindTexture (GL_TEXTURE_2D, this->m_texture);
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
+    GLfloat previousClearColor[4] = {};
+    glGetFloatv (GL_COLOR_CLEAR_VALUE, previousClearColor);
+    glClearColor (0.0f, 0.0f, 0.0f, 0.0f);
+    glClear (GL_COLOR_BUFFER_BIT);
+    glClearColor (previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
+    glBindFramebuffer (GL_FRAMEBUFFER, previousFramebuffer);
+
+    this->m_resolution = { textureWidth, textureHeight, realWidth, realHeight };
+
+    for (const auto& frame : this->m_frames) {
+	frame->width1 = textureWidth;
+	frame->height1 = textureHeight;
+	frame->width2 = realWidth;
+	frame->height2 = realHeight;
+    }
+}
+
 CFBO::~CFBO () {
     // free opengl texture and framebuffer
     glDeleteTextures (1, &this->m_texture);

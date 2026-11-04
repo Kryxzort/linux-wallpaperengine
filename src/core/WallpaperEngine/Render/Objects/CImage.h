@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "CRenderable.h"
 #include "WallpaperEngine/Render/CObject.h"
 #include "WallpaperEngine/Render/Objects/Effects/CPass.h"
@@ -21,7 +23,7 @@ class CPass;
 } // namespace WallpaperEngine::Render::Objects::Effects
 
 namespace WallpaperEngine::Render::Objects {
-class CImage final : public CRenderable, public ScriptableObject {
+class CImage : public CRenderable, public ScriptableObject {
     friend CObject;
 
 public:
@@ -65,6 +67,17 @@ public:
     void pinpongFramebuffer (std::shared_ptr<const CFBO>* drawTo, std::shared_ptr<const TextureProvider>* asInput);
 
 protected:
+    /**
+     * Gives the layer a new size: its composite FBOs and its effects' FBOs (at their scale) are resized in place, so the
+     * passes built for them keep working. A text layer's size follows its text (CText)
+     */
+    void resizeTargets (const glm::vec2& size);
+    /**
+     * Places the quad's centre at this offset from the origin, in the layer's own pixels (WE's y up; scaled and turned
+     * with the layer) instead of by `alignment`: a text layer's offset comes from its laid-out block (GH 0x14027c600)
+     */
+    void setLocalOffset (const glm::vec2& offset);
+
     /**
      * Fills the group target: the background (copybackground, or `copyBackground`; else transparent), then the
      * objects this layer owns
@@ -147,6 +160,10 @@ private:
     glm::vec3 m_sceneCenter = {};
     glm::vec3 m_scenePivot = {};
     glm::vec2 m_size = {};
+    /** setLocalOffset's offset; unset: placed by `alignment` */
+    std::optional<glm::vec2> m_localOffset = std::nullopt;
+    /** The FBOs sized after the layer, with their scale (the composite pair: 1), for resizeTargets */
+    std::vector<std::pair<std::shared_ptr<CFBO>, float>> m_sizedTargets = {};
 
     bool m_initialized = false;
     /** (color.rgb, alpha) for g_Color4, refreshed by getColor4 () — every render () */

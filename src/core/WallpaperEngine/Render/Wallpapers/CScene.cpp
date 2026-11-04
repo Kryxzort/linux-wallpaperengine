@@ -289,12 +289,13 @@ Render::CObject* CScene::createObject (const Object& object) {
 Render::CObject* CScene::dispatchObjectType (const Object& object) {
     Render::CObject* renderObject = nullptr;
 
-    if (object.is<Image> ()) {
+    // a text object is an image layer too (WE's text class extends its image class): test it first
+    if (object.is<Text> ()) {
+	renderObject = new Objects::CText (*this, *object.as<Text> ());
+    } else if (object.is<Image> ()) {
 	renderObject = new Objects::CImage (*this, *object.as<Image> ());
     } else if (object.is<Sound> ()) {
 	renderObject = new Objects::CSound (*this, *object.as<Sound> ());
-    } else if (object.is<Text> ()) {
-	renderObject = new Objects::CText (*this, *object.as<Text> ());
     } else if (object.is<Particle> ()) {
 	const auto& particleData = *object.as<Particle> ();
 
@@ -572,9 +573,6 @@ bool ownVisible (const Object& object) {
     }
     if (object.is<Particle> ()) {
 	return object.as<Particle> ()->visible->value->getBool ();
-    }
-    if (object.is<Text> ()) {
-	return object.as<Text> ()->visible->value->getBool ();
     }
     return object.groupVisible == nullptr || object.groupVisible->value->getBool ();
 }
