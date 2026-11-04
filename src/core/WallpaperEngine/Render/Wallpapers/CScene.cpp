@@ -98,9 +98,12 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     // WE starts the smoothed parallax position at the centre (GH 0x1401b6c60), g_ParallaxPosition at 0.5 0.5
     this->m_parallaxPosition = { width / 2.0f, height / 2.0f };
 
-    // an HDR scene renders into half float targets (WPENGINE_HDR=0: as WE below Ultra post-processing, LDR)
+    // an HDR scene renders into half float targets: WE's renderer flag 0x2000, set by its project classifier
+    // (GH 0x14013f860) only when scene.json's general has `bloom` and `hdr` both literally true and the
+    // "postprocessing" setting is "ultra" ("displayhdr" adds 0x4000). An hdr scene without bloom renders LDR in WE.
+    // LWE has no quality setting: Ultra, unless WPENGINE_HDR=0 (as WE below Ultra, LDR)
     const char* hdrSetting = std::getenv ("WPENGINE_HDR");
-    this->m_hdr = scene->camera.bloom.hdr->value->getBool ()
+    this->m_hdr = scene->camera.bloom.hdrGate
 	&& !(hdrSetting != nullptr && std::string_view (hdrSetting) == "0");
     this->m_sceneFormat = this->m_hdr ? TextureFormat_RGBA16161616f : TextureFormat_ARGB8888;
 

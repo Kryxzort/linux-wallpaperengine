@@ -94,6 +94,12 @@ struct SceneData {
 	    UserSettingUniquePtr hdrFeather;
 	    UserSettingUniquePtr hdrScatter;
 	    UserSettingUniquePtr hdrIterations;
+	    /**
+	     * WE renders the scene HDR (renderer flag 0x2000) only when scene.json's `general.bloom` and `general.hdr` are
+	     * both the JSON literal true (rapidjson's bool flag: a user-property object or a number doesn't count) and the
+	     * "postprocessing" setting is "ultra" (GH 0x14013f860); read here from the file as written
+	     */
+	    bool hdrGate = false;
 	} bloom;
 	/**
 	 * Parallax effect configuration

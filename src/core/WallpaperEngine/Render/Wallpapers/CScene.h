@@ -202,8 +202,8 @@ public:
     /** The scene's scripts call `getEffect`: every effect is built, a script may show it (SceneScript IEffect.visible) */
     [[nodiscard]] bool scriptsReachEffects () const;
     /**
-     * WE renders this scene HDR: `general.hdr`, with WE's post-processing at Ultra (renderer flag 0x2000, set from the
-     * "postprocessing" setting "ultra", GH 0x14013f860). LWE has no quality setting: on unless WPENGINE_HDR=0.
+     * WE renders this scene HDR: `general.bloom` and `general.hdr` both literally true in scene.json, with WE's
+     * post-processing at Ultra (renderer flag 0x2000, GH 0x14013f860). LWE has no quality setting: on unless WPENGINE_HDR=0.
      * Its targets are half float, its bloom is the HDR chain
      */
     [[nodiscard]] bool rendersHDR () const;

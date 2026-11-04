@@ -138,6 +138,12 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
     const JSON projection = perspective ? JSON::object () : *orthogonal;
     const auto objects = scene.require ("objects", "Scenes must have an objects section");
     const auto& properties = project.properties;
+    // WE's project classifier (GH 0x14013f860) tests scene.json's general for literal booleans: `bloom` and `hdr` both
+    // true (and its post-processing at ultra) set the renderer's HDR flag 0x2000
+    const auto literalTrue = [&general] (const char* key) {
+	const auto it = general.find (key);
+	return it != general.end () && it->is_boolean () && it->get<bool> ();
+    };
 
     // TODO: FIND IF THESE DEFAULTS ARE SENSIBLE OR NOT AND PERFORM PROPER VALIDATION WHEN CAMERA PREVIEW AND CAMERA
     // PARALLAX ARE PRESENT
@@ -173,6 +179,7 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                     .hdrFeather = general.user ("bloomhdrfeather", properties, 0.1f),
                     .hdrScatter = general.user ("bloomhdrscatter", properties, 1.619f),
                     .hdrIterations = general.user ("bloomhdriterations", properties, 8),
+                    .hdrGate = literalTrue ("bloom") && literalTrue ("hdr"),
                 },
                 .parallax = {
                     .enabled = general.user ("cameraparallax", properties, false),
