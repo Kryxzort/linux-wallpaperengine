@@ -1,6 +1,8 @@
 #include "CModel.h"
 #include "WallpaperEngine/Health.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -20,8 +22,10 @@ using namespace WallpaperEngine::Data::Parsers;
 using JSON = WallpaperEngine::Data::JSON::JSON;
 
 namespace {
-// the interleaved vertex: position, normal, tangent (w: the bitangent's sign), texcoord
-constexpr GLsizei kFloatsPerVertex = 3 + 3 + 4 + 2;
+// the interleaved vertex: position, normal, tangent (w: the bitangent's sign), texcoord, blend weights
+constexpr GLsizei kFloatsPerVertex = 3 + 3 + 4 + 2 + 4;
+// generic4's morph uniforms hold the count and up to 11 targets (g_MorphOffsets[12], g_MorphWeights[12])
+constexpr size_t kMorphSlots = 11;
 } // namespace
 
 CModelMesh::CModelMesh (
@@ -41,6 +45,142 @@ CModelMesh::~CModelMesh () {
     }
     if (this->m_ibo != GL_NONE) {
 	glDeleteBuffers (1, &this->m_ibo);
+    }
+    if (this->m_boneIndices != GL_NONE) {
+	glDeleteBuffers (1, &this->m_boneIndices);
+    }
+}
+
+void CModelMesh::setAnimation (const std::vector<glm::mat4x3>* bones, const std::vector<float>* weights) {
+    this->m_bones = bones;
+    this->m_shapeWeights = weights;
+}
+
+void CModelMesh::buildMorphMap () {
+    // model_vertex_v1.h (generic4, the casters): the map is a float stream read 3 (6 with MORPHING_NORMALS) floats at
+    // (gl_VertexID + g_MorphOffsets[1 + t]) · 3, packed into RGBA texels of a square texture (y = index / height). Per
+    // target, per vertex: its point's delta as the snorm value; g_MorphWeights[0] is the position scale (2.8.42's
+    // MORPH_POSITION_SCALE). A vertex's point is its vec4 position's w − 1, else its own index (a dense target)
+    const auto& mesh = this->m_mesh;
+    const size_t vertices = mesh.vertices.size ();
+    if (mesh.morphs.empty () || vertices == 0 || mesh.morphScale == 0.0f) {
+	return;
+    }
+    this->m_morphNormals = (mesh.flags & 0x400) != 0;
+    const size_t per = this->m_morphNormals ? 6 : 3;
+    std::vector<float> stream (mesh.morphs.size () * vertices * per + 8, 0.0f);
+    for (size_t t = 0; t < mesh.morphs.size (); t++) {
+	const auto& target = mesh.morphs[t];
+	for (size_t v = 0; v < vertices; v++) {
+	    const uint32_t w = mesh.vertices[v].morph;
+	    const size_t point = w > 0 ? w - 1 : v;
+	    if (point >= target.positions.size () || (w == 0 && vertices != mesh.morphPoints)) {
+		continue;
+	    }
+	    float* out = &stream[(t * vertices + v) * per];
+	    const glm::vec3 p = target.positions[point] / mesh.morphScale;
+	    out[0] = p.x, out[1] = p.y, out[2] = p.z;
+	    if (this->m_morphNormals && point < target.normals.size ()) {
+		out[3] = target.normals[point].x, out[4] = target.normals[point].y, out[5] = target.normals[point].z;
+	    }
+	}
+    }
+    const size_t texels = stream.size () / 4 + 1;
+    const auto side = static_cast<uint32_t> (std::ceil (std::sqrt (static_cast<double> (texels))));
+    stream.resize (static_cast<size_t> (side) * side * 4, 0.0f);
+    this->m_morphMap = std::make_shared<CFBO> ("", TextureFormat_RGBA16161616f, TextureFlags_NoFlags, 1, side, side, side, side);
+    glBindTexture (GL_TEXTURE_2D, this->m_morphMap->getTextureID (0));
+    glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, side, side, GL_RGBA, GL_FLOAT, stream.data ());
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture (GL_TEXTURE_2D, 0);
+    this->m_morphResolution = glm::vec4 (side, side, side, side);
+}
+
+void CModelMesh::bindSkinAttributes (GLuint program) const {
+    if (this->m_bones == nullptr) {
+	return;
+    }
+    if (const GLint at = glGetAttribLocation (program, "a_BlendIndices"); at >= 0 && this->m_boneIndices != GL_NONE) {
+	glEnableVertexAttribArray (at);
+	glBindBuffer (GL_ARRAY_BUFFER, this->m_boneIndices);
+	// uvec4 in the shader takes integers; a translator that made it a float vector takes them converted
+	GLint count = 0;
+	glGetProgramiv (program, GL_ACTIVE_ATTRIBUTES, &count);
+	GLenum type = GL_UNSIGNED_INT_VEC4;
+	for (GLint i = 0; i < count; i++) {
+	    char name[64];
+	    GLsizei length = 0;
+	    GLint size = 0;
+	    GLenum t = 0;
+	    glGetActiveAttrib (program, static_cast<GLuint> (i), sizeof (name), &length, &size, &t, name);
+	    if (std::string (name, length) == "a_BlendIndices") {
+		type = t;
+	    }
+	}
+	if (type == GL_UNSIGNED_INT_VEC4 || type == GL_INT_VEC4) {
+	    glVertexAttribIPointer (at, 4, GL_UNSIGNED_INT, 0, nullptr);
+	} else {
+	    glVertexAttribPointer (at, 4, GL_UNSIGNED_INT, GL_FALSE, 0, nullptr);
+	}
+    }
+    if (const GLint at = glGetAttribLocation (program, "a_BlendWeights"); at >= 0) {
+	glEnableVertexAttribArray (at);
+	glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
+	glVertexAttribPointer (at, 4, GL_FLOAT, GL_FALSE, kFloatsPerVertex * sizeof (GLfloat),
+			       reinterpret_cast<const void*> (12 * sizeof (GLfloat)));
+    }
+}
+
+void CModelMesh::unbindSkinAttributes (GLuint program) const {
+    for (const char* name : { "a_BlendIndices", "a_BlendWeights" }) {
+	if (const GLint at = glGetAttribLocation (program, name); at >= 0) {
+	    glDisableVertexAttribArray (at);
+	}
+    }
+}
+
+void CModelMesh::uploadAnimationUniforms (GLuint program, int morphSlot) const {
+    if (this->m_bones != nullptr && !this->m_bones->empty ()) {
+	if (const GLint at = glGetUniformLocation (program, "g_Bones"); at >= 0) {
+	    glUniformMatrix4x3fv (at, static_cast<GLsizei> (this->m_bones->size ()), GL_FALSE,
+				  glm::value_ptr ((*this->m_bones)[0]));
+	}
+    }
+    if (this->m_morphMap == nullptr) {
+	return;
+    }
+    // g_MorphOffsets[0] the targets drawn (≤ 11: the ones weighted ≠ 0, in order; Inferred: WE's pick), [1 + i] the
+    // target's first vertex in the map; g_MorphWeights[0] the position scale, [1 + i] the weight
+    GLuint offsets[kMorphSlots + 1] = {};
+    GLfloat weights[kMorphSlots + 1] = {};
+    weights[0] = this->m_mesh.morphScale;
+    size_t used = 0;
+    if (this->m_shapeWeights != nullptr) {
+	for (size_t t = 0; t < this->m_shapeWeights->size () && used < kMorphSlots; t++) {
+	    if ((*this->m_shapeWeights)[t] == 0.0f) {
+		continue;
+	    }
+	    offsets[1 + used] = static_cast<GLuint> (t * this->m_mesh.vertices.size ());
+	    weights[1 + used] = (*this->m_shapeWeights)[t];
+	    used++;
+	}
+    }
+    offsets[0] = static_cast<GLuint> (used);
+    if (const GLint at = glGetUniformLocation (program, "g_MorphOffsets"); at >= 0) {
+	glUniform1uiv (at, kMorphSlots + 1, offsets);
+    }
+    if (const GLint at = glGetUniformLocation (program, "g_MorphWeights"); at >= 0) {
+	glUniform1fv (at, kMorphSlots + 1, weights);
+    }
+    const std::string slot = std::to_string (morphSlot);
+    const glm::vec4 texel (1.0f / this->m_morphResolution.x, 1.0f / this->m_morphResolution.y, this->m_morphResolution.x,
+			   this->m_morphResolution.y);
+    if (const GLint at = glGetUniformLocation (program, ("g_Texture" + slot + "Resolution").c_str ()); at >= 0) {
+	glUniform4fv (at, 1, glm::value_ptr (this->m_morphResolution));
+    }
+    if (const GLint at = glGetUniformLocation (program, ("g_Texture" + slot + "Texel").c_str ()); at >= 0) {
+	glUniform4fv (at, 1, glm::value_ptr (texel));
     }
 }
 
@@ -75,7 +215,24 @@ void CModelMesh::setup () {
     vertices.reserve (this->m_mesh.vertices.size () * kFloatsPerVertex);
     for (const auto& v : this->m_mesh.vertices) {
 	vertices.insert (vertices.end (), { v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z,
-					    v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.uv.x, v.uv.y });
+					    v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.uv.x, v.uv.y,
+					    v.weights.x, v.weights.y, v.weights.z, v.weights.w });
+    }
+    if (this->m_bones != nullptr) {
+	std::vector<GLuint> bones;
+	bones.reserve (this->m_mesh.vertices.size () * 4);
+	for (const auto& v : this->m_mesh.vertices) {
+	    for (int c = 0; c < 4; c++) {
+		// an index past the skeleton reads bone 0 (its weight is 0 in a well-formed file)
+		bones.push_back (v.bones[c] < this->m_bones->size () ? v.bones[c] : 0);
+	    }
+	}
+	glGenBuffers (1, &this->m_boneIndices);
+	glBindBuffer (GL_ARRAY_BUFFER, this->m_boneIndices);
+	glBufferData (GL_ARRAY_BUFFER, bones.size () * sizeof (GLuint), bones.data (), GL_STATIC_DRAW);
+    }
+    if (this->m_shapeWeights != nullptr) {
+	this->buildMorphMap ();
     }
 
     glGenBuffers (1, &this->m_vbo);
@@ -100,6 +257,10 @@ void CModelMesh::setup () {
 	cpass->setModelViewProjectionMatrixInverse (&this->m_modelViewProjectionInverse);
 	cpass->addUniform ("g_EyePosition", &this->m_eye);
 	cpass->setInput (this->m_texture);
+	// the morph map is generic4's g_Texture5 ({"material":"morph","hidden":true})
+	if (this->m_morphMap != nullptr) {
+	    cpass->setTexture (5, this->m_morphMap);
+	}
 
 	// the scene's light cookie where the material samples _alias_lightCookie (generic4's g_Texture7 under
 	// LIGHTS_COOKIE; WE points the alias at the cookie, GH 0x1401bf270 → scene+0x1310)
@@ -117,7 +278,8 @@ void CModelMesh::setup () {
 	const GLint texcoord = glGetAttribLocation (program, "a_TexCoord");
 
 	cpass->setGeometryCallback (
-	    [this, position, normal, tangent, texcoord] () {
+	    [this, program, position, normal, tangent, texcoord] () {
+		this->bindSkinAttributes (program);
 		glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
 		glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_ibo);
 		const GLsizei stride = kFloatsPerVertex * sizeof (GLfloat);
@@ -137,9 +299,11 @@ void CModelMesh::setup () {
 	    },
 	    [this, program] () {
 		this->uploadSceneUniforms (program);
+		this->uploadAnimationUniforms (program, 5);
 		glDrawElements (GL_TRIANGLES, this->m_indexCount, GL_UNSIGNED_INT, nullptr);
 	    },
-	    [position, normal, tangent, texcoord] () {
+	    [this, program, position, normal, tangent, texcoord] () {
+		this->unbindSkinAttributes (program);
 		for (const GLint location : { position, normal, tangent, texcoord }) {
 		    if (location >= 0) {
 			glDisableVertexAttribArray (location);
@@ -246,6 +410,10 @@ void CModelMesh::setupShadowCaster (const Material& caster) {
     const GLuint program = cpass->getProgramID ();
     cpass->setModelMatrix (&this->m_modelMatrix);
     cpass->setInput (this->m_texture);
+    // the casters read the morph map as g_Texture1 ({"material":"morph"})
+    if (this->m_morphMap != nullptr) {
+	cpass->setTexture (1, this->m_morphMap);
+    }
 
     const GLint position = glGetAttribLocation (program, "a_Position");
     const GLint texcoord = glGetAttribLocation (program, "a_TexCoord");
@@ -253,7 +421,8 @@ void CModelMesh::setupShadowCaster (const Material& caster) {
     const GLint viewports = glGetUniformLocation (program, "g_ViewportViewProjectionMatrices");
 
     cpass->setGeometryCallback (
-	[this, position, texcoord, normal] () {
+	[this, program, position, texcoord, normal] () {
+	    this->bindSkinAttributes (program);
 	    glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
 	    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_ibo);
 	    const GLsizei stride = kFloatsPerVertex * sizeof (GLfloat);
@@ -271,7 +440,8 @@ void CModelMesh::setupShadowCaster (const Material& caster) {
 		);
 	    }
 	},
-	[this, viewports] () {
+	[this, program, viewports] () {
+	    this->uploadAnimationUniforms (program, 1);
 	    // one draw per viewport: its rect bound and its matrix as g_ViewportViewProjectionMatrices[0] (the caster
 	    // reads [gl_InstanceID], 0 for a single instance); WE draws up to six instances, one per viewport
 	    if (this->m_shadowViews == nullptr) {
@@ -292,7 +462,8 @@ void CModelMesh::setupShadowCaster (const Material& caster) {
 		glDrawElements (GL_TRIANGLES, this->m_indexCount, GL_UNSIGNED_INT, nullptr);
 	    }
 	},
-	[position, texcoord, normal] () {
+	[this, program, position, texcoord, normal] () {
+	    this->unbindSkinAttributes (program);
 	    for (const GLint location : { position, texcoord, normal }) {
 		if (location >= 0) {
 		    glDisableVertexAttribArray (location);
@@ -368,12 +539,36 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 	return;
     }
 
+    // F4: a skeleton with animations (MDLS + MDLA) is posed by the object's animation layers, as a puppet's (GH
+    // 0x140228470), and skinned on the GPU (generic4's SKINNING, g_Bones = world · bindWorld⁻¹ as mat4x3, BONECOUNT the
+    // bone count: GH 0x140230ec0 sets them for every skinned mesh); blend shapes (MDMP) through MORPHING
+    this->m_animated = !this->m_model.bones.empty () && !this->m_model.animations.empty ();
+    if (this->m_animated) {
+	this->m_bind = Puppet::bindPose (this->m_model);
+	Puppet::bindWorldMatrices (this->m_model, this->m_bindWorldInverse);
+	for (auto& m : this->m_bindWorldInverse) {
+	    m = glm::inverse (m);
+	}
+	this->m_skinning.assign (this->m_model.bones.size (), glm::mat4x3 (1.0f));
+	for (const auto& layer : this->m_object.animationLayers) {
+	    this->m_layers.push_back ({ .blendIn = layer->blendIn, .layer = layer.get () });
+	}
+    }
+    for (const auto& mesh : this->m_model.meshes) {
+	this->m_shapeWeights.emplace_back (mesh.morphs.size (), 0.0f);
+    }
+
     const auto& fog = this->getScene ().getScene ().fog;
     const auto& scene = this->getScene ();
     const bool casts = scene.castsShadows () && this->m_object.castShadow != nullptr
 	&& this->m_object.castShadow->value->getBool ();
 
-    for (const auto& mesh : this->m_model.meshes) {
+    for (size_t meshIndex = 0; meshIndex < this->m_model.meshes.size (); meshIndex++) {
+	const auto& mesh = this->m_model.meshes[meshIndex];
+	const bool skinned = this->m_animated && std::ranges::any_of (mesh.vertices, [] (const Puppet::Vertex& v) {
+	    return v.weights != glm::vec4 (0.0f);
+	});
+	const bool morphed = !mesh.morphs.empty () && mesh.morphScale != 0.0f;
 	try {
 	    auto material = MaterialParser::load (project, mesh.material);
 	    const auto raw = JSON::parse (project.assetLocator->readString (mesh.material));
@@ -406,6 +601,17 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 		    pass.combos.insert_or_assign ("LIGHTS_DIRECTIONAL", scene.directionalLightCount ());
 		}
 
+		if (skinned) {
+		    pass.combos.insert_or_assign ("SKINNING", 1);
+		    pass.combos.insert_or_assign ("BONECOUNT", static_cast<int> (this->m_model.bones.size ()));
+		}
+		if (morphed) {
+		    pass.combos.insert_or_assign ("MORPHING", 1);
+		    if (mesh.flags & 0x400) {
+			pass.combos.insert_or_assign ("MORPHING_NORMALS", 1);
+		    }
+		}
+
 		// the scene's fog for a material that keeps generic4's FOG combo (default 1)
 		const auto fogCombo = pass.combos.find ("FOG");
 		if (fogCombo == pass.combos.end () || fogCombo->second != 0) {
@@ -419,6 +625,7 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 	    }
 
 	    auto renderable = std::make_unique<CModelMesh> (this->getScene (), this->m_object, *material, mesh);
+	    renderable->setAnimation (skinned ? &this->m_skinning : nullptr, morphed ? &this->m_shapeWeights[meshIndex] : nullptr);
 	    renderable->setup ();
 
 	    if (renderable->isReady () && casts) {
@@ -465,10 +672,47 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
     );
 }
 
+void CModel::updatePose () {
+    if (!this->m_animated) {
+	return;
+    }
+    const float now = static_cast<float> (this->getScene ().getTime ());
+    if (now == this->m_poseTime) {
+	return;
+    }
+    const float dt = this->m_poseTime < 0.0f ? 0.0f : std::max (now - this->m_poseTime, 0.0f);
+    this->m_poseTime = now;
+
+    std::vector<Puppet::Key> pose = this->m_bind;
+    std::vector<float> alpha (this->m_model.bones.size (), 1.0f);
+    for (auto& weights : this->m_shapeWeights) {
+	std::fill (weights.begin (), weights.end (), 0.0f);
+    }
+    for (auto& state : this->m_layers) {
+	const auto& layer = *state.layer;
+	const auto id = static_cast<uint32_t> (layer.animation->value->getInt ());
+	const auto match = std::ranges::find_if (this->m_model.animations, [id] (const Puppet::Animation& a) { return a.id == id; });
+	if (match == this->m_model.animations.end () || !layer.visible->value->getBool ()) {
+	    continue;
+	}
+	Puppet::advance (*match, state.clock, dt * layer.rate->value->getFloat ());
+	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
+						  layer.blendOut, layer.blendTime);
+	Puppet::mix (pose, this->m_bind, *match, state.clock.time, weight, layer.additive);
+	Puppet::mixExtras (alpha, this->m_shapeWeights, *match, state.clock.time, weight, layer.additive);
+    }
+    std::vector<glm::mat4> world;
+    Puppet::worldMatrices (this->m_model, pose, world);
+    for (size_t b = 0; b < world.size () && b < this->m_skinning.size (); b++) {
+	this->m_skinning[b] = glm::mat4x3 (world[b] * this->m_bindWorldInverse[b]);
+    }
+}
+
 void CModel::render () {
     if (this->m_meshes.empty () || !this->getScene ().isEffectivelyVisible (this->m_object)) {
 	return;
     }
+    this->updatePose ();
 
     const glm::mat4 world = this->getScene ().worldMatrixOf (this->m_object);
     const auto target = this->getScene ().getTargetFor (this->m_object);
@@ -485,6 +729,7 @@ void CModel::renderShadow (const std::shared_ptr<const CFBO>& atlas, const std::
 	return;
     }
 
+    this->updatePose ();
     const glm::mat4 world = this->getScene ().worldMatrixOf (this->m_object);
     for (const auto& mesh : this->m_meshes) {
 	mesh->drawShadow (atlas, world, views);

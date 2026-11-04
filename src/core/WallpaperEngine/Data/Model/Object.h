@@ -198,6 +198,8 @@ struct MeshObjectData {
     /** `castshadow` (default false): the model is drawn into the shadow atlas of the lights that cast shadows
      *  (WE's object property, GH 0x140283df0's table; the shadow pass GH 0x1401c4f30 draws the casters) */
     UserSettingUniquePtr castShadow = nullptr;
+    /** The model's animation layers (as an image's puppet: `animationlayers`), posing its MDLS skeleton (F4) */
+    std::vector<ImageAnimationLayerUniquePtr> animationLayers = {};
 };
 
 class MeshObject : public Object, public MeshObjectData {

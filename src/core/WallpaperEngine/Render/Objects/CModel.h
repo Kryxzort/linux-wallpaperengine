@@ -31,6 +31,11 @@ public:
 	const std::vector<Wallpapers::CScene::ShadowView>& views
     );
     [[nodiscard]] bool isReady () const;
+    /**
+     * The model's animation for this mesh (before setup): `bones` the skinning matrices (g_Bones, SKINNING with
+     * BONECOUNT), `weights` its blend-shape weights (MORPHING over g_Texture5's morph map); either may be null
+     */
+    void setAnimation (const std::vector<glm::mat4x3>* bones, const std::vector<float>* weights);
 
     [[nodiscard]] const float& getBrightness () const override;
     [[nodiscard]] const float& getUserAlpha () const override;
@@ -42,6 +47,13 @@ public:
 private:
     /** the engine values CPass doesn't feed: the normal matrix, the lights, the fog */
     void uploadSceneUniforms (GLuint program) const;
+    /** g_Bones, g_MorphOffsets / g_MorphWeights and the morph map's resolution in slot `morphSlot` */
+    void uploadAnimationUniforms (GLuint program, int morphSlot) const;
+    /** builds the morph map (model_vertex_v1.h's layout: per target, per vertex 3 floats, 6 with normals) */
+    void buildMorphMap ();
+    /** binds a_BlendIndices / a_BlendWeights (SKINNING) */
+    void bindSkinAttributes (GLuint program) const;
+    void unbindSkinAttributes (GLuint program) const;
 
     const Material& m_meshMaterial;
     const Puppet::Mesh& m_mesh;
@@ -50,6 +62,13 @@ private:
     const std::vector<Wallpapers::CScene::ShadowView>* m_shadowViews = nullptr;
     GLuint m_vbo = GL_NONE;
     GLuint m_ibo = GL_NONE;
+    /** per vertex: the 4 bone indices (u32) */
+    GLuint m_boneIndices = GL_NONE;
+    const std::vector<glm::mat4x3>* m_bones = nullptr;
+    const std::vector<float>* m_shapeWeights = nullptr;
+    std::shared_ptr<CFBO> m_morphMap = nullptr;
+    glm::vec4 m_morphResolution = glm::vec4 (0.0f);
+    bool m_morphNormals = false;
     GLsizei m_indexCount = 0;
     bool m_ready = false;
 
@@ -89,5 +108,23 @@ private:
     Puppet::Model m_model = {};
     std::vector<MaterialUniquePtr> m_materials = {};
     std::vector<std::unique_ptr<CModelMesh>> m_meshes = {};
+
+    /** the animation layers as they play (the puppet's clocks, weights and mixing, GH 0x1401d4d00 / 0x140228470) */
+    struct LayerState {
+	Puppet::Clock clock;
+	bool blendIn = false;
+	const ImageAnimationLayer* layer = nullptr;
+    };
+    /** poses the skeleton for the scene's time (once per time) */
+    void updatePose ();
+    std::vector<LayerState> m_layers = {};
+    std::vector<Puppet::Key> m_bind = {};
+    std::vector<glm::mat4> m_bindWorldInverse = {};
+    /** world (pose) · bindWorld⁻¹ per bone, as the shaders' mat4x3 */
+    std::vector<glm::mat4x3> m_skinning = {};
+    /** per mesh, per target */
+    std::vector<std::vector<float>> m_shapeWeights = {};
+    bool m_animated = false;
+    float m_poseTime = -1.0f;
 };
 } // namespace WallpaperEngine::Render::Objects

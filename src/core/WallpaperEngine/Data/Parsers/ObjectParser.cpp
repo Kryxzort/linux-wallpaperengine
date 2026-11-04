@@ -96,9 +96,15 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     // a model object: static MDL meshes (an image object has a string `image`, a model one `image: null`)
     if (const auto modelIt = it.find ("model");
 	modelIt != it.end () && modelIt->is_string () && (imageIt == it.end () || !imageIt->is_string ())) {
+	const auto& animationLayers = it.optional ("animationlayers");
 	return std::make_unique<MeshObject> (
 	    std::move (basedata),
-	    MeshObjectData { .file = *modelIt, .castShadow = it.user ("castshadow", project.properties, false) }
+	    MeshObjectData {
+		.file = *modelIt,
+		.castShadow = it.user ("castshadow", project.properties, false),
+		.animationLayers = animationLayers.has_value () ? parseAnimationLayers (*animationLayers, project)
+								: std::vector<ImageAnimationLayerUniquePtr> {},
+	    }
 	);
     }
 
