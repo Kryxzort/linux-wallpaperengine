@@ -84,6 +84,10 @@ public:
      * name (G09; the attachment is the bone's posed world · the MDAT matrix)
      */
     [[nodiscard]] bool attachmentTransform (const std::string& name, glm::vec2& offset, float& angle);
+    /** The puppet's attachment names, in the model's order (none without a puppet) */
+    [[nodiscard]] std::vector<std::string> attachmentNames () const;
+    /** IImageLayer.alignment from a script: where the quad sits on the origin, from the next frame */
+    void setAlignment (const std::string& alignment);
 
 protected:
     /**

@@ -32,6 +32,9 @@ public:
     /** A method of ILayer by name, or JS_UNDEFINED (a borrowed reference) */
     [[nodiscard]] JSValueConst method (const char* name) const;
 
+    /** An ILayer method written in JS (builtins.js `__layerMethods`) by name, or JS_UNDEFINED (a new reference) */
+    [[nodiscard]] JSValue jsMethod (const char* name);
+
     [[nodiscard]] JSClassID getEffectClassId () const { return m_effectClassId; }
     [[nodiscard]] JSClassID getTextureAnimationClassId () const { return m_textureAnimationClassId; }
     [[nodiscard]] JSClassID getAnimationClassId () const { return m_animationClassId; }
@@ -50,5 +53,7 @@ private:
     std::string m_name;
     std::unordered_map<ScriptableObject*, JSValue> m_instances;
     std::map<std::string, JSValue> m_methods;
+    /** builtins.js `__layerMethods`, once installed */
+    JSValue m_jsMethods = JS_UNDEFINED;
 };
 } // namespace WallpaperEngine::Scripting::Adapters

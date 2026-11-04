@@ -1,6 +1,7 @@
 #include "ScriptableObjectAdapter.h"
 
 #include <cstring>
+#include <glm/gtc/matrix_transform.hpp>
 #include <ranges>
 #include <utility>
 
@@ -89,6 +90,11 @@ enum LayerMethod {
     Method_Pause,
     Method_IsPlaying,
     Method_GetAnimation,
+    Method_World,
+    Method_ParentWorld,
+    Method_SetParent,
+    Method_Attachments,
+    Method_Valid,
 };
 
 constexpr std::pair<const char*, LayerMethod> kMethods[] = {
@@ -98,7 +104,21 @@ constexpr std::pair<const char*, LayerMethod> kMethods[] = {
     { "play", Method_Play },		 { "stop", Method_Stop },
     { "pause", Method_Pause },		 { "isPlaying", Method_IsPlaying },
     { "getAnimation", Method_GetAnimation },
+    // the natives under the JS ILayer methods (builtins.js: getTransformMatrix, setParent, getAttachment*, …)
+    { "__world", Method_World },	 { "__parentWorld", Method_ParentWorld },
+    { "__setParent", Method_SetParent }, { "__attachments", Method_Attachments },
+    { "__valid", Method_Valid },
 };
+
+/** a glm matrix as the 16 numbers of SceneScript's Mat4.m (column-major, as glm keeps it) */
+JSValue matrixArray (JSContext* ctx, const glm::mat4& m) {
+    JSValue result = JS_NewArray (ctx);
+    const float* f = &m[0][0];
+    for (uint32_t i = 0; i < 16; i++) {
+	JS_SetPropertyUint32 (ctx, result, i, JS_NewFloat64 (ctx, f[i]));
+    }
+    return result;
+}
 
 JSValue newEffect (JSContext* ctx, ScriptableObjectAdapter& adapter, const ImageEffect& effect) {
     JSValue result = JS_NewObjectClass (ctx, static_cast<int> (adapter.getEffectClassId ()));
@@ -171,7 +191,8 @@ JSValue layer_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 		? nullptr
 		: const_cast<WallpaperEngine::Render::CObject*> (parentObject)->asOrNull<ScriptableObject> ();
 
-	    return scriptable == nullptr ? JS_NULL : adapter.instantiate (*scriptable);
+	    // "the current parent layer or undefined if the layer is not parented" (WE's docs)
+	    return scriptable == nullptr ? JS_UNDEFINED : adapter.instantiate (*scriptable);
 	}
 	case Method_GetChildren: {
 	    JSValue result = JS_NewArray (ctx);
@@ -248,6 +269,64 @@ JSValue layer_method (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
 	    JS_SetOpaque (result, new OpaqueAnimation { .value = *found });
 	    return result;
 	}
+	case Method_World:
+	    // ILayer.getTransformMatrix: the layer's world matrix, T (origin) · Rz · Ry · Rx · S with its parents'
+	    // (scene units, y up, as `origin`; no parallax, no camera)
+	    return matrixArray (ctx, object.getScene ().worldMatrixOf (object.getObject ()));
+	case Method_ParentWorld: {
+	    const auto& parent = object.getObject ().parent;
+	    const auto* parentObject = parent.has_value () ? object.getScene ().getObject (*parent) : nullptr;
+	    return matrixArray (
+		ctx, parentObject == nullptr ? glm::mat4 (1.0f) : object.getScene ().worldMatrixOf (parentObject->getObject ())
+	    );
+	}
+	case Method_SetParent: {
+	    // __setParent (layer | null, attachment name | undefined): false when the parent would be the layer itself
+	    // or one of its children (a cycle)
+	    ScriptableObject* parent = argc > 0 ? adapter.fromValue (argv[0]) : nullptr;
+	    if (parent != nullptr) {
+		for (const auto* cur = &parent->getObject (); cur != nullptr;) {
+		    if (cur == &object.getObject ()) {
+			return JS_FALSE;
+		    }
+		    const auto* up = cur->parent.has_value () ? object.getScene ().getObject (*cur->parent) : nullptr;
+		    cur = up == nullptr ? nullptr : &up->getObject ();
+		}
+	    }
+	    std::optional<std::string> attachment = std::nullopt;
+	    if (argc > 1 && JS_IsString (argv[1])) {
+		const char* str = JS_ToCString (ctx, argv[1]);
+		attachment = std::string (str == nullptr ? "" : str);
+		JS_FreeCString (ctx, str);
+	    }
+	    object.getScene ().setParentOf (object, parent, attachment);
+	    return JS_TRUE;
+	}
+	case Method_Valid:
+	    return JS_NewBool (ctx, object.getScene ().isLayerAlive (&object));
+	case Method_Attachments: {
+	    // [{ name, m }]: a puppet's attachments, `m` their matrix in the layer's own space (posed now)
+	    JSValue result = JS_NewArray (ctx);
+	    if (image == nullptr) {
+		return result;
+	    }
+	    uint32_t count = 0;
+	    for (const auto& name : image->attachmentNames ()) {
+		glm::vec2 offset (0.0f);
+		float angle = 0.0f;
+		if (!image->attachmentTransform (name, offset, angle)) {
+		    continue;
+		}
+		const glm::mat4 local = glm::rotate (
+		    glm::translate (glm::mat4 (1.0f), glm::vec3 (offset, 0.0f)), angle, glm::vec3 (0.0f, 0.0f, 1.0f)
+		);
+		JSValue entry = JS_NewObject (ctx);
+		JS_SetPropertyStr (ctx, entry, "name", JS_NewString (ctx, name.c_str ()));
+		JS_SetPropertyStr (ctx, entry, "m", matrixArray (ctx, local));
+		JS_SetPropertyUint32 (ctx, result, count++, entry);
+	    }
+	    return result;
+	}
     }
 
     return JS_UNDEFINED;
@@ -298,13 +377,38 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	}
     }
 
-    // ITextLayer alignment (live: a script can switch it)
+    // ITextLayer alignment (live: a script can switch it) and its other fields as the scene set them
     if (const auto* text = object.asOrNull<CText> ()) {
+	const auto& data = text->getText ();
 	if (strcmp (name, "horizontalalign") == 0) {
 	    return JS_NewString (ctx, text->getHorizontalAlign ().c_str ());
 	}
 	if (strcmp (name, "verticalalign") == 0) {
 	    return JS_NewString (ctx, text->getVerticalAlign ().c_str ());
+	}
+	if (strcmp (name, "font") == 0) {
+	    return JS_NewString (ctx, data.font.c_str ());
+	}
+	if (strcmp (name, "anchor") == 0) {
+	    return JS_NewString (ctx, data.anchor.c_str ());
+	}
+	if (strcmp (name, "padding") == 0) {
+	    return JS_NewFloat64 (ctx, data.padding.x);
+	}
+	if (strcmp (name, "limitrows") == 0) {
+	    return JS_NewBool (ctx, data.limitRows);
+	}
+	if (strcmp (name, "limitwidth") == 0) {
+	    return JS_NewBool (ctx, data.limitWidth);
+	}
+	// LWE draws no text background box (no library scene turns one on)
+	if (strcmp (name, "opaquebackground") == 0) {
+	    return JS_FALSE;
+	}
+    } else if (const auto* image = object.asOrNull<CImage> ()) {
+	// IImageLayer.alignment (live: a script can switch it)
+	if (strcmp (name, "alignment") == 0) {
+	    return JS_NewString (ctx, image->getImage ().alignment.c_str ());
 	}
     }
 
@@ -319,7 +423,8 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	return JS_DupValue (ctx, method);
     }
 
-    return JS_UNDEFINED;
+    // ILayer methods written in JS on top of the natives (builtins.js `__layerMethods`)
+    return container->adapter.jsMethod (atomName.str);
 }
 
 int scriptableobject_property_set (
@@ -342,6 +447,16 @@ int scriptableobject_property_set (
 
     if (strcmp (name, "solid") == 0) {
 	object.setSolid (JS_ToBool (ctx, val) != 0);
+	return 1;
+    }
+
+    // IImageLayer.alignment: the quad is placed from it on the next frame
+    if (auto* image = object.asOrNull<CImage> ();
+	image != nullptr && !object.is<CText> () && strcmp (name, "alignment") == 0) {
+	if (const char* value = JS_ToCString (ctx, val)) {
+	    image->setAlignment (value);
+	    JS_FreeCString (ctx, value);
+	}
 	return 1;
     }
 
@@ -689,6 +804,27 @@ ScriptableObjectAdapter::~ScriptableObjectAdapter () {
     for (auto& method : this->m_methods | std::views::values) {
 	JS_FreeValue (ctx, method);
     }
+    JS_FreeValue (ctx, this->m_jsMethods);
+}
+
+JSValue ScriptableObjectAdapter::jsMethod (const char* name) {
+    JSContext* ctx = this->m_engine.getContext ();
+
+    if (JS_IsUndefined (this->m_jsMethods)) {
+	JSValue methods = JS_GetPropertyStr (ctx, this->m_engine.getGlobalThis (), "__layerMethods");
+	if (!JS_IsObject (methods)) {
+	    JS_FreeValue (ctx, methods);
+	    return JS_UNDEFINED;
+	}
+	this->m_jsMethods = methods;
+    }
+
+    JSValue method = JS_GetPropertyStr (ctx, this->m_jsMethods, name);
+    if (!JS_IsFunction (ctx, method)) {
+	JS_FreeValue (ctx, method);
+	return JS_UNDEFINED;
+    }
+    return method;
 }
 
 JSValueConst ScriptableObjectAdapter::method (const char* name) const {

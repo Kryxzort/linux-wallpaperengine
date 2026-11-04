@@ -7,6 +7,7 @@
 #include "WallpaperEngine/Utils/ScopeGuard.h"
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 
 using namespace WallpaperEngine::Scripting;
 using WallpaperEngine::Data::Model::DynamicValue;
@@ -233,10 +234,90 @@ JSValue sort_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueCons
     return JS_NewBool (ctx, container->getScene ().sortLayer (object, index));
 }
 
-// createLayer/destroyLayer: not supported (a layer built at run time needs the loader at run time); createLayer
-// returns undefined (as a missing layer), destroyLayer false
-JSValue create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_UNDEFINED; }
-JSValue destroy_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_FALSE; }
+namespace {
+/** createLayer ('models/x.json'): the object that asset makes (an image model, a particle system, a sound) */
+std::string configForAsset (const std::string& file) {
+    nlohmann::json config = nlohmann::json::object ();
+    const auto ends = [&file] (const char* suffix) {
+	const std::string s = suffix;
+	return file.size () >= s.size () && file.compare (file.size () - s.size (), s.size (), s) == 0;
+    };
+
+    if (file.rfind ("particles/", 0) == 0) {
+	config["particle"] = file;
+    } else if (ends (".mp3") || ends (".wav") || ends (".ogg") || file.rfind ("sounds/", 0) == 0) {
+	config["sound"] = file;
+    } else if (ends (".mdl")) {
+	config["model"] = file;
+    } else {
+	config["image"] = file;
+    }
+
+    return config.dump ();
+}
+
+std::string jsString (JSContext* ctx, JSValueConst value) {
+    const char* str = JS_ToCString (ctx, value);
+    std::string result = str == nullptr ? "" : str;
+    JS_FreeCString (ctx, str);
+    return result;
+}
+} // namespace
+
+// IScene.createLayer (an asset path, an IAssetHandle from engine.registerAsset, or a layer's configuration as
+// scene.json writes one): the layer, built now and drawn from this frame; undefined when it can't be built
+JSValue create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+
+    if (argc < 1) {
+	return JS_UNDEFINED;
+    }
+
+    std::string config;
+
+    if (JS_IsString (argv[0])) {
+	config = configForAsset (jsString (ctx, argv[0]));
+    } else if (JS_IsObject (argv[0])) {
+	JSValue file = JS_GetPropertyStr (ctx, argv[0], "file");
+	JSValue image = JS_GetPropertyStr (ctx, argv[0], "image");
+	const bool handle = JS_IsString (file) && JS_IsUndefined (image);
+
+	if (handle) {
+	    config = configForAsset (jsString (ctx, file));
+	} else {
+	    // Wallpaper Engine's own serialiser (vectors as "x y z", baseclasses.js _Internal.stringifyConfig)
+	    JSValue internal = JS_GetPropertyStr (ctx, container->getEngine ().getGlobalThis (), "_Internal");
+	    JSValue stringify = JS_IsObject (internal) ? JS_GetPropertyStr (ctx, internal, "stringifyConfig") : JS_UNDEFINED;
+	    JSValue text = JS_IsFunction (ctx, stringify) ? JS_Call (ctx, stringify, internal, 1, argv)
+							   : JS_JSONStringify (ctx, argv[0], JS_UNDEFINED, JS_UNDEFINED);
+	    if (JS_IsException (text)) {
+		JS_FreeValue (ctx, file);
+		JS_FreeValue (ctx, image);
+		JS_FreeValue (ctx, stringify);
+		JS_FreeValue (ctx, internal);
+		return JS_EXCEPTION;
+	    }
+	    config = jsString (ctx, text);
+	    JS_FreeValue (ctx, text);
+	    JS_FreeValue (ctx, stringify);
+	    JS_FreeValue (ctx, internal);
+	}
+	JS_FreeValue (ctx, file);
+	JS_FreeValue (ctx, image);
+    } else {
+	return JS_UNDEFINED;
+    }
+
+    return layerValue (*container, container->getScene ().createLayer (config));
+}
+
+// IScene.destroyLayer: true when the layer was in the scene
+JSValue destroy_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    auto* object = argc < 1 ? nullptr : resolveLayer (ctx, *container, argv[0]);
+
+    return JS_NewBool (ctx, object != nullptr && container->getScene ().destroyLayer (object));
+}
 
 /** IScene's properties are writable ("all properties are writable"): a script's value replaces the scene's */
 JSValue scene_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv, int magic) {

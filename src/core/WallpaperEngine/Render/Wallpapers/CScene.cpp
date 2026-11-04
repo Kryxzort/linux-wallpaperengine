@@ -712,7 +712,12 @@ void CScene::renderFrame () {
 	this->updateLights ();
     }
 
-    for (const auto& cur : this->drawOrder ()) {
+    // a copy: a text layer's script runs as it renders, and may create, destroy or sort layers
+    const std::vector<CObject*> order = this->drawOrder ();
+    for (const auto& cur : order) {
+	if (!this->m_destroyed.empty () && std::ranges::find (this->m_destroyed, cur) != this->m_destroyed.end ()) {
+	    continue;
+	}
 	const auto& debug = this->getContext ().getContext ().config;
 	if (debug.objectFilter.has_value () && cur->getId () != debug.objectFilter.value ()) {
 	    continue;
@@ -1012,6 +1017,16 @@ glm::vec2 CScene::getParallaxOffset (const Object& object) const {
     return (origin - this->m_parallaxPosition) * amount * parallaxDepthOf (*root);
 }
 
+void CScene::setParentOf (CObject& object, CObject* parent, const std::optional<std::string>& attachment) {
+    // the scene's data is the layers' live state (as their DynamicValues are)
+    auto& data = const_cast<Object&> (object.getObject ());
+    data.parent = parent == nullptr ? std::nullopt : std::optional<int> (parent->getId ());
+    data.attachment = parent == nullptr ? std::nullopt : attachment;
+    // which compose layer draws what follows the parents
+    this->m_composeOwners.clear ();
+    this->m_composeOwnersBuilt = false;
+}
+
 glm::mat4 CScene::localMatrixOf (const Object& object) {
     glm::vec3 angles (0.0f);
     glm::vec3 scale (1.0f);
@@ -1285,6 +1300,96 @@ const std::vector<CObject*>& CScene::getObjectsByRenderOrder () const { return t
 bool CScene::scriptsReachEffects () const { return this->getScene ().scriptsReachEffects; }
 
 const std::vector<CObject*>& CScene::getLayers () const { return this->m_layers; }
+
+CObject* CScene::createLayer (const std::string& config) {
+    using WallpaperEngine::Data::Parsers::ObjectParser;
+    WallpaperEngine::Data::JSON::JSON json;
+
+    try {
+	json = WallpaperEngine::Data::JSON::JSON::parse (config);
+    } catch (const std::exception& e) {
+	sLog.error ("createLayer: the configuration is not JSON: ", e.what ());
+	return nullptr;
+    }
+
+    if (!json.is_object ()) {
+	return nullptr;
+    }
+
+    if (this->m_nextCreatedId == 0) {
+	int top = 0;
+	for (const auto& object : this->getScene ().objects) {
+	    top = std::max (top, object->id);
+	}
+	this->m_nextCreatedId = top + 1;
+    }
+
+    const int id = this->m_nextCreatedId++;
+    json["id"] = id;
+    if (!json.contains ("name") || !json["name"].is_string ()) {
+	// the asset it was made from, as the editor names a new layer
+	std::string name = "layer";
+	for (const char* key : { "image", "particle", "sound", "model" }) {
+	    if (json.contains (key) && json[key].is_string ()) {
+		name = json[key].get<std::string> ();
+		break;
+	    }
+	}
+	if (json.contains ("text")) {
+	    name = "text";
+	}
+	json["name"] = name;
+    }
+    json.erase ("parent");
+    json.erase ("dependencies");
+
+    try {
+	this->m_createdObjects.push_back (ObjectParser::parse (json, this->getScene ().project));
+    } catch (const std::exception& e) {
+	sLog.error ("createLayer: ", e.what ());
+	WPENGINE_HEALTH ("dropped", { { "object", id }, { "object_name", json["name"] }, { "reason", WallpaperEngine::Health::brief (std::string ("createLayer: ") + e.what ()) } });
+	return nullptr;
+    }
+
+    CObject* object = this->dispatchObjectType (*this->m_createdObjects.back ());
+
+    if (object == nullptr) {
+	return nullptr;
+    }
+
+    this->m_objects.emplace (object->getId (), object);
+    this->m_layers.push_back (object);
+    // drawn last, before the bloom
+    auto at = this->m_bloomObject == nullptr ? this->m_objectsByRenderOrder.end ()
+					      : std::ranges::find (this->m_objectsByRenderOrder, this->m_bloomObject);
+    this->m_objectsByRenderOrder.insert (at, object);
+    this->m_composeOwners.clear ();
+    this->m_composeOwnersBuilt = false;
+    return object;
+}
+
+bool CScene::destroyLayer (CObject* layer) {
+    const auto it = std::ranges::find (this->m_layers, layer);
+
+    if (layer == nullptr || it == this->m_layers.end ()) {
+	return false;
+    }
+
+    this->m_layers.erase (it);
+    if (const auto drawn = std::ranges::find (this->m_objectsByRenderOrder, layer);
+	drawn != this->m_objectsByRenderOrder.end ()) {
+	this->m_objectsByRenderOrder.erase (drawn);
+    }
+    if (auto* sound = layer->asOrNull<Objects::CSound> ()) {
+	sound->stop ();
+    }
+    this->m_destroyed.push_back (layer);
+    return true;
+}
+
+bool CScene::isLayerAlive (const CObject* layer) const {
+    return std::ranges::find (this->m_destroyed, layer) == this->m_destroyed.end ();
+}
 
 bool CScene::sortLayer (CObject* layer, int index) {
     const auto from = std::ranges::find (this->m_layers, layer);

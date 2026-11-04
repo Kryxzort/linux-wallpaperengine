@@ -114,6 +114,20 @@ public:
     [[nodiscard]] const CObject* getObject (int id) const;
     /** The layers scripts index (thisScene.getLayer (n), enumerateLayers): the scene's objects in their order */
     [[nodiscard]] const std::vector<CObject*>& getLayers () const;
+    /**
+     * ILayer.setParent: `object`'s parent becomes `parent` (none: a root layer), at its puppet `attachment` if one is
+     * named; its local transform stays as it is (the script adjusts it to keep the world one)
+     */
+    void setParentOf (CObject& object, CObject* parent, const std::optional<std::string>& attachment);
+    /**
+     * IScene.createLayer: builds a layer from a scene object's JSON (`config`, as scene.json writes one; its `id` is
+     * given here), last in the layer list and drawn last (before the bloom). nullptr when it can't be built
+     */
+    CObject* createLayer (const std::string& config);
+    /** IScene.destroyLayer: the layer leaves the layer list and the draw order (it is freed with the scene) */
+    bool destroyLayer (CObject* layer);
+    /** Whether a layer is still in the scene (not destroyed: engine.isObjectValid) */
+    [[nodiscard]] bool isLayerAlive (const CObject* layer) const;
     /** IScene.sortLayer: moves a layer to `index` in the layer list, and in the draw order with it */
     bool sortLayer (CObject* layer, int index);
     /** The scene's scripts call `getEffect`: every effect is built, a script may show it (SceneScript IEffect.visible) */
@@ -163,6 +177,12 @@ private:
     std::map<int, CObject*> m_objects = {};
     std::vector<CObject*> m_objectsByRenderOrder = {};
     std::vector<CObject*> m_layers = {};
+    /** the data of the layers scripts created (createLayer), owned here as the scene owns its own */
+    std::vector<ObjectUniquePtr> m_createdObjects = {};
+    /** the next id a created layer gets (above every id in the scene) */
+    int m_nextCreatedId = 0;
+    /** layers a script destroyed: out of the lists, freed with the scene */
+    std::vector<CObject*> m_destroyed = {};
     /** drawOrder's sorted copy of the render order */
     std::vector<CObject*> m_sortedOrder = {};
     SceneLights m_lights = {};

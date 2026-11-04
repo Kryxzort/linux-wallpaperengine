@@ -512,6 +512,19 @@ bool CImage::attachmentTransform (const std::string& name, glm::vec2& offset, fl
     return false;
 }
 
+std::vector<std::string> CImage::attachmentNames () const {
+    std::vector<std::string> names;
+    for (const auto& attachment : this->m_puppet.attachments) {
+	names.push_back (attachment.name);
+    }
+    return names;
+}
+
+void CImage::setAlignment (const std::string& alignment) {
+    // the scene's data is the layer's live state (as its DynamicValues are)
+    const_cast<Image&> (this->m_image).alignment = alignment;
+}
+
 void CImage::updatePuppetPositionBuffer (const glm::vec2& size) {
     if (this->m_puppetRawPositions.empty ()) {
 	return;
