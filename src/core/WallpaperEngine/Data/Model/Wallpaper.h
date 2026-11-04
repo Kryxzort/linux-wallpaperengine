@@ -65,6 +65,14 @@ struct SceneData {
 	    UserSettingUniquePtr threshold;
 	    /** Bloom's tint (`g_BloomTint` of the LDR chain, WE's default 1 1 1) */
 	    UserSettingUniquePtr tint;
+	    /** `general.hdr`: the scene renders in half float and blooms with WE's HDR chain (GH 0x1401afbf0) */
+	    UserSettingUniquePtr hdr;
+	    /** The HDR chain's `bloomhdr*` (WE's defaults 2, 1, 0.1, 1.619, 8: GH 0x1401b6c60) */
+	    UserSettingUniquePtr hdrStrength;
+	    UserSettingUniquePtr hdrThreshold;
+	    UserSettingUniquePtr hdrFeather;
+	    UserSettingUniquePtr hdrScatter;
+	    UserSettingUniquePtr hdrIterations;
 	} bloom;
 	/**
 	 * Parallax effect configuration

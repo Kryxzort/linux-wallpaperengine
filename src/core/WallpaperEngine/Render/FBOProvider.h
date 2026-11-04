@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <string>
+
 #include <glm/vec2.hpp>
 
 #include "CFBO.h"
@@ -12,11 +15,14 @@ class FBOProvider {
 public:
     explicit FBOProvider (const FBOProvider* parent);
 
-    std::shared_ptr<CFBO> create (const FBO& base, uint32_t flags, glm::vec2 size);
+    /** An effect's FBO, in the format its `format` names (`hdr`: the scene renders HDR, for the backbuffer formats) */
+    std::shared_ptr<CFBO> create (const FBO& base, uint32_t flags, glm::vec2 size, bool hdr);
     std::shared_ptr<CFBO> create (
 	const std::string& name, TextureFormat format, uint32_t flags, float scale, glm::vec2 realSize,
 	glm::vec2 textureSize
     );
+    /** WE's FBO format name → its texture format; `rgba_backbuffer`/`rgb_backbuffer` are half float in HDR */
+    [[nodiscard]] static TextureFormat formatFromName (const std::string& name, bool hdr);
     std::shared_ptr<CFBO> alias (const std::string& newName, const std::string& original);
     [[nodiscard]] std::shared_ptr<CFBO> find (const std::string& name) const;
 

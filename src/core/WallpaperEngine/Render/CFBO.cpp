@@ -3,6 +3,43 @@
 
 using namespace WallpaperEngine::Render;
 
+namespace {
+/**
+ * The GL storage of an FBO of WE's texture format `format` (the .tex enum; WE's effect FBO `format` names map onto it,
+ * FBOProvider::formatFromName). WE creates its render targets in that format (GH 0x1401d7460): rg88 and r8 have no
+ * blue/alpha (they sample as 0 and 1), the f formats are half floats (HDR scenes keep values above 1). An RGB format
+ * has no alpha: RGB16F isn't required to be colour-renderable, so it is RGBA16F with alpha sampled as 1
+ */
+struct GLStorage {
+    GLint internalFormat;
+    GLenum format;
+    GLenum type;
+    bool opaqueAlpha;
+};
+
+GLStorage storageFor (const TextureFormat format) {
+    switch (format) {
+	case TextureFormat_RG88:
+	    return { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, false };
+	case TextureFormat_R8:
+	    return { GL_R8, GL_RED, GL_UNSIGNED_BYTE, false };
+	case TextureFormat_RG1616f:
+	    return { GL_RG16F, GL_RG, GL_HALF_FLOAT, false };
+	case TextureFormat_R16f:
+	    return { GL_R16F, GL_RED, GL_HALF_FLOAT, false };
+	case TextureFormat_RGBA16161616f:
+	    return { GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, false };
+	case TextureFormat_RGB161616f:
+	    return { GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, true };
+	case TextureFormat_RGBa1010102:
+	    return { GL_RGB10_A2, GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV, false };
+	default:
+	    // ARGB8888, RGB888 (LWE's scene and layer targets keep their alpha: compose layers and blend modes read it)
+	    return { GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, false };
+    }
+}
+} // namespace
+
 CFBO::CFBO (
     std::string name, const TextureFormat format, const uint32_t flags, const float scale, uint32_t realWidth,
     uint32_t realHeight, uint32_t textureWidth, uint32_t textureHeight
@@ -17,7 +54,13 @@ CFBO::CFBO (
     // bind the new texture to set settings on it
     glBindTexture (GL_TEXTURE_2D, this->m_texture);
     // give OpenGL an empty image
-    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    const GLStorage storage = storageFor (format);
+    glTexImage2D (
+	GL_TEXTURE_2D, 0, storage.internalFormat, textureWidth, textureHeight, 0, storage.format, storage.type, nullptr
+    );
+    if (storage.opaqueAlpha) {
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+    }
     // label stuff for debugging
 #if !NDEBUG
     if (GLAD_GL_VERSION_4_3) {
@@ -90,7 +133,10 @@ void CFBO::resize (uint32_t realWidth, uint32_t realHeight, uint32_t textureWidt
     glGetIntegerv (GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
 
     glBindTexture (GL_TEXTURE_2D, this->m_texture);
-    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, textureWidth, textureHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    const GLStorage storage = storageFor (this->m_format);
+    glTexImage2D (
+	GL_TEXTURE_2D, 0, storage.internalFormat, textureWidth, textureHeight, 0, storage.format, storage.type, nullptr
+    );
 
     glBindFramebuffer (GL_FRAMEBUFFER, this->m_framebuffer);
     GLfloat previousClearColor[4] = {};

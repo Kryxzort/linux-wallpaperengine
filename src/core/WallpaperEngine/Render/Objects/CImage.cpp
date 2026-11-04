@@ -174,11 +174,12 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
 	       ? TextureFlags_NoInterpolation
 	       : 0);
 
+    // WE's composites are half float in an HDR scene (GH 0x140216080: format 0xe when the renderer's flag 0x2000)
     const auto mainFBO = scene.create (
-	nameA.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
+	nameA.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
     const auto subFBO = scene.create (
-	nameB.str (), TextureFormat_ARGB8888, compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
+	nameB.str (), scene.getFBO ()->getFormat (), compositeFlags, 1, { size.x, size.y }, { size.x, size.y }
     );
     this->m_currentMainFBO = this->m_mainFBO = mainFBO;
     this->m_currentSubFBO = this->m_subFBO = subFBO;
@@ -696,7 +697,7 @@ void CImage::setup () {
 	    // create all the fbos for this effect
 	    for (const auto& fbo : cur->effect->fbos) {
 		this->m_sizedTargets.emplace_back (
-		    fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize ()), fbo->scale
+		    fboProvider->create (*fbo, this->m_texture->getFlags (), this->getSize (), this->getScene ().rendersHDR ()), fbo->scale
 		);
 	    }
 
@@ -1437,3 +1438,5 @@ GLuint CImage::getPassSpacePosition () const { return this->m_passSpacePosition;
 GLuint CImage::getTexCoordCopy () const { return this->m_texcoordCopy; }
 
 GLuint CImage::getTexCoordPass () const { return this->m_texcoordPass; }
+
+const std::vector<Effects::CPass*>& CImage::getPasses () const { return this->m_passes; }

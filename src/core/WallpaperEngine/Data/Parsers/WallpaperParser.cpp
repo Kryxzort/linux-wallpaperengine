@@ -53,9 +53,17 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                 .preview = general.optional ("camerapreview", false),
                 .bloom = {
                     .enabled = general.user ("bloom", properties, false),
-                    .strength = general.user ("bloomstrength", properties, 0.0f),
-                    .threshold = general.user ("bloomthreshold", properties, 0.0f),
+                    // WE's defaults (its scene constructor, GH 0x1401b6c60: +0x380 2, +0x384 0.65; LWE had 0, 0)
+                    .strength = general.user ("bloomstrength", properties, 2.0f),
+                    .threshold = general.user ("bloomthreshold", properties, 0.65f),
                     .tint = general.user ("bloomtint", properties, glm::vec3 (1.0f)),
+                    // the HDR chain's (keys at +0x388…+0x398, GH 0x1401c7880; hdr is general flag 0x400)
+                    .hdr = general.user ("hdr", properties, false),
+                    .hdrStrength = general.user ("bloomhdrstrength", properties, 2.0f),
+                    .hdrThreshold = general.user ("bloomhdrthreshold", properties, 1.0f),
+                    .hdrFeather = general.user ("bloomhdrfeather", properties, 0.1f),
+                    .hdrScatter = general.user ("bloomhdrscatter", properties, 1.619f),
+                    .hdrIterations = general.user ("bloomhdriterations", properties, 8),
                 },
                 .parallax = {
                     .enabled = general.user ("cameraparallax", properties, false),

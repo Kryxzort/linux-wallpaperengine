@@ -51,6 +51,8 @@ public:
     [[nodiscard]] GLuint getPassSpacePosition () const;
     [[nodiscard]] GLuint getTexCoordCopy () const;
     [[nodiscard]] GLuint getTexCoordPass () const;
+    /** Every pass built for the image: its base pass, then its effects' passes in order (shown or not) */
+    [[nodiscard]] const std::vector<Effects::CPass*>& getPasses () const;
 
     [[nodiscard]] const float& getBrightness () const override;
     [[nodiscard]] const float& getUserAlpha () const override;

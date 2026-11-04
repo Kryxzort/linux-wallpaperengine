@@ -2162,7 +2162,7 @@ void CParticle::setupPass () {
 	float w = static_cast<float> (sceneFBO->getRealWidth ());
 	float h = static_cast<float> (sceneFBO->getRealHeight ());
 	m_refractFBO = m_passFBOProvider->create (
-	    "_rt_FullFrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0f, { w, h }, { w, h }
+	    "_rt_FullFrameBuffer", sceneFBO->getFormat (), TextureFlags_ClampUVs, 1.0f, { w, h }, { w, h }
 	);
     }
 

@@ -19,6 +19,7 @@ class CObject;
 
 namespace WallpaperEngine::Render::Objects {
 class CSound;
+class CImage;
 }
 
 namespace WallpaperEngine::Render::Wallpapers {
@@ -99,6 +100,12 @@ public:
     bool sortLayer (CObject* layer, int index);
     /** The scene's scripts call `getEffect`: every effect is built, a script may show it (SceneScript IEffect.visible) */
     [[nodiscard]] bool scriptsReachEffects () const;
+    /**
+     * WE renders this scene HDR: `general.hdr`, with WE's post-processing at Ultra (renderer flag 0x2000, set from the
+     * "postprocessing" setting "ultra", GH 0x14013f860). LWE has no quality setting: on unless WPENGINE_HDR=0.
+     * Its targets are half float, its bloom is the HDR chain
+     */
+    [[nodiscard]] bool rendersHDR () const;
 
 protected:
     void renderFrame () override;
@@ -116,6 +123,12 @@ private:
     Render::CObject* createObject (const Object& object);
     Render::CObject* dispatchObjectType (const Object& object);
     void addObjectToRenderOrder (const Object& object);
+    /** Builds the bloom image: WE's LDR chain, or the HDR chain of `m_hdrLevels` levels when rendersHDR */
+    void setupBloom (const Scene& scene, uint32_t sceneWidth, uint32_t sceneHeight);
+    /** Points the HDR bloom image's passes at their inputs (tap offsets, strength, knee, tint, scatter) */
+    void connectHDRBloom (Objects::CImage& image);
+    /** The HDR chain's live inputs (GH 0x1401b42b0), from general's bloomhdr* values */
+    void updateHDRBloom ();
 
     std::unique_ptr<Scripting::ScriptEngine> m_scriptEngine;
     std::unique_ptr<Camera> m_camera;
@@ -144,5 +157,17 @@ private:
     std::shared_ptr<const CFBO> _rt_8FrameBuffer = nullptr;
     std::shared_ptr<const CFBO> _rt_Bloom = nullptr;
     std::shared_ptr<const CFBO> _rt_shadowAtlas = nullptr;
+    bool m_hdr = false;
+    /** The HDR chain's targets, _rt_2FrameBuffer … (scene size / (2 << level)), and how many levels run */
+    std::vector<std::shared_ptr<const CFBO>> m_hdrTargets = {};
+    int m_hdrLevels = 0;
+    /** The scene size the tap offsets are relative to (WE's renderer +0x84/+0x88) */
+    glm::vec2 m_hdrSize = {};
+    /** Per HDR pass (downsamples, upsamples), its g_RenderVar0: the four taps' offsets */
+    std::vector<std::unique_ptr<glm::vec4>> m_hdrRenderVars = {};
+    float m_hdrStrength = 0.0f;
+    glm::vec4 m_hdrBlend = {};
+    glm::vec3 m_hdrTint = {};
+    float m_hdrScatter = 0.0f;
 };
 } // namespace WallpaperEngine::Render::Wallpaper

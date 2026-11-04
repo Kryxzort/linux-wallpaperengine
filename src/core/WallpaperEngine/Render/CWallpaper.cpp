@@ -243,7 +243,7 @@ void CWallpaper::setupFramebuffers () {
 
     // create framebuffer for the scene
     this->m_sceneFBO = this->create (
-	"_rt_FullFrameBuffer", TextureFormat_ARGB8888, TextureFlags_NoFlags, 1.0, { width, height }, { width, height }
+	"_rt_FullFrameBuffer", this->m_sceneFormat, TextureFlags_NoFlags, 1.0, { width, height }, { width, height }
     );
 
     this->alias ("_rt_MipMappedFrameBuffer", "_rt_FullFrameBuffer");

@@ -158,6 +158,11 @@ protected:
 
     /** The FBO used for scene output */
     std::shared_ptr<const CFBO> m_sceneFBO = nullptr;
+    /**
+     * The scene FBO's format (setupFramebuffers): half float for a scene WE renders HDR (WE: RGB161616f, GH 0x1401af5b0;
+     * LWE keeps alpha), else RGBA8. The output copy to the host's framebuffer converts (and clamps) to its format
+     */
+    TextureFormat m_sceneFormat = TextureFormat_ARGB8888;
 
     GLuint m_vaoBuffer = GL_NONE;
 

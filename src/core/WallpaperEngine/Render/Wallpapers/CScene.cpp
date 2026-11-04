@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -84,6 +85,12 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     // WE starts the smoothed parallax position at the centre (GH 0x1401b6c60), g_ParallaxPosition at 0.5 0.5
     this->m_parallaxPosition = { width / 2.0f, height / 2.0f };
 
+    // an HDR scene renders into half float targets (WPENGINE_HDR=0: as WE below Ultra post-processing, LDR)
+    const char* hdrSetting = std::getenv ("WPENGINE_HDR");
+    this->m_hdr = scene->camera.bloom.hdr->value->getBool ()
+	&& !(hdrSetting != nullptr && std::string_view (hdrSetting) == "0");
+    this->m_sceneFormat = this->m_hdr ? TextureFormat_RGBA16161616f : TextureFormat_ARGB8888;
+
     // setup framebuffers here as they're required for the scene setup
     this->setupFramebuffers ();
 
@@ -118,19 +125,48 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	}
     }
 
-    // create extra framebuffers for the bloom effect
-    this->_rt_4FrameBuffer = this->create (
-	"_rt_4FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 4, sceneHeight / 4 },
-	{ sceneWidth / 4, sceneHeight / 4 }
-    );
-    this->_rt_8FrameBuffer = this->create (
-	"_rt_8FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 8, sceneHeight / 8 },
-	{ sceneWidth / 8, sceneHeight / 8 }
-    );
-    this->_rt_Bloom = this->create (
-	"_rt_Bloom", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 8, sceneHeight / 8 },
-	{ sceneWidth / 8, sceneHeight / 8 }
-    );
+    this->setupBloom (*scene, sceneWidth, sceneHeight);
+}
+
+void CScene::setupBloom (const Scene& scene, const uint32_t sceneWidth, const uint32_t sceneHeight) {
+    if (this->m_hdr) {
+	// the HDR chain's targets: one per level while the smaller side still halves to ≥ 1, at most 8, RGB161616f
+	// (GH 0x1401af5b0), named "_rt_" + (2 << level) + "FrameBuffer"
+	int available = 0;
+	for (int level = 0; level < 8; level++) {
+	    const uint32_t divisor = 2u << level;
+
+	    if (std::min (sceneWidth, sceneHeight) / divisor < 1) {
+		break;
+	    }
+
+	    this->m_hdrTargets.push_back (this->create (
+		"_rt_" + std::to_string (divisor) + "FrameBuffer", TextureFormat_RGB161616f, TextureFlags_ClampUVs, 1.0,
+		{ sceneWidth / divisor, sceneHeight / divisor }, { sceneWidth / divisor, sceneHeight / divisor }
+	    ));
+	    available++;
+	}
+
+	// the levels that run: bloomhdriterations, at most the targets there are, at least 1 (GH 0x1401b42b0)
+	this->m_hdrLevels = std::max (1, std::min (scene.camera.bloom.hdrIterations->value->getInt (), available));
+	this->m_hdrSize = { static_cast<float> (sceneWidth), static_cast<float> (sceneHeight) };
+    }
+
+    // the LDR chain's targets (WE makes them only below HDR, GH 0x1401af5b0)
+    if (!this->m_hdr) {
+	this->_rt_4FrameBuffer = this->create (
+	    "_rt_4FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0,
+	    { sceneWidth / 4, sceneHeight / 4 }, { sceneWidth / 4, sceneHeight / 4 }
+	);
+	this->_rt_8FrameBuffer = this->create (
+	    "_rt_8FrameBuffer", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0,
+	    { sceneWidth / 8, sceneHeight / 8 }, { sceneWidth / 8, sceneHeight / 8 }
+	);
+	this->_rt_Bloom = this->create (
+	    "_rt_Bloom", TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0, { sceneWidth / 8, sceneHeight / 8 },
+	    { sceneWidth / 8, sceneHeight / 8 }
+	);
+    }
 
     //
     // Had to get a little creative with the effects to achieve the same bloom effect without any custom code
@@ -150,6 +186,20 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	{ "bloomthreshold", this->getScene ().camera.bloom.threshold->value->getFloat () },
 	{ "bloomtint", std::to_string (tint.x) + " " + std::to_string (tint.y) + " " + std::to_string (tint.z) },
     };
+    // the HDR chain takes no pass constants: CScene feeds its uniforms (updateHDRBloom)
+    const JSON effect = this->m_hdr
+	? JSON { { "file", "effects/wpenginelinux/bloomhdr" + std::to_string (this->m_hdrLevels) + ".json" },
+		 { "id", 15242000 },
+		 { "name", "" } }
+	: JSON { { "file", "effects/wpenginelinux/bloomeffect.json" },
+		 { "id", 15242000 },
+		 { "name", "" },
+		 { "passes",
+		   JSON::array (
+		       { { { "constantshadervalues", constants } },
+			 { { "constantshadervalues", constants } },
+			 { { "constantshadervalues", constants } } }
+		   ) } };
     const JSON bloom
 	= { { "image", "models/wpenginelinux.json" },
 	    { "name", "bloomimagewpenginelinux" },
@@ -161,27 +211,16 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 		  + std::to_string (bloomOrigin.z) },
 	    { "size", std::to_string (bloomSize.x) + " " + std::to_string (bloomSize.y) },
 	    { "id", -1 },
-	    { "effects",
-	      JSON::array (
-		  { { { "file", "effects/wpenginelinux/bloomeffect.json" },
-		      { "id", 15242000 },
-		      { "name", "" },
-		      { "passes",
-			JSON::array (
-			    { { { "constantshadervalues", constants } },
-			      { { "constantshadervalues", constants } },
-			      { { "constantshadervalues", constants } } }
-			) } } }
-	      ) } };
+	    { "effects", JSON::array ({ effect }) } };
 
     // the image for the bloom passes, built when bloom is on or a user property can turn it on: `bloom` is read every
     // frame (renderFrame). A scene whose bloom is a plain false never builds it (nor needs WE's bloom materials)
-    const auto& bloomEnabled = scene->camera.bloom.enabled;
-    const auto& bloomCamera = scene->camera.bloom;
+    const auto& bloomEnabled = scene.camera.bloom.enabled;
+    const auto& bloomCamera = scene.camera.bloom;
     const bool bloomScripted = bloomEnabled->value->getScriptSource ().has_value ();
     if (bloomEnabled->value->getBool () || bloomEnabled->property != nullptr || bloomScripted) {
 	try {
-	    this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
+	    this->m_bloomObjectData = ObjectParser::parse (bloom, scene.project);
 
 	    if (this->m_bloomObjectData->is<Image> ()) {
 		for (const auto& effect : this->m_bloomObjectData->as<Image> ()->effects) {
@@ -202,6 +241,10 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	    }
 
 	    this->m_bloomObject = this->createObject (*this->m_bloomObjectData);
+
+	    if (this->m_hdr && this->m_bloomObject != nullptr && this->m_bloomObject->is<Objects::CImage> ()) {
+		this->connectHDRBloom (*this->m_bloomObject->as<Objects::CImage> ());
+	    }
 	} catch (const std::exception& e) {
 	    sLog.error ("Cannot build the bloom passes, the scene renders without bloom: ", e.what ());
 	    this->m_bloomObject = nullptr;
@@ -226,6 +269,64 @@ CScene::CScene (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 	}
     }
 }
+
+void CScene::connectHDRBloom (Objects::CImage& image) {
+    // the image's passes: its base copy, the downsamples (levels 0 … n − 1), the upsamples (n − 1 … 1), the combine
+    const auto& passes = image.getPasses ();
+    const int n = this->m_hdrLevels;
+
+    if (passes.size () != static_cast<size_t> (2 * n + 1)) {
+	sLog.error ("The HDR bloom image has ", passes.size (), " passes, not ", 2 * n + 1, ": its inputs aren't fed");
+	return;
+    }
+
+    // g_RenderVar0 = the four taps' offsets (x, y) and (z, w) about the pixel, (1, 1, −1, −1) · 2^level / the scene
+    // size: one source texel when going down, half of one going up (GH 0x1401b3b10)
+    const auto taps = [this] (float scale) {
+	auto offsets = std::make_unique<glm::vec4> (
+	    scale / this->m_hdrSize.x, scale / this->m_hdrSize.y, -scale / this->m_hdrSize.x, -scale / this->m_hdrSize.y
+	);
+	const glm::vec4* at = offsets.get ();
+	this->m_hdrRenderVars.push_back (std::move (offsets));
+	return at;
+    };
+
+    for (int level = 0; level < n; level++) {
+	auto* pass = passes[1 + level];
+	pass->addUniform ("g_RenderVar0", taps (static_cast<float> (1 << level)));
+
+	if (level == 0) {
+	    pass->addUniform ("g_BloomStrength", &this->m_hdrStrength);
+	    pass->addUniform ("g_BloomBlendParams", &this->m_hdrBlend);
+	    pass->addUniform ("g_BloomTint", &this->m_hdrTint);
+	}
+    }
+
+    for (int up = n - 1; up > 0; up--) {
+	auto* pass = passes[1 + n + (n - 1 - up)];
+	pass->addUniform ("g_RenderVar0", taps (static_cast<float> (2 << (up - 1))));
+	pass->addUniform ("g_BloomScatter", &this->m_hdrScatter);
+    }
+
+    this->updateHDRBloom ();
+}
+
+void CScene::updateHDRBloom () {
+    // GH 0x1401b42b0 (re-run when general's values change): the strength over (scatter^(max (n, 2) − 2) + 1), the
+    // soft knee from the threshold and feather, the tint, the upsamples' scatter
+    const auto& bloom = this->getScene ().camera.bloom;
+    const float scatter = bloom.hdrScatter->value->getFloat ();
+    const float threshold = bloom.hdrThreshold->value->getFloat ();
+    const float knee = threshold * bloom.hdrFeather->value->getFloat ();
+
+    this->m_hdrStrength = bloom.hdrStrength->value->getFloat ()
+	/ (std::pow (scatter, static_cast<float> (std::max (this->m_hdrLevels, 2) - 2)) + 1.0f);
+    this->m_hdrBlend = { threshold, threshold - knee, knee + knee, 0.25f / (knee + 0.00001f) };
+    this->m_hdrTint = bloom.tint->value->getVec3 ();
+    this->m_hdrScatter = scatter;
+}
+
+bool CScene::rendersHDR () const { return this->m_hdr; }
 
 CScene::~CScene () {
     // bloom object is in the objects list, so no need to explicitly delete it
@@ -466,6 +567,9 @@ void CScene::renderFrame () {
 	if (cur == this->m_bloomObject && !this->getScene ().camera.bloom.enabled->value->getBool ()) {
 	    continue;
 	}
+	if (cur == this->m_bloomObject && this->m_hdr) {
+	    this->updateHDRBloom ();
+	}
 	// a compose layer draws its subtree into itself (renderComposed)
 	if (this->drawingOwnerOf (cur->getObject ()).has_value ()) {
 	    continue;
@@ -679,7 +783,7 @@ std::shared_ptr<const CFBO> CScene::getComposeTarget (int id) {
     if (target == nullptr) {
 	const auto& scene = *this->getFBO ();
 	target = std::make_shared<CFBO> (
-	    "_rt_composeLayer_" + std::to_string (id), TextureFormat_ARGB8888, TextureFlags_ClampUVs, 1.0f,
+	    "_rt_composeLayer_" + std::to_string (id), scene.getFormat (), TextureFlags_ClampUVs, 1.0f,
 	    scene.getRealWidth (), scene.getRealHeight (), scene.getTextureWidth (0), scene.getTextureHeight (0)
 	);
     }

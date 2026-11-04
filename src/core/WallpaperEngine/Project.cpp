@@ -113,6 +113,49 @@ AssetLocatorUniquePtr wp_setup_asset_locator (
 	  } }
     );
 
+    // the HDR chain, one effect per level count n (WE's GH 0x1401b3b10 on targets made by GH 0x1401af5b0): the scene
+    // into _rt_2FrameBuffer through hdr_downsample_bloom (the threshold), each level into the next half-size one
+    // through hdr_downsample, then back up adding each level onto the one above (hdr_upsample, bicubic for the two
+    // coarsest steps), and combine_hdr_upsample's linear variant adds _rt_2FrameBuffer onto the scene. Targets are
+    // "_rt_" + (2 << level) + "FrameBuffer". CScene feeds g_RenderVar0 (the tap offsets) and the bloom parameters
+    for (int levels = 1; levels <= 8; levels++) {
+	const auto target = [] (int level) { return "_rt_" + std::to_string (2 << level) + "FrameBuffer"; };
+	const auto pass = [] (const std::string& material, const std::string& to, const std::string& from) {
+	    return JSON { { "material", material },
+			  { "target", to },
+			  { "bind", JSON::array ({ { { "name", from }, { "index", 0 } } }) } };
+	};
+	JSON passes = JSON::array ();
+
+	passes.push_back (pass ("materials/util/hdr_downsample_bloom.json", target (0), "_rt_FullFrameBuffer"));
+	for (int level = 1; level < levels; level++) {
+	    passes.push_back (pass ("materials/util/hdr_downsample.json", target (level), target (level - 1)));
+	}
+	for (int level = levels - 1; level > 0; level--) {
+	    passes.push_back (pass (
+		level < levels - 2 ? "materials/util/hdr_upsample.json" : "materials/util/hdr_upsample_cubic.json",
+		target (level - 1), target (level)
+	    ));
+	}
+	passes.push_back (
+	    { { "material", "materials/util/combine_hdr_upsample_linear.json" },
+	      { "target", "_rt_FullFrameBuffer" },
+	      { "bind",
+		JSON::array (
+		    { { { "name", "_rt_imageLayerComposite_-1_a" }, { "index", 0 } },
+		      { { "name", target (0) }, { "index", 1 } } }
+		) } }
+	);
+
+	vfs.add (
+	    "effects/wpenginelinux/bloomhdr" + std::to_string (levels) + ".json",
+	    { { "name", "camerabloomhdr_wpengine_linux" },
+	      { "group", "wpengine_linux_camera" },
+	      { "dependencies", JSON::array () },
+	      { "passes", passes } }
+	);
+    }
+
     vfs.add ("models/wpenginelinux.json", { { "material", "materials/wpenginelinux.json" } });
 
     vfs.add (
