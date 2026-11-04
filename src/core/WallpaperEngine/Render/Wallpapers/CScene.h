@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WallpaperEngine/Render/Camera.h"
+#include "WallpaperEngine/Render/Objects/Puppet.h"
 
 #include "WallpaperEngine/Render/CWallpaper.h"
 #include "linux-wallpaperengine/project.h"
@@ -175,6 +176,22 @@ public:
      * given here), last in the layer list and drawn last (before the bloom). nullptr when it can't be built
      */
     CObject* createLayer (const std::string& config);
+
+    /**
+     * IScene.createModelData (F4): geometry a script built, as an MDL model's meshes (the loader's Puppet::Model).
+     * A model layer names it `__modeldata/<id>` (createLayer ({ model: modelData })). `version` counts applyData /
+     * replaceData; `rebuilt` the last replaceData (shapes or materials may have changed)
+     */
+    struct ScriptModel {
+	Objects::Puppet::Model model;
+	/** per shape its vertexFormat (IModelData.POSITION, NORMAL, TANGENT_SIGNED, UV, COLOR in that order) */
+	std::vector<std::vector<std::string>> formats;
+	uint32_t version = 0;
+	uint32_t rebuilt = 0;
+    };
+    int createScriptModel (Objects::Puppet::Model model);
+    [[nodiscard]] ScriptModel* scriptModel (int id);
+    bool destroyScriptModel (int id);
     /** IScene.destroyLayer: the layer leaves the layer list and the draw order (it is freed with the scene) */
     bool destroyLayer (CObject* layer);
     /** Whether a layer is still in the scene (not destroyed: engine.isObjectValid) */
@@ -236,6 +253,8 @@ private:
     std::vector<ObjectUniquePtr> m_createdObjects = {};
     /** the next id a created layer gets (above every id in the scene) */
     int m_nextCreatedId = 0;
+    std::map<int, ScriptModel> m_scriptModels = {};
+    int m_nextScriptModel = 1;
     /** layers a script destroyed: out of the lists, freed with the scene */
     std::vector<CObject*> m_destroyed = {};
     /** drawOrder's sorted copy of the render order */

@@ -447,9 +447,37 @@ globalThis.__layerMethods = (function () {
     const found = (initial.objects || []).find((o) => o && o.id === layer.id);
     return found === undefined ? undefined : JSON.parse(JSON.stringify(found));
   });
-  // createModelData / destroyModelData: LWE builds no meshes from script data (no library scene does)
-  define('createModelData', () => undefined);
-  define('destroyModelData', () => {});
+  // IModelData (d.ts 2.8): geometry a script builds for a model layer, createLayer ({ model: data }) or createLayer
+  // (data). The shapes live in the engine (__modelData); a layer draws them in its own pixels in a 2D scene
+  const shapesOf = (s) => (Array.isArray(s) ? s : s !== null && typeof s === 'object' && Array.isArray(s.shapes) ? s.shapes : [s]);
+  class IModelData {
+    constructor(id) { Object.defineProperty(this, '__id', { value: id }); }
+    applyData(shapes) { scene.__modelData(this.__id, shapesOf(shapes), false); }
+    replaceData(shapes) { scene.__modelData(this.__id, shapesOf(shapes), true); }
+  }
+  const formats = { POSITION: 'position', NORMAL: 'normal', TANGENT_SIGNED: 'tangentSigned', UV: 'uv', COLOR: 'color' };
+  for (const [name, value] of Object.entries(formats)) {
+    Object.defineProperty(IModelData, name, { value, enumerable: true });
+    Object.defineProperty(IModelData.prototype, name, { value, enumerable: true });
+  }
+  globalThis.IModelData = IModelData;
+  define('createModelData', (config) => {
+    const id = scene.__modelData(0, shapesOf(config), true);
+    return id > 0 ? new IModelData(id) : undefined;
+  });
+  define('destroyModelData', (data) => {
+    if (data instanceof IModelData) { scene.__modelDataDestroy(data.__id); }
+  });
+  // createLayer takes an IModelData, or a configuration whose `model` is one
+  const createLayer = scene.createLayer;
+  define('createLayer', (config) => {
+    if (config instanceof IModelData) {
+      config = { model: '__modeldata/' + config.__id };
+    } else if (config !== null && typeof config === 'object' && config.model instanceof IModelData) {
+      config = Object.assign({}, config, { model: '__modeldata/' + config.model.__id });
+    }
+    return createLayer.call(scene, config);
+  });
 })();
 
 // renderContext: an empty interface in WE's definitions

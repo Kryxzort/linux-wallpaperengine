@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "CRenderable.h"
+#include "WallpaperEngine/Scripting/ScriptableObject.h"
 #include "Puppet.h"
 #include "WallpaperEngine/Data/Model/Object.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
@@ -36,6 +37,8 @@ public:
      * BONECOUNT), `weights` its blend-shape weights (MORPHING over g_Texture5's morph map); either may be null
      */
     void setAnimation (const std::vector<glm::mat4x3>* bones, const std::vector<float>* weights);
+    /** (Re)uploads the mesh's vertices and indices (IModelData.applyData) */
+    void uploadGeometry ();
 
     [[nodiscard]] const float& getBrightness () const override;
     [[nodiscard]] const float& getUserAlpha () const override;
@@ -89,7 +92,7 @@ private:
  * its meshes only (static: no skinning, morphs or animation), each mesh drawn with the material it names. A 3D
  * scene's models depth test against the scene's depth buffer. A mesh whose material can't be built is left out
  */
-class CModel final : public CObject {
+class CModel final : public Scripting::ScriptableObject {
 public:
     CModel (Wallpapers::CScene& scene, const MeshObject& object);
     ~CModel () override;
@@ -117,6 +120,13 @@ private:
     };
     /** poses the skeleton for the scene's time (once per time) */
     void updatePose ();
+    /** builds the meshes of m_model with their materials and casters */
+    void buildMeshes ();
+    /** a script model (createModelData) that changed: its buffers again, or its meshes after a replaceData */
+    void followScriptModel ();
+    int m_scriptModelId = 0;
+    uint32_t m_scriptVersion = 0;
+    uint32_t m_scriptRebuilt = 0;
     std::vector<LayerState> m_layers = {};
     std::vector<Puppet::Key> m_bind = {};
     std::vector<glm::mat4> m_bindWorldInverse = {};

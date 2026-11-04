@@ -1649,6 +1649,23 @@ CObject* CScene::createLayer (const std::string& config) {
     return object;
 }
 
+int CScene::createScriptModel (Objects::Puppet::Model model) {
+    const int id = this->m_nextScriptModel++;
+    this->m_scriptModels[id] = ScriptModel { .model = std::move (model) };
+    return id;
+}
+
+CScene::ScriptModel* CScene::scriptModel (int id) {
+    const auto it = this->m_scriptModels.find (id);
+    return it == this->m_scriptModels.end () ? nullptr : &it->second;
+}
+
+bool CScene::destroyScriptModel (int id) {
+    // "if a layer still exists that is using this model, it will be deleted once that layer is removed": a layer keeps
+    // the copy it built from; the data goes now
+    return this->m_scriptModels.erase (id) > 0;
+}
+
 bool CScene::destroyLayer (CObject* layer) {
     const auto it = std::ranges::find (this->m_layers, layer);
 

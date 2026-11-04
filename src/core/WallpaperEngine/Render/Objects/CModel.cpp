@@ -184,6 +184,31 @@ void CModelMesh::uploadAnimationUniforms (GLuint program, int morphSlot) const {
     }
 }
 
+void CModelMesh::uploadGeometry () {
+    std::vector<GLfloat> vertices;
+    vertices.reserve (this->m_mesh.vertices.size () * kFloatsPerVertex);
+    for (const auto& v : this->m_mesh.vertices) {
+	vertices.insert (vertices.end (), { v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z,
+					    v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.uv.x, v.uv.y,
+					    v.weights.x, v.weights.y, v.weights.z, v.weights.w });
+    }
+    if (this->m_vbo == GL_NONE) {
+	glGenBuffers (1, &this->m_vbo);
+    }
+    glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
+    glBufferData (GL_ARRAY_BUFFER, vertices.size () * sizeof (GLfloat), vertices.data (), GL_DYNAMIC_DRAW);
+    if (this->m_ibo == GL_NONE) {
+	glGenBuffers (1, &this->m_ibo);
+    }
+    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_ibo);
+    glBufferData (
+	GL_ELEMENT_ARRAY_BUFFER, this->m_mesh.indices.size () * sizeof (uint32_t), this->m_mesh.indices.data (),
+	GL_DYNAMIC_DRAW
+    );
+    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
+    this->m_indexCount = static_cast<GLsizei> (this->m_mesh.indices.size ());
+}
+
 void CModelMesh::setup () {
     this->detectTexture ();
 
@@ -211,13 +236,7 @@ void CModelMesh::setup () {
 
     CRenderable::setup ();
 
-    std::vector<GLfloat> vertices;
-    vertices.reserve (this->m_mesh.vertices.size () * kFloatsPerVertex);
-    for (const auto& v : this->m_mesh.vertices) {
-	vertices.insert (vertices.end (), { v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z,
-					    v.tangent.x, v.tangent.y, v.tangent.z, v.tangent.w, v.uv.x, v.uv.y,
-					    v.weights.x, v.weights.y, v.weights.z, v.weights.w });
-    }
+    this->uploadGeometry ();
     if (this->m_bones != nullptr) {
 	std::vector<GLuint> bones;
 	bones.reserve (this->m_mesh.vertices.size () * 4);
@@ -235,17 +254,6 @@ void CModelMesh::setup () {
 	this->buildMorphMap ();
     }
 
-    glGenBuffers (1, &this->m_vbo);
-    glBindBuffer (GL_ARRAY_BUFFER, this->m_vbo);
-    glBufferData (GL_ARRAY_BUFFER, vertices.size () * sizeof (GLfloat), vertices.data (), GL_STATIC_DRAW);
-    glGenBuffers (1, &this->m_ibo);
-    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_ibo);
-    glBufferData (
-	GL_ELEMENT_ARRAY_BUFFER, this->m_mesh.indices.size () * sizeof (uint32_t), this->m_mesh.indices.data (),
-	GL_STATIC_DRAW
-    );
-    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
-    this->m_indexCount = static_cast<GLsizei> (this->m_mesh.indices.size ());
 
     for (const auto& pass : this->m_meshMaterial.passes) {
 	auto* cpass = new CPass (*this, std::make_shared<FBOProvider> (this), *pass, std::nullopt, std::nullopt, std::nullopt);
@@ -385,6 +393,15 @@ void CModelMesh::draw (const std::shared_ptr<const CFBO>& target, const glm::mat
 
     this->m_modelMatrix = world;
     this->m_viewProjection = camera.getWorldViewProjection ();
+    if (!camera.isPerspective ()) {
+	// a 2D scene ("flat", IModelLayer.perspective false; createModelData: "1 unit = 1 pixel"): WE's world pixels
+	// (y up) into LWE's scene space (x − w/2, h/2 − y), then the layers' projection. Ours: z is squashed into the
+	// 2D projection's depth range (in front of the eye), and the 2D target has no depth buffer
+	const float w = camera.getWidth (), h = camera.getHeight ();
+	const glm::mat4 toScene = glm::translate (glm::mat4 (1.0f), glm::vec3 (-w / 2.0f, h / 2.0f, -1.0f))
+	    * glm::scale (glm::mat4 (1.0f), glm::vec3 (1.0f, -1.0f, 1e-4f));
+	this->m_viewProjection = camera.getProjection () * camera.getLookAt () * toScene;
+    }
     this->m_modelViewProjection = this->m_viewProjection * world;
     this->m_modelViewProjectionInverse = glm::inverse (this->m_modelViewProjection);
     this->m_normalMatrix = glm::transpose (glm::inverse (glm::mat3 (world)));
@@ -504,7 +521,9 @@ const glm::vec4& CModelMesh::getColor4 () const { return this->m_white4; }
 
 const glm::vec3& CModelMesh::getCompositeColor () const { return this->m_white; }
 
-CModel::CModel (Wallpapers::CScene& scene, const MeshObject& object) : CObject (scene, object), m_object (object) { }
+// a script reaches a model layer (thisScene.getLayer, createLayer's result) as any layer: its object's transform
+CModel::CModel (Wallpapers::CScene& scene, const MeshObject& object) :
+    CObject (scene, object), Scripting::ScriptableObject (scene, object), m_object (object) { }
 
 CModel::~CModel () = default;
 
@@ -512,10 +531,18 @@ void CModel::setup () {
     const auto& project = this->getScene ().getScene ().project;
     const std::string& file = this->m_object.file;
 
-    if (!this->getScene ().getCamera ().isPerspective ()) {
-	// (a model in a 2D scene: none in the corpus; there's no depth buffer to draw it against)
-	sLog.error ("Model ", file, " is in a 2D scene: not drawn");
-	WPENGINE_HEALTH ("unsupported", { { "what", "model object in a 2D scene (not drawn)" }, { "path", file } });
+    // IScene.createModelData's geometry (createLayer ({ model: data })): the scene holds it
+    if (file.rfind ("__modeldata/", 0) == 0) {
+	this->m_scriptModelId = std::atoi (file.c_str () + 12);
+	const auto* data = this->getScene ().scriptModel (this->m_scriptModelId);
+	if (data == nullptr) {
+	    sLog.error ("createLayer: no model data ", file);
+	    return;
+	}
+	this->m_model = data->model;
+	this->m_scriptVersion = data->version;
+	this->m_scriptRebuilt = data->rebuilt;
+	this->buildMeshes ();
 	return;
     }
 
@@ -554,6 +581,13 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
 	    this->m_layers.push_back ({ .blendIn = layer->blendIn, .layer = layer.get () });
 	}
     }
+    this->buildMeshes ();
+}
+
+void CModel::buildMeshes () {
+    const auto& project = this->getScene ().getScene ().project;
+    const std::string& file = this->m_object.file;
+    this->m_shapeWeights.clear ();
     for (const auto& mesh : this->m_model.meshes) {
 	this->m_shapeWeights.emplace_back (mesh.morphs.size (), 0.0f);
     }
@@ -708,7 +742,36 @@ void CModel::updatePose () {
     }
 }
 
+void CModel::followScriptModel () {
+    if (this->m_scriptModelId <= 0) {
+	return;
+    }
+    const auto* data = this->getScene ().scriptModel (this->m_scriptModelId);
+    if (data == nullptr || data->version == this->m_scriptVersion) {
+	return;
+    }
+    this->m_scriptVersion = data->version;
+    if (data->rebuilt != this->m_scriptRebuilt || data->model.meshes.size () != this->m_model.meshes.size ()) {
+	// replaceData: the shapes (and their materials) built again
+	this->m_scriptRebuilt = data->rebuilt;
+	this->m_meshes.clear ();
+	this->m_materials.clear ();
+	this->m_model = data->model;
+	this->buildMeshes ();
+	return;
+    }
+    // applyData: the same shapes, new buffers ("a high performance method that you may call every frame")
+    for (size_t m = 0; m < this->m_model.meshes.size (); m++) {
+	this->m_model.meshes[m].vertices = data->model.meshes[m].vertices;
+	this->m_model.meshes[m].indices = data->model.meshes[m].indices;
+    }
+    for (const auto& mesh : this->m_meshes) {
+	mesh->uploadGeometry ();
+    }
+}
+
 void CModel::render () {
+    this->followScriptModel ();
     if (this->m_meshes.empty () || !this->getScene ().isEffectivelyVisible (this->m_object)) {
 	return;
     }

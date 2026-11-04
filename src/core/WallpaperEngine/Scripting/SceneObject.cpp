@@ -9,6 +9,7 @@
 #include "WallpaperEngine/Utils/ScopeGuard.h"
 
 #include <algorithm>
+#include <cstring>
 #include <tuple>
 #include <nlohmann/json.hpp>
 
@@ -346,6 +347,183 @@ JSValue create_layer (JSContext* ctx, JSValueConst this_val, int argc, JSValueCo
     return layerValue (*container, container->getScene ().createLayer (config));
 }
 
+namespace {
+/** a typed array's bytes and element size, nullptr when `value` isn't one */
+const uint8_t* typedBytes (JSContext* ctx, JSValueConst value, size_t& bytes, size_t& element) {
+    size_t offset = 0, length = 0, per = 0;
+    JSValue buffer = JS_GetTypedArrayBuffer (ctx, value, &offset, &length, &per);
+    if (JS_IsException (buffer)) {
+	JS_FreeValue (ctx, JS_GetException (ctx));
+	return nullptr;
+    }
+    size_t size = 0;
+    const uint8_t* data = JS_GetArrayBuffer (ctx, &size, buffer);
+    JS_FreeValue (ctx, buffer);
+    if (data == nullptr || offset + length > size) {
+	return nullptr;
+    }
+    bytes = length;
+    element = per;
+    return data + offset;
+}
+} // namespace
+
+// __modelData (id, shapes, replace): IScene.createModelData (id 0) and IModelData.applyData / replaceData (builtins.js).
+// A shape: vertexBuffer (Float32Array, laid out as vertexFormat: position 3, normal 3, tangentSigned 4, uv 2, color 4
+// floats, in that order), indexBuffer (Uint32Array / Uint16Array; none: the vertices in threes), vertexFormat, material
+// (a path or an IAssetHandle). applyData changes only what a shape names; replaceData may add shapes, and a null one
+// removes it. The model's id, or -1
+JSValue model_data (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    int id = 0;
+    if (argc < 3 || JS_ToInt32 (ctx, &id, argv[0]) < 0 || !JS_IsArray (argv[1])) {
+	return JS_NewInt32 (ctx, -1);
+    }
+    const bool replace = JS_ToBool (ctx, argv[2]) != 0;
+    auto& scene = container->getScene ();
+    using WallpaperEngine::Render::Wallpapers::CScene;
+    using namespace WallpaperEngine::Render::Objects;
+    CScene::ScriptModel data;
+    if (id > 0) {
+	const auto* existing = scene.scriptModel (id);
+	if (existing == nullptr) {
+	    return JS_NewInt32 (ctx, -1);
+	}
+	data = *existing;
+    }
+    uint32_t count = 0;
+    JSValue lengthValue = JS_GetPropertyStr (ctx, argv[1], "length");
+    JS_ToUint32 (ctx, &count, lengthValue);
+    JS_FreeValue (ctx, lengthValue);
+    std::vector<bool> removed (std::max<size_t> (count, data.model.meshes.size ()), false);
+    for (uint32_t i = 0; i < count && i < 64; i++) {
+	JSValue shape = JS_GetPropertyUint32 (ctx, argv[1], i);
+	if (!JS_IsObject (shape)) {
+	    if (replace && JS_IsNull (shape)) {
+		removed[i] = true;
+	    }
+	    JS_FreeValue (ctx, shape);
+	    continue;
+	}
+	if (i >= data.model.meshes.size ()) {
+	    data.model.meshes.resize (i + 1);
+	}
+	data.formats.resize (data.model.meshes.size (), { "position", "normal", "uv" });
+	auto& mesh = data.model.meshes[i];
+	auto& format = data.formats[i];
+
+	JSValue material = JS_GetPropertyStr (ctx, shape, "material");
+	JSValue file = JS_IsObject (material) ? JS_GetPropertyStr (ctx, material, "file") : JS_DupValue (ctx, material);
+	if (JS_IsString (file)) {
+	    mesh.material = jsString (ctx, file);
+	}
+	JS_FreeValue (ctx, file);
+	JS_FreeValue (ctx, material);
+
+	JSValue formatValue = JS_GetPropertyStr (ctx, shape, "vertexFormat");
+	if (JS_IsArray (formatValue)) {
+	    format.clear ();
+	    uint32_t n = 0;
+	    JSValue nv = JS_GetPropertyStr (ctx, formatValue, "length");
+	    JS_ToUint32 (ctx, &n, nv);
+	    JS_FreeValue (ctx, nv);
+	    for (uint32_t c = 0; c < n && c < 8; c++) {
+		JSValue part = JS_GetPropertyUint32 (ctx, formatValue, c);
+		format.push_back (jsString (ctx, part));
+		JS_FreeValue (ctx, part);
+	    }
+	}
+	JS_FreeValue (ctx, formatValue);
+
+	JSValue vertexBuffer = JS_GetPropertyStr (ctx, shape, "vertexBuffer");
+	size_t bytes = 0, element = 0;
+	if (const uint8_t* raw = JS_IsObject (vertexBuffer) ? typedBytes (ctx, vertexBuffer, bytes, element) : nullptr;
+	    raw != nullptr && element == 4) {
+	    // the components' sizes in the order IModelData lists them; a component left out takes the loader's default
+	    const auto has = [&format] (const char* name) { return std::ranges::find (format, name) != format.end (); };
+	    const size_t stride = (has ("position") ? 3 : 0) + (has ("normal") ? 3 : 0) + (has ("tangentSigned") ? 4 : 0)
+		+ (has ("uv") ? 2 : 0) + (has ("color") ? 4 : 0);
+	    const auto* floats = reinterpret_cast<const float*> (raw);
+	    const size_t total = bytes / 4;
+	    mesh.vertices.clear ();
+	    for (size_t at = 0; stride > 0 && at + stride <= total; at += stride) {
+		Puppet::Vertex v {};
+		v.bones = glm::uvec4 (0);
+		v.weights = glm::vec4 (0.0f);
+		size_t c = at;
+		if (has ("position")) {
+		    v.position = glm::vec3 (floats[c], floats[c + 1], floats[c + 2]);
+		    c += 3;
+		}
+		if (has ("normal")) {
+		    v.normal = glm::vec3 (floats[c], floats[c + 1], floats[c + 2]);
+		    c += 3;
+		}
+		if (has ("tangentSigned")) {
+		    v.tangent = glm::vec4 (floats[c], floats[c + 1], floats[c + 2], floats[c + 3]);
+		    c += 4;
+		}
+		if (has ("uv")) {
+		    v.uv = glm::vec2 (floats[c], floats[c + 1]);
+		}
+		mesh.vertices.push_back (v);
+	    }
+	}
+	JS_FreeValue (ctx, vertexBuffer);
+
+	JSValue indexBuffer = JS_GetPropertyStr (ctx, shape, "indexBuffer");
+	if (const uint8_t* raw = JS_IsObject (indexBuffer) ? typedBytes (ctx, indexBuffer, bytes, element) : nullptr;
+	    raw != nullptr && (element == 2 || element == 4)) {
+	    mesh.indices.clear ();
+	    for (size_t at = 0; at + element <= bytes; at += element) {
+		uint32_t index = 0;
+		std::memcpy (&index, raw + at, element);
+		mesh.indices.push_back (index);
+	    }
+	} else if (mesh.indices.empty () || (replace && JS_IsNull (indexBuffer))) {
+	    mesh.indices.resize (mesh.vertices.size () - mesh.vertices.size () % 3);
+	    for (size_t k = 0; k < mesh.indices.size (); k++) {
+		mesh.indices[k] = static_cast<uint32_t> (k);
+	    }
+	}
+	JS_FreeValue (ctx, indexBuffer);
+	// indices past the vertices (a shrinking buffer) would read out of the VBO
+	std::erase_if (mesh.indices, [&mesh] (uint32_t index) { return index >= mesh.vertices.size (); });
+	mesh.indices.resize (mesh.indices.size () - mesh.indices.size () % 3);
+	JS_FreeValue (ctx, shape);
+    }
+    for (size_t i = removed.size (); i-- > 0;) {
+	if (removed[i] && i < data.model.meshes.size ()) {
+	    data.model.meshes.erase (data.model.meshes.begin () + static_cast<std::ptrdiff_t> (i));
+	    data.formats.erase (data.formats.begin () + static_cast<std::ptrdiff_t> (i));
+	}
+    }
+    if (id == 0) {
+	const int made = scene.createScriptModel (std::move (data.model));
+	scene.scriptModel (made)->formats = std::move (data.formats);
+	return JS_NewInt32 (ctx, made);
+    }
+    auto* target = scene.scriptModel (id);
+    const bool reshaped = replace || target->model.meshes.size () != data.model.meshes.size ();
+    target->model = std::move (data.model);
+    target->formats = std::move (data.formats);
+    target->version++;
+    if (reshaped) {
+	target->rebuilt = target->version;
+    }
+    return JS_NewInt32 (ctx, id);
+}
+
+// __modelDataDestroy (id): IScene.destroyModelData
+JSValue model_data_destroy (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    auto* container = get_opaque (this_val);
+    int id = 0;
+    if (argc < 1 || JS_ToInt32 (ctx, &id, argv[0]) < 0) {
+	return JS_FALSE;
+    }
+    return JS_NewBool (ctx, container->getScene ().destroyScriptModel (id));
+}
+
 // __cameraTransforms (): [eye, center, up, zoom] of the scene's camera (camera.eye/center/up, general.zoom)
 JSValue camera_transforms (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     auto* container = get_opaque (this_val);
@@ -474,11 +652,15 @@ SceneObject::SceneObject (ScriptEngine& engine, Render::Wallpapers::CScene& scen
 	{ "getLayerIndex", get_layer_index }, { "sortLayer", sort_layer },	      { "createLayer", create_layer },
 	{ "destroyLayer", destroy_layer },     { "getAnimation", scene_get_animation },
 	{ "__cameraTransforms", camera_transforms }, { "__setCameraTransforms", set_camera_transforms },
-	{ "__sceneJson", scene_json },
+	{ "__sceneJson", scene_json },		       { "__modelData", model_data },
+	{ "__modelDataDestroy", model_data_destroy },
     };
 
     for (const auto& [name, function] : methods) {
-	JS_DefinePropertyValueStr (ctx, this->m_instance, name, JS_NewCFunction (ctx, function, name, 1), JS_PROP_ENUMERABLE);
+	// configurable: builtins.js wraps createLayer (an IModelData config)
+	JS_DefinePropertyValueStr (
+	    ctx, this->m_instance, name, JS_NewCFunction (ctx, function, name, 1), JS_PROP_ENUMERABLE | JS_PROP_CONFIGURABLE
+	);
     }
 }
 
