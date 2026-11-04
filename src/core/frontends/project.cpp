@@ -1,5 +1,8 @@
 #include "linux-wallpaperengine/project.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "WallpaperEngine/Project.h"
 
 #define WPENGINE_PROJECT_API_BEGIN try {
@@ -249,4 +252,19 @@ wp_project_notify_playback_position_and_duration_change (wp_project* project, do
     WPENGINE_PROJECT_API_BEGIN
     static_cast<WallpaperEngine::Project*> (project)->playbackPositionAndDurationChange (position, duration);
     WPENGINE_PROJECT_API_END ();
+}
+
+WPENGINE_API size_t wp_project_shader_check (
+    wp_project* project, const char* shader, const char* request, char* out, size_t out_size
+) {
+    WPENGINE_PROJECT_API_BEGIN
+    const std::string json
+	= static_cast<WallpaperEngine::Project*> (project)->shaderCheck (shader, request != nullptr ? request : "");
+    if (out != nullptr && out_size > 0) {
+	const size_t n = std::min (json.size (), out_size - 1);
+	std::memcpy (out, json.data (), n);
+	out[n] = '\0';
+    }
+    return json.size ();
+    WPENGINE_PROJECT_API_END (0);
 }

@@ -505,6 +505,23 @@ WPENGINE_API void wp_project_notify_media_status (wp_project* project, bool enab
  */
 WPENGINE_API bool wp_project_uses_media (wp_project* project);
 
+/**
+ * The shader sweep (a diagnostic; draws nothing): builds shader `shader` (relative to the project's shaders/, no
+ * extension — "genericimage2", "workshop/<id>/effects/<name>") through the same preprocessing, glslang pass and GL
+ * compile and link a material pass uses, on the GL context current on the calling thread.
+ *
+ * @param project
+ * @param shader
+ * @param request JSON or NULL: {"combos": {NAME: int…}, "textures": [slot…], "gl": bool (default true)}
+ * @param out Receives JSON {"shader", "ok", "stage" (load | glslang | gl | link), "message", "unit", "compat": [the
+ * HLSL-compatible rewrites applied], "combos": {the effective combos}}, NUL-terminated and cut to `out_size`
+ * @param out_size
+ * @return The length of the whole JSON (more than `out_size - 1` when it was cut), 0 on an error before it
+ */
+WPENGINE_API size_t wp_project_shader_check (
+    wp_project* project, const char* shader, const char* request, char* out, size_t out_size
+);
+
 #ifdef __cplusplus
 }
 #endif

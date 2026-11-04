@@ -41,6 +41,25 @@ private:
     bool m_pushed = false;
 };
 
+/**
+ * Collects every record reported on this thread while it lives (as well as writing them to the file when one is
+ * open): the shader sweep (`wp_project_shader_check`) reads a compile's errors and rewrites from it. Nests: only the
+ * innermost capture collects
+ */
+class Capture {
+public:
+    Capture () noexcept;
+    ~Capture ();
+    Capture (const Capture&) = delete;
+    Capture& operator= (const Capture&) = delete;
+    [[nodiscard]] const nlohmann::json& records () const noexcept { return m_records; }
+
+private:
+    nlohmann::json m_records = nlohmann::json::array ();
+    Capture* m_previous = nullptr;
+    friend void report (const char* event, nlohmann::json fields) noexcept;
+};
+
 /** The first `max` bytes of a log message, without a "Compiled source code:" dump */
 [[nodiscard]] std::string brief (const std::string& message, size_t max = 600);
 } // namespace WallpaperEngine::Health

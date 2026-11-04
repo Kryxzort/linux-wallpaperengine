@@ -64,6 +64,15 @@ public:
     void mediaStatusChange (bool enabled);
     [[nodiscard]] bool usesMedia () const;
 
+    /**
+     * The shader sweep: builds shader `name` (relative to shaders/, no extension) from this project's files the way a
+     * material pass does — the same preprocessing, glslang and SPIRV-Cross pass and the GL compile and link, on the
+     * GL context current on this thread — and draws nothing. `request` is JSON: `{"combos": {NAME: value…},
+     * "textures": [slot…], "gl": bool}` (gl defaults to true). Returns JSON `{"ok", "stage" (load | glslang | gl |
+     * link), "message", "compat": [what…], "combos": {the effective combos}}`
+     */
+    std::string shaderCheck (const std::string& name, const std::string& request);
+
     static Project* loadId (Context* context, wp_mouse_input* mouse_input, const unsigned long int id);
     static Project* loadId (Context* context, wp_mouse_input* mouse_input, const std::string& id);
     static Project* loadFolder (Context* context, wp_mouse_input* mouse_input, const char* folder);

@@ -5,6 +5,8 @@
 #include "Data/Model/Property.h"
 #include "Data/Parsers/ProjectParser.h"
 #include "FileSystem/Adapters/MediaCover.h"
+#include "Render/Shaders/GLSLContext.h"
+#include "Render/Shaders/Shader.h"
 #include "Render/Wallpapers/CScene.h"
 #include "Render/Wallpapers/CWeb.h"
 #include "Scripting/ScriptEngine.h"
@@ -627,4 +629,133 @@ WallpaperEngine::Project::loadFolder (Context* context, wp_mouse_input* mouse_in
 	WPENGINE_HEALTH ("load_failed", { { "message", WallpaperEngine::Health::brief (e.what ()) } });
 	throw;
     }
+}
+namespace {
+/** Compiles one GL unit of the sweep; false + the driver's log when it doesn't compile */
+bool sweepCompile (GLuint type, const std::string& source, GLuint& id, std::string& log) {
+    id = glCreateShader (type);
+    const char* text = source.c_str ();
+    glShaderSource (id, 1, &text, nullptr);
+    glCompileShader (id);
+    GLint ok = GL_FALSE, length = 0;
+    glGetShaderiv (id, GL_COMPILE_STATUS, &ok);
+    glGetShaderiv (id, GL_INFO_LOG_LENGTH, &length);
+    if (ok == GL_FALSE && length > 0) {
+	std::string buffer (static_cast<size_t> (length), '\0');
+	glGetShaderInfoLog (id, length, nullptr, buffer.data ());
+	log = buffer.c_str ();
+    }
+    return ok != GL_FALSE;
+}
+} // namespace
+
+std::string WallpaperEngine::Project::shaderCheck (const std::string& name, const std::string& request) {
+    using namespace WallpaperEngine::Render::Shaders;
+    nlohmann::json out = { { "shader", name }, { "ok", false } };
+    nlohmann::json compat = nlohmann::json::array ();
+    const WallpaperEngine::Health::Capture capture;
+    std::string stage = "load", message;
+
+    try {
+	const auto req = request.empty () ? nlohmann::json::object () : nlohmann::json::parse (request);
+	ComboMap combos;
+	TextureMap textures;
+	const ComboMap noCombos;
+	const TextureMap noTextures;
+	const ShaderConstantMap noConstants;
+	if (req.contains ("combos")) {
+	    for (const auto& [key, value] : req["combos"].items ()) {
+		combos[key] = value.is_number () ? value.get<int> () : 0;
+	    }
+	}
+	if (req.contains ("textures")) {
+	    for (const auto& slot : req["textures"]) {
+		textures[slot.get<int> ()] = "sweep";
+	    }
+	}
+	const bool gl = req.value ("gl", true);
+
+	Shader shader (*this->ref->assetLocator, name, combos, noCombos, textures, noTextures, noConstants);
+	const std::string vertexIn = shader.vertex ();
+	const std::string fragmentIn = shader.fragment ();
+	nlohmann::json effective = nlohmann::json::object ();
+	for (const auto* unit : { &shader.getVertex (), &shader.getFragment () }) {
+	    for (const auto& [key, value] : unit->getCombos ()) {
+		effective[key] = value;
+	    }
+	    for (const auto& [key, value] : unit->getDiscoveredCombos ()) {
+		if (!effective.contains (key)) {
+		    effective[key] = value;
+		}
+	    }
+	}
+	out["combos"] = effective;
+	stage = "glslang";
+	const auto [vertex, fragment] = GLSLContext::get ().toGlsl (vertexIn, fragmentIn);
+	if (vertex.empty () || fragment.empty ()) {
+	    throw std::runtime_error ("");
+	}
+	if (gl) {
+	    if (active_context != &this->context) {
+		active_context = &this->context;
+		gladLoadGLLoader (wp_context_call_gl_proc_address);
+	    }
+	    GLuint vs = 0, fs = 0;
+	    stage = "gl";
+	    const bool vok = sweepCompile (GL_VERTEX_SHADER, vertex, vs, message);
+	    const bool fok = vok && sweepCompile (GL_FRAGMENT_SHADER, fragment, fs, message);
+	    if (vok && fok) {
+		stage = "link";
+		const GLuint program = glCreateProgram ();
+		glAttachShader (program, vs);
+		glAttachShader (program, fs);
+		glLinkProgram (program);
+		GLint ok = GL_FALSE, length = 0;
+		glGetProgramiv (program, GL_LINK_STATUS, &ok);
+		glGetProgramiv (program, GL_INFO_LOG_LENGTH, &length);
+		if (ok == GL_FALSE && length > 0) {
+		    std::string buffer (static_cast<size_t> (length), '\0');
+		    glGetProgramInfoLog (program, length, nullptr, buffer.data ());
+		    message = buffer.c_str ();
+		}
+		glDeleteProgram (program);
+		if (ok != GL_FALSE) {
+		    stage = "";
+		}
+	    } else {
+		out["unit"] = vok ? "fragment" : "vertex";
+	    }
+	    if (vs != 0) {
+		glDeleteShader (vs);
+	    }
+	    if (fs != 0) {
+		glDeleteShader (fs);
+	    }
+	} else {
+	    stage = "";
+	}
+    } catch (const std::exception& e) {
+	if (message.empty ()) {
+	    message = e.what ();
+	}
+    }
+
+    for (const auto& record : capture.records ()) {
+	const std::string ev = record.value ("ev", "");
+	if (ev == "compat") {
+	    compat.push_back (record.value ("what", ""));
+	} else if (ev == "shader_error" && message.empty ()) {
+	    message = record.value ("message", "");
+	    if (record.contains ("unit")) {
+		out["unit"] = record["unit"];
+	    }
+	}
+    }
+    out["ok"] = stage.empty ();
+    if (!stage.empty ()) {
+	out["stage"] = stage;
+	out["message"] = WallpaperEngine::Health::brief (message, 2000);
+    }
+    out["compat"] = compat;
+    return out.dump (-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }

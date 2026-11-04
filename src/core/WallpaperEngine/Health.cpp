@@ -20,6 +20,7 @@ size_t g_lines = 0;
 constexpr size_t kMaxLines = 50000;
 
 thread_local std::vector<std::pair<std::string, nlohmann::json>> t_scopes;
+thread_local Capture* t_capture = nullptr;
 } // namespace
 
 void configure () noexcept {
@@ -43,7 +44,11 @@ void configure () noexcept {
     g_enabled.store (g_file != nullptr, std::memory_order_relaxed);
 }
 
-bool enabled () noexcept { return g_enabled.load (std::memory_order_relaxed); }
+bool enabled () noexcept { return g_enabled.load (std::memory_order_relaxed) || t_capture != nullptr; }
+
+Capture::Capture () noexcept : m_previous (t_capture) { t_capture = this; }
+
+Capture::~Capture () { t_capture = m_previous; }
 
 void report (const char* event, nlohmann::json fields) noexcept {
     if (!enabled ()) {
@@ -62,6 +67,9 @@ void report (const char* event, nlohmann::json fields) noexcept {
 	}
 	// invalid UTF-8 in a message (a font name, a shader log) is replaced, not thrown
 	std::string line = record.dump (-1, ' ', false, nlohmann::json::error_handler_t::replace);
+	if (t_capture != nullptr) {
+	    t_capture->m_records.push_back (nlohmann::json::parse (line));
+	}
 
 	std::lock_guard lock (g_mutex);
 	if (g_file == nullptr || g_lines >= kMaxLines || !g_written.insert (line).second) {
