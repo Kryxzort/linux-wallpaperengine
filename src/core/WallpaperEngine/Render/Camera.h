@@ -54,6 +54,16 @@ public:
     [[nodiscard]] const glm::mat4& getLookAt () const;
     /** Sets the frame's world-space view adjustment (CScene::updateCamera) */
     void setViewAdjust (const glm::mat4& adjust);
+    /**
+     * An orthographic scene's perspective camera (WE GH 0x1401b4fd0), in LWE's 2D scene space with the frame's view
+     * adjustment: `perspectiveoverridefov` (vertical), width / height, near 5, far max (15000, d + 1000), the eye on
+     * the view's axis at d = (height / 2) / tan (fov / 2), so that z 0 lands where the orthographic camera puts it.
+     * What `perspective` layers and perspective particles (flags bit 2) draw with
+     */
+    [[nodiscard]] glm::mat4 getPerspective2DViewProjection () const;
+    /** That camera's eye distance d (scene units) */
+    [[nodiscard]] float getPerspective2DDistance () const;
+    [[nodiscard]] float getOverrideFov () const;
     [[nodiscard]] Wallpapers::CScene& getScene () const;
     [[nodiscard]] bool isOrthogonal () const;
     [[nodiscard]] float getWidth () const;
@@ -75,6 +85,7 @@ private:
     glm::mat4 m_projection = {};
     glm::mat4 m_lookat = {};
     glm::mat4 m_view = {};
+    glm::mat4 m_adjust = glm::mat4 (1.0f);
     const SceneData::Camera& m_camera;
     Wallpapers::CScene& m_scene;
 };

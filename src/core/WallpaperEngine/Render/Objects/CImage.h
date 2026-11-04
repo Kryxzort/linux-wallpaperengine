@@ -44,6 +44,8 @@ public:
     [[nodiscard]] glm::vec2 getSize () const;
     /** In a 3D scene's world (drawn with its world matrix and the perspective camera), not over the screen */
     [[nodiscard]] bool isWorldPlaced () const;
+    /** A `perspective` layer of an orthographic scene: drawn through Camera::getPerspective2DViewProjection */
+    [[nodiscard]] bool isPerspectiveLayer () const;
 
     /**
      * Whether a point of the scene (WE's world: x right, y up, scene pixels) is on this layer as it was last drawn:

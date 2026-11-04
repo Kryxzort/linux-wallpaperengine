@@ -137,6 +137,12 @@ struct ImageData {
     glm::vec2 size;
     /** Parallax depth used for parallax scrolling */
     UserSettingUniquePtr parallaxDepth;
+    /**
+     * `perspective` (object flag 0x80 at +0x120, its setter FUN_1401ca270): in an orthographic scene the layer is
+     * drawn through the perspective camera of `perspectiveoverridefov` (GH 0x1401b4fd0, from the image draw
+     * GH 0x140214b50), with its own x/y angles and z. A 3D scene's layers are all in the world already
+     */
+    UserSettingUniquePtr perspective;
     /** The color blending mode for this image */
     UserSettingUniquePtr colorBlendMode;
     /** The brightness of the image */

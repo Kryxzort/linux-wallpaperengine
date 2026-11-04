@@ -80,6 +80,8 @@ CImage::CImage (Wallpapers::CScene& scene, const Image& image) :
     this->registerProperty ("alpha", *image.alpha->value);
     this->registerProperty ("color", *image.color->value);
     this->registerProperty ("parallaxDepth", *image.parallaxDepth->value);
+    // IEffectLayer.perspective (G21): read live by isPerspectiveLayer
+    this->registerProperty ("perspective", *image.perspective->value);
 
     // get scene width and height to calculate positions
     auto scene_width = static_cast<float> (scene.getWidth ());
@@ -1642,6 +1644,16 @@ bool CImage::isWorldPlaced () const {
 	&& !this->getImage ().model->passthrough && this->getId () >= 0;
 }
 
+bool CImage::isPerspectiveLayer () const {
+    // the image draw (GH 0x140214b50) swaps in the perspective camera when the layer's flag 0x80 is set; a 3D scene's
+    // layers are world-placed already. Full-screen and compose layers keep covering the screen (ours: no library
+    // scene turns one)
+    const auto& image = this->getImage ();
+    return !this->getScene ().getCamera ().isPerspective () && image.perspective != nullptr
+	&& image.perspective->value->getBool () && !image.model->fullscreen && !image.model->passthrough
+	&& this->getId () >= 0;
+}
+
 glm::mat4 CImage::screenViewProjection () const {
     const auto& camera = this->getScene ().getCamera ();
 
@@ -1697,8 +1709,19 @@ void CImage::updateScreenSpacePosition () {
     // Build rotation from angles (already in radians from scene.json — see CParticle.cpp:2119)
     // Negate X and Z rotations to account for Y-flipped coordinate system (CParticle.cpp:2120)
     const float angle = transform.angle;
+    const bool perspective = this->isPerspectiveLayer ();
     glm::mat4 rotModel = glm::mat4 (1.0f);
-    if (angle != 0.0f) {
+    if (perspective) {
+	// a `perspective` layer of an orthographic scene: WE's object matrix (GH 0x1401b5170: R = Rz · Ry · Rx, then
+	// the origin with its z) about the layer's pivot, in LWE's y-down scene space (x and z turns negated, as above).
+	// The parents' x/y angles are not followed (the 2D transform resolves z turns only)
+	const glm::vec3 own = this->getImage ().angles->value->getVec3 ();
+	rotModel = glm::translate (rotModel, this->m_scenePivot + glm::vec3 (0.0f, 0.0f, transform.origin.z));
+	rotModel = glm::rotate (rotModel, -angle, glm::vec3 (0.0f, 0.0f, 1.0f));
+	rotModel = glm::rotate (rotModel, own.y, glm::vec3 (0.0f, 1.0f, 0.0f));
+	rotModel = glm::rotate (rotModel, -own.x, glm::vec3 (1.0f, 0.0f, 0.0f));
+	rotModel = glm::translate (rotModel, -this->m_scenePivot);
+    } else if (angle != 0.0f) {
 	rotModel = glm::translate (rotModel, this->m_scenePivot);
 	rotModel = glm::rotate (rotModel, -angle, glm::vec3 (0.0f, 0.0f, 1.0f));
 	rotModel = glm::translate (rotModel, -this->m_scenePivot);
@@ -1707,7 +1730,8 @@ void CImage::updateScreenSpacePosition () {
     // the mouse parallax moves the object in the world, after its own transform (WE: view · translate(offset), GH
     // 0x1401b9b50); WE's y is up, this world's y is down
     const glm::vec2 parallax = this->getScene ().getParallaxOffset (this->getImage ());
-    const glm::mat4 mvp = this->screenViewProjection ()
+    const glm::mat4 mvp = (perspective ? this->getScene ().getCamera ().getPerspective2DViewProjection ()
+				       : this->screenViewProjection ())
 	* glm::translate (glm::mat4 (1.0f), glm::vec3 (parallax.x, -parallax.y, 0.0f)) * rotModel;
 
     this->m_modelViewProjectionScreen = mvp;

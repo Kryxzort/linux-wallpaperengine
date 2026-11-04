@@ -2536,20 +2536,12 @@ void CParticle::updateParticleViewProjection () {
 	m_viewProjectionMatrix = getScene ().getCamera ().getProjection () * getScene ().getCamera ().getLookAt ();
 	m_eyePosition = getScene ().getCamera ().getSceneEye ();
     } else if ((m_particle.flags & 4) != 0) {
-	// Perspective particles use a dedicated perspective projection
-	float width = getScene ().getCamera ().getWidth ();
-	float height = getScene ().getCamera ().getHeight ();
-	float aspect = width / height;
-	float fov = glm::radians (getScene ().getCamera ().getFov ());
-	float nearz = getScene ().getCamera ().getNearZ ();
-	float farz = getScene ().getCamera ().getFarZ ();
-
-	glm::mat4 perspectiveProj = glm::perspective (fov, aspect, nearz, farz);
-	glm::mat4 perspectiveView
-	    = glm::lookAt (glm::vec3 (0.0f, 0.0f, 1000.0f), glm::vec3 (0.0f, 0.0f, 0.0f), glm::vec3 (0.0f, 1.0f, 0.0f));
-
-	m_viewProjectionMatrix = perspectiveProj * perspectiveView;
-	m_eyePosition = glm::vec3 (0.0f, 0.0f, 1000.0f);
+	// perspective particles (system flags bit 2) of an orthographic scene: the particle render (GH 0x14025bc30)
+	// swaps in the scene's perspective camera of `perspectiveoverridefov` (GH 0x1401b4fd0), which puts z 0 where
+	// the orthographic camera does. LWE had general.fov from an eye at z 1000 (z 0 drawn 1.16 x at fov 50)
+	const auto& camera = getScene ().getCamera ();
+	m_viewProjectionMatrix = camera.getPerspective2DViewProjection ();
+	m_eyePosition = glm::vec3 (0.0f, 0.0f, camera.getPerspective2DDistance ());
     } else {
 	// Orthographic projection from scene camera
 	m_viewProjectionMatrix = getScene ().getCamera ().getProjection () * getScene ().getCamera ().getLookAt ();

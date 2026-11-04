@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -28,7 +29,32 @@ const glm::mat4& Camera::getProjection () const { return this->m_projection; }
 
 const glm::mat4& Camera::getLookAt () const { return this->m_view; }
 
-void Camera::setViewAdjust (const glm::mat4& adjust) { this->m_view = this->m_lookat * adjust; }
+void Camera::setViewAdjust (const glm::mat4& adjust) {
+    this->m_adjust = adjust;
+    this->m_view = this->m_lookat * adjust;
+}
+
+float Camera::getOverrideFov () const {
+    const auto& fov = this->m_camera.projection.overrideFov;
+    return glm::clamp (fov == nullptr ? 95.0f : fov->value->getFloat (), 0.1f, 179.9f);
+}
+
+float Camera::getPerspective2DDistance () const {
+    // GH 0x1401b4fd0: view.z = −1 / (tan (fov / 2) · proj[1][1]), the orthographic projection's m11 being 2 / height
+    return (this->m_height / 2.0f) / std::tan (glm::radians (this->getOverrideFov ()) / 2.0f);
+}
+
+glm::mat4 Camera::getPerspective2DViewProjection () const {
+    const float d = this->getPerspective2DDistance ();
+    // near 5 (DAT_1404d43e0), far max (15000, d + 1000) (DAT_1404d44ec, DAT_1404d44d4). WE keeps the orthographic
+    // view's x/y and centres the axis on the visible area (view.xy −= size · crop fraction); LWE's 2D scene space is
+    // centred already, and its orthographic projection is translated by the eye, so the eye's x/y go the same way
+    const glm::mat4 projection = glm::perspective (
+	glm::radians (this->getOverrideFov ()), this->m_width / this->m_height, 5.0f, std::max (15000.0f, d + 1000.0f)
+    );
+    const glm::vec3 eye = this->getEye ();
+    return projection * glm::translate (glm::mat4 (1.0f), glm::vec3 (eye.x, eye.y, -d)) * this->m_adjust;
+}
 
 bool Camera::isOrthogonal () const { return this->m_isOrthogonal; }
 

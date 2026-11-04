@@ -114,6 +114,12 @@ struct SceneData {
 	    UserSettingUniquePtr farz;
 	    UserSettingUniquePtr fov;
 	    /**
+	     * `general.perspectiveoverridefov` (scene +0x144, default 95: GH 0x1401b6c60): an orthographic scene's
+	     * effective fov (the camera update GH 0x1401b8af0 takes +0x144 instead of +0x140 when the ortho flag is
+	     * set), which its `perspective` layers and perspective particles (flags bit 2) are drawn with (GH 0x1401b4fd0)
+	     */
+	    UserSettingUniquePtr overrideFov;
+	    /**
 	     * No `orthogonalprojection` (absent or null): a 3D scene, seen through a perspective camera from
 	     * `camera.eye/center/up` with general fov/nearz/farz (the scene loader GH 0x1401b6c60 sets the ortho flag
 	     * 0x8 only when the member is an object with a width and height)
