@@ -68,6 +68,8 @@ public:
 	float scriptScale = 1.0f;
 	/** the module namespace once evaluated (JS_UNDEFINED before, or when it failed to load) */
 	JSValue ns = JS_UNDEFINED;
+	/** [thisLayer, thisObject] while its code runs (pushed on the running-script stack, builtins.js) */
+	JSValue binding = JS_UNDEFINED;
 	bool evaluated = false;
 	bool initialized = false;
 	int errors = 0;
@@ -76,6 +78,11 @@ public:
 	std::unique_ptr<Adapters::ScriptableObjectAdapter> object;
     };
 
+    /** push `[layer, object]` (dups it) on the running-script stack that `thisLayer` / `thisObject` read */
+    void pushScript (JSValueConst binding);
+    void popScript ();
+    /** `fn` wrapped to run with the script running now on the stack (a new reference; `fn` itself when none) */
+    JSValue bindToRunningScript (JSValueConst fn);
     ~ScriptEngine ();
     ScriptEngine (Render::Wallpapers::CScene& scene);
     ScriptEngine (const ScriptEngine&) = delete;

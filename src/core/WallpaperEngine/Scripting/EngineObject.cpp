@@ -151,7 +151,10 @@ JSValue engine_set_interval (JSContext* ctx, JSValueConst this_val, int argc, JS
 	return JS_EXCEPTION;
     }
 
-    int id = it->second.reserveNextIntervalId (function, delay);
+    // the callback runs with the script that set it on the running-script stack (builtins.js __scriptBound)
+    JSValue bound = it->second.getEngine ().bindToRunningScript (function);
+    int id = it->second.reserveNextIntervalId (bound, delay);
+    JS_FreeValue (ctx, bound);
 
     JSValue args[] = { JS_NewInt32 (ctx, id) };
 
@@ -181,7 +184,10 @@ JSValue engine_set_timeout (JSContext* ctx, JSValueConst this_val, int argc, JSV
 	return JS_EXCEPTION;
     }
 
-    int id = it->second.reserveNextTimeoutId (function, delay);
+    // the callback runs with the script that set it on the running-script stack (builtins.js __scriptBound)
+    JSValue bound = it->second.getEngine ().bindToRunningScript (function);
+    int id = it->second.reserveNextTimeoutId (bound, delay);
+    JS_FreeValue (ctx, bound);
 
     JSValue args[] = { JS_NewInt32 (ctx, id) };
 

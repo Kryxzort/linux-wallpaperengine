@@ -1180,7 +1180,8 @@ void video_texture_finalizer (JSRuntime* rt, JSValueConst val) {
 }
 
 void ScriptableObjectAdapter::addVideoEndedCallback (CImage& image, JSValueConst callback) {
-    this->m_videoEnded.push_back ({ .image = &image, .callback = JS_DupValue (this->m_engine.getContext (), callback), .ended = false });
+    // called outside any script: it runs with the script that registered it (thisLayer, builtins.js)
+    this->m_videoEnded.push_back ({ .image = &image, .callback = this->m_engine.bindToRunningScript (callback), .ended = false });
 }
 
 void ScriptableObjectAdapter::pollVideoEnded () {

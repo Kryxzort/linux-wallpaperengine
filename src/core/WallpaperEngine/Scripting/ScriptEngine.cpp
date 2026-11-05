@@ -416,6 +416,7 @@ ScriptEngine::~ScriptEngine () {
 
     for (const auto& module : this->m_scriptModules) {
 	JS_FreeValue (this->m_context, module->ns);
+	JS_FreeValue (this->m_context, module->binding);
     }
 
     for (auto& ctor : this->m_vecCtors) {
@@ -457,6 +458,42 @@ static void logJSException (JSContext* ctx, const char* context) {
 	}
     }
     JS_FreeValue (ctx, exc);
+}
+
+void ScriptEngine::pushScript (JSValueConst binding) {
+    JSContext* ctx = this->m_context;
+    JSValue stack = JS_GetPropertyStr (ctx, this->m_globalThis, "__scriptStack");
+    if (JS_IsArray (stack)) {
+	int64_t length = 0;
+	JS_GetLength (ctx, stack, &length);
+	JS_SetPropertyInt64 (ctx, stack, length, JS_DupValue (ctx, binding));
+    }
+    JS_FreeValue (ctx, stack);
+}
+
+JSValue ScriptEngine::bindToRunningScript (JSValueConst fn) {
+    JSContext* ctx = this->m_context;
+    JSValue bind = JS_GetPropertyStr (ctx, this->m_globalThis, "__scriptBound");
+    JSValue bound = JS_IsFunction (ctx, bind) ? JS_Call (ctx, bind, JS_UNDEFINED, 1, &fn) : JS_DupValue (ctx, fn);
+    JS_FreeValue (ctx, bind);
+    if (JS_IsException (bound)) {
+	JS_FreeValue (ctx, JS_GetException (ctx));
+	return JS_DupValue (ctx, fn);
+    }
+    return bound;
+}
+
+void ScriptEngine::popScript () {
+    JSContext* ctx = this->m_context;
+    JSValue stack = JS_GetPropertyStr (ctx, this->m_globalThis, "__scriptStack");
+    if (JS_IsArray (stack)) {
+	int64_t length = 0;
+	JS_GetLength (ctx, stack, &length);
+	if (length > 0) {
+	    JS_SetPropertyStr (ctx, stack, "length", JS_NewInt64 (ctx, length - 1));
+	}
+    }
+    JS_FreeValue (ctx, stack);
 }
 
 void ScriptEngine::installBuiltins () {
@@ -649,7 +686,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	<< "    },\n"
 	<< "    has: function(t, k) { return (k in t) || globalThis.__layerProp(__id, k) !== undefined; }\n"
 	<< "  });\n"
-	<< "  var thisLayer = globalThis.__layerSeedLayer, thisObject = thisLayer;\n"
+	<< "  var thisLayer = globalThis.__layerSeedLayer, thisObject = thisLayer, __binding = [thisLayer, thisLayer];\n"
 	// `thisScene` and `engine` are the real objects (getLayer, setInterval, …) seen through a layer of the text
 	// layer's own clock: time/currentTime/dt/fps and `frametime` (the per-frame delta in seconds, what
 	// InsertFPS reads) come from the text object's tick
@@ -694,6 +731,7 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	<< "  function __adopt(r) { if (typeof r === 'string') thisLayer.text = r; }\n"
 	<< "  globalThis.__textLayers[__id] = {\n"
 	<< "    thisLayer: thisLayer,\n"
+	<< "    __binding: __binding,\n"
 	<< "    thisScene: thisScene,\n"
 	<< "    _init:    (typeof init    === 'function') ? function() { __adopt(init(thisLayer.text)); } : null,\n"
 	<< "    _destroy: (typeof destroy === 'function') ? destroy : null,\n"
@@ -708,7 +746,14 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	    << "})();\n";
 
     const std::string evalScript = wrapper.str ();
+    JSValue seed = JS_GetPropertyStr (ctx, this->m_globalThis, "__layerSeedLayer");
+    JSValue binding = JS_NewArray (ctx);
+    JS_SetPropertyUint32 (ctx, binding, 0, JS_DupValue (ctx, seed));
+    JS_SetPropertyUint32 (ctx, binding, 1, seed);
+    this->pushScript (binding);
     JSValue result = JS_Eval (ctx, evalScript.c_str (), evalScript.size (), "<layer-script>", JS_EVAL_TYPE_GLOBAL);
+    this->popScript ();
+    JS_FreeValue (ctx, binding);
 
     JS_SetPropertyStr (ctx, this->m_globalThis, "__layerSeedLayer", JS_UNDEFINED);
 
@@ -759,7 +804,11 @@ void ScriptEngine::callLayerHook (ScriptLayerHandle handle, const char* name, in
     JSValue fn = JS_IsObject (holder) ? JS_GetPropertyStr (ctx, holder, name) : JS_UNDEFINED;
 
     if (JS_IsFunction (ctx, fn)) {
+	JSValue binding = JS_GetPropertyStr (ctx, layerObj, "__binding");
+	this->pushScript (binding);
 	JSValue ret = JS_Call (ctx, fn, layerObj, argc, argv);
+	this->popScript ();
+	JS_FreeValue (ctx, binding);
 	if (JS_IsException (ret)) {
 	    const std::string tag = std::string ("layer.") + name;
 	    logJSException (ctx, tag.c_str ());
@@ -843,7 +892,11 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
     if (!JS_IsUndefined (layerObj) && !JS_IsNull (layerObj)) {
 	JSValue fn = JS_GetPropertyStr (ctx, layerObj, "_destroy");
 	if (JS_IsFunction (ctx, fn)) {
+	    JSValue binding = JS_GetPropertyStr (ctx, layerObj, "__binding");
+	    this->pushScript (binding);
 	    JSValue ret = JS_Call (ctx, fn, layerObj, 0, nullptr);
+	    this->popScript ();
+	    JS_FreeValue (ctx, binding);
 	    if (JS_IsException (ret)) {
 		logJSException (ctx, "layer.destroy");
 	    }
@@ -971,12 +1024,10 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
     JSContext* ctx = this->m_context;
     module.evaluated = true;
 
-    // `thisLayer` and `thisObject` are the object the script is attached to, for this module alone: module-scope
-    // bindings, so its event handlers and timer callbacks see them too. Prepended on the first line so that
-    // error line numbers stay those of the script
-    // (thisObject is the effect for a script on an effect's `visible`)
-    const std::string source
-	= "const thisLayer = globalThis.__thisLayerBinding, thisObject = globalThis.__thisObjectBinding; " + module.source;
+    // `thisLayer` and `thisObject` are WE's global accessors over the running scripts (builtins.js): the module's
+    // binding (its object; thisObject is the effect for a script on an effect's `visible`) is pushed around each call
+    // into it, so code it shares sees its caller's layer, as in WE
+    const std::string& source = module.source;
 
     JSValue function = JS_Eval (
 	ctx, source.c_str (), source.size (), module.key.c_str (), JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
@@ -1007,12 +1058,18 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
 	}
 	JS_FreeValue (ctx, of);
     }
-    JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", thisObject);
+    JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", JS_DupValue (ctx, thisObject));
+    JS_FreeValue (ctx, module.binding);
+    module.binding = JS_NewArray (ctx);
+    JS_SetPropertyUint32 (ctx, module.binding, 0, JS_GetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding"));
+    JS_SetPropertyUint32 (ctx, module.binding, 1, thisObject);
     // createScriptProperties().finish() binds the stored script properties of the module being evaluated
     this->m_runningModule = &module;
     this->m_evaluatingModule = true;
+    this->pushScript (module.binding);
     JSValue promise = JS_EvalFunction (ctx, function);
     this->runPendingJobs ();
+    this->popScript ();
     this->m_evaluatingModule = false;
     this->m_runningModule = nullptr;
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisLayerBinding", JS_UNDEFINED);
@@ -1050,7 +1107,9 @@ void ScriptEngine::callModule (LoadedModule& module, const char* name, int argc,
     }
 
     this->m_runningModule = &module;
+    this->pushScript (module.binding);
     JSValue result = JS_Call (ctx, function, JS_UNDEFINED, argc, argv);
+    this->popScript ();
     this->m_runningModule = nullptr;
     JS_FreeValue (ctx, function);
 

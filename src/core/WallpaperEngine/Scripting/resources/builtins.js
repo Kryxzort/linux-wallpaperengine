@@ -1,4 +1,33 @@
 globalThis.__intervals = Object.create(null);
+// WE's `thisLayer` / `thisObject` are accessors on the global (scenescript64.dll: native getters 0x1810d5fd0 and
+// 0x1810d60d0, set on the global template at 0x1810d89d3 / 0x1810d8a29) that return the object of the script running
+// NOW: the last of the engine's running scripts (a deque at engine +0x4b0), undefined when none. So code a script shares
+// (a class in `shared`) sees its caller's layer, not its own (3163060610's clocks: an event listener made in the clock's
+// init keeps the clock as its thisObject). The engine pushes [layer, object] around every entry into a script; a
+// timer runs with the script that set it.
+(function () {
+  const stack = [];
+  Object.defineProperty(globalThis, '__scriptStack', { value: stack });
+  const top = (i) => (stack.length ? stack[stack.length - 1][i] : undefined);
+  Object.defineProperty(globalThis, 'thisLayer', { get: () => top(0), configurable: true });
+  Object.defineProperty(globalThis, 'thisObject', { get: () => top(1), configurable: true });
+  Object.defineProperty(globalThis, '__scriptBound', {
+    value: function (fn) {
+      const own = stack.length ? stack[stack.length - 1] : undefined;
+      if (own === undefined || typeof fn !== 'function') {
+        return fn;
+      }
+      return function () {
+        stack.push(own);
+        try {
+          return fn.apply(this, arguments);
+        } finally {
+          stack.pop();
+        }
+      };
+    },
+  });
+})();
 // SceneScript's ILocalStorage: get/set/delete/clear (key, location), LOCATION_GLOBAL ("global") and LOCATION_SCREEN
 // ("screen", the default). Values keep their type (JSON), and persist in the project's file (__storage, the host's
 // storage dir) up to WE's 100 KB; without one they live as long as the scene. One "screen" store per project (the core
