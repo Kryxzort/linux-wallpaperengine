@@ -44,6 +44,7 @@ public:
     void setTexCoord (GLuint texcoord);
     void setPosition (GLuint position);
     void setModelViewProjectionMatrix (const glm::mat4* projection);
+    [[nodiscard]] const glm::mat4* getModelViewProjectionMatrix () const { return this->m_modelViewProjectionMatrix; }
     void setModelViewProjectionMatrixInverse (const glm::mat4* projection);
     void setModelMatrix (const glm::mat4* model);
     /** g_LayerModelMatrix: the layer's own matrix in WE's world (GH 0x1402176a0 copies image +0x384 to ctx +0xa30) */

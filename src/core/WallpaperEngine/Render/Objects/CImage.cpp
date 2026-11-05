@@ -877,7 +877,7 @@ void CImage::setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) co
 		glVertexAttribPointer (color, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
 	    }
 	},
-	[this] () {
+	[this, pass] () {
 	    GLint currentFramebuffer = 0;
 	    glGetIntegerv (GL_DRAW_FRAMEBUFFER_BINDING, &currentFramebuffer);
 	    if (currentFramebuffer
@@ -890,8 +890,18 @@ void CImage::setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) co
 		    previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]
 		);
 	    }
+	    // the mesh's triangles are WE's (front = counter-clockwise, y up); its positions here are y-down layer / scene
+	    // pixels, which a flat layer's projection draws upside down into its target, so they reach GL clockwise and a
+	    // `cullmode: normal` material (WE keeps it for puppets, GH 0x140230ec0) culled the whole puppet (3490034653,
+	    // 3363252053). Front is whichever winding the mesh's own front lands as: clockwise when the matrix keeps the
+	    // y-down orientation (det > 0). A perspective layer's camera turns it back (unchanged: counter-clockwise).
+	    const glm::mat4* mvp = pass->getModelViewProjectionMatrix ();
+	    const bool clockwise = !this->isPerspectiveLayer () && mvp != nullptr
+		&& (*mvp)[0][0] * (*mvp)[1][1] - (*mvp)[0][1] * (*mvp)[1][0] > 0.0f;
+	    glFrontFace (clockwise ? GL_CW : GL_CCW);
 	    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, this->m_puppetIndices);
 	    glDrawElements (GL_TRIANGLES, this->m_puppetIndexCount, GL_UNSIGNED_INT, nullptr);
+	    glFrontFace (GL_CCW);
 	},
 	[pass] () {
 	    const GLint position = glGetAttribLocation (pass->getProgramID (), "a_Position");
