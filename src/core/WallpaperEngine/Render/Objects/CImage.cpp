@@ -1784,7 +1784,15 @@ const float& CImage::getUserAlpha () const { return this->m_image.alpha->value->
 
 const float& CImage::getAlpha () const { return this->m_image.alpha->value->getFloat (); }
 
-const glm::vec3& CImage::getColor () const { return this->m_image.color->value->getVec3 (); }
+const glm::vec3& CImage::getColor () const {
+    // WE's draw context colour (g_Color, g_Color4.rgb) is the layer's colour × its brightness when the renderer runs
+    // HDR (flag 0x2000), else × 1 (GH 0x1402321d0 / 0x1402328e0 / 0x140231dc0: ctx+0x124…0x12c = image+0x330…0x338 ×
+    // (ctx flags & 0x2000 ? image+0x340 : 1)). The VERSION shaders have no g_Brightness term, so this is where an HDR
+    // scene's `brightness` shows (2542468435's 1.15). Bound by address: refreshed by getColor4 () every render ()
+    const float brightness = this->getScene ().rendersHDR () ? this->getBrightness () : 1.0f;
+    this->m_drawColor = this->m_image.color->value->getVec3 () * brightness;
+    return this->m_drawColor;
+}
 
 const glm::vec4& CImage::getColor4 () const {
     // WE's g_Color4 is (g_Color, g_Alpha): the colour and the layer's alpha, not the colour value's own w

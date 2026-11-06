@@ -345,6 +345,8 @@ private:
     bool m_initialized = false;
     /** (color.rgb, alpha) for g_Color4, refreshed by getColor4 () — every render () */
     mutable glm::vec4 m_color4 = glm::vec4 (1.0f);
+    /** g_Color: the colour, × brightness in an HDR scene (GH 0x1402321d0), refreshed by getColor4 () */
+    mutable glm::vec3 m_drawColor = glm::vec3 (1.0f);
 
     struct {
 	struct {
