@@ -448,6 +448,17 @@ WPENGINE_API void wp_project_set_mouse_input (wp_project* project, wp_mouse_inpu
 WPENGINE_API void wp_project_set_frame_rate (wp_project* project, float hz);
 
 /**
+ * The pointer's next position (what the mouse input's callbacks return on the next frame) is a jump, not a move: the
+ * pointer entered the output, or came back from behind a window. Wallpaper Engine polls the cursor on the whole
+ * desktop, so it never jumps there; a host that only sees the pointer over its own surface says so here, and the
+ * frame that reads the new position takes it as g_PointerPositionLast too (cursorripple strokes no line along the
+ * jump). Before the first frame: nothing to do
+ *
+ * @param project The project
+ */
+WPENGINE_API void wp_project_pointer_jump (wp_project* project);
+
+/**
  * Provides a textual representation of the project and it's elements, useful for debugging
  *
  * @param project

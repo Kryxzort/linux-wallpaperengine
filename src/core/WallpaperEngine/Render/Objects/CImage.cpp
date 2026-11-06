@@ -1723,6 +1723,12 @@ void CImage::advanceSimulationClock () {
     if (first) {
 	// WE's first frame: its last pointer is 0 0 (GH 0x1401acb91)
 	clock.from = *scene.getMousePositionLast ();
+	clock.jumps = scene.getPointerJumps ();
+    }
+    // a jump is no move: the next step starts where the pointer landed
+    if (scene.getPointerJumps () != clock.jumps) {
+	clock.jumps = scene.getPointerJumps ();
+	clock.from = pointer;
     }
     clock.to = pointer;
 

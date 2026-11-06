@@ -269,6 +269,12 @@ void WallpaperEngine::Project::setFrameRate (float hz) {
     }
 }
 
+void WallpaperEngine::Project::pointerJump () {
+    if (this->wallpaper != nullptr) {
+	this->wallpaper->markPointerJump ();
+    }
+}
+
 void WallpaperEngine::Project::hintSize (int width, int height) {
     this->hintedWidth = width;
     this->hintedHeight = height;

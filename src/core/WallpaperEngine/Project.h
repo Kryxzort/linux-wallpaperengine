@@ -38,6 +38,7 @@ public:
     void setOutputFramebuffer (GLuint newFramebuffer);
     void setMouseInput (wp_mouse_input* newMouseInput);
     void setFrameRate (float hz);
+    void pointerJump ();
     void hintSize (int width, int height);
     void render ();
 

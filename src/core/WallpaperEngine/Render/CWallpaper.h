@@ -1,5 +1,6 @@
 #pragma once
 
+#include <utility>
 #include <glad/glad.h>
 
 #include <map>
@@ -100,6 +101,10 @@ public:
     /** The rate the host means to draw at (wp_project_set_frame_rate; 0: unknown): a simulation effect steps at it */
     void setFrameRate (float hz) { this->m_frameRate = hz; }
     [[nodiscard]] float getFrameRate () const { return this->m_frameRate; }
+    /** The pointer's next position is a jump (wp_project_pointer_jump): the frame that reads it takes it as the last too */
+    void markPointerJump () { this->m_pointerJump = true; }
+    /** Whether a jump was marked since the last call */
+    bool takePointerJump () { return std::exchange (this->m_pointerJump, false); }
 
     /**
      * Updates the destination framebuffer for this wallpaper
@@ -192,5 +197,6 @@ private:
     /** Current Wallpaper state */
     wp_mouse_input* m_mouseInput;
     float m_frameRate = 0.0f;
+    bool m_pointerJump = false;
 };
 } // namespace WallpaperEngine::Render

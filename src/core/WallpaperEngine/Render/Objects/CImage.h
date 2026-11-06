@@ -307,6 +307,8 @@ private:
 	/** where the pointer was at the last step, and the frame's, for the steps between */
 	glm::vec2 from = {};
 	glm::vec2 to = {};
+	/** CScene::getPointerJumps when last seen: a jump moves `from` to where the pointer landed */
+	uint64_t jumps = 0;
 	/** a press seen on a frame without a step (WE's z marks the press on the frame that reads it) */
 	bool pressed = false;
 	/** the stepping passes' g_Frametime, g_PointerPosition, g_PointerPositionLast, g_PointerState for the step */

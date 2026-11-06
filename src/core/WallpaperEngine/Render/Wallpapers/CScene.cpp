@@ -857,6 +857,13 @@ void CScene::updateMouse () {
     // input.cursorScreenPosition read this, never written (always 0 0)
     this->m_mousePositionNormalized = this->m_mousePosition;
 
+    // a jump (the pointer entered the output, or came back from behind a window: WE, polling GetCursorPos, saw it move
+    // there) is no move: g_PointerPositionLast is where it landed, so cursorripple strokes no line along it
+    if (this->takePointerJump ()) {
+	this->m_mousePositionLast = this->m_mousePosition;
+	this->m_pointerJumps++;
+    }
+
     // the left button: held → xy 1; the frame it went down → z 1 (WE's flags at ctx+0xa4: bit 0 down, bit 1 already
     // seen, so z marks the press)
     const wp_mouse_input* handler = this->getMouseInputHandler ();
@@ -928,6 +935,8 @@ float CScene::getFps () const {
 const glm::vec2* CScene::getMousePosition () const { return &this->m_mousePosition; }
 
 const glm::vec2* CScene::getMousePositionLast () const { return &this->m_mousePositionLast; }
+
+uint64_t CScene::getPointerJumps () const { return this->m_pointerJumps; }
 
 const glm::vec2* CScene::getMousePositionNormalized () const { return &this->m_mousePositionNormalized; }
 

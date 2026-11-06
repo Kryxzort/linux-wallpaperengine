@@ -65,6 +65,8 @@ public:
 
     const glm::vec2* getMousePosition () const;
     const glm::vec2* getMousePositionLast () const;
+    /** How many pointer jumps the frames so far took (wp_project_pointer_jump) */
+    [[nodiscard]] uint64_t getPointerJumps () const;
     const glm::vec2* getMousePositionNormalized () const;
     /**
      * `g_PointerState` (WE uniform 0x71, GH 0x14010a0e0): xy 1 while the left button is down, z 1 on the frame it went
@@ -287,6 +289,7 @@ private:
     std::map<int, std::shared_ptr<CFBO>> m_composeTargets = {};
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
+    uint64_t m_pointerJumps = 0;
     glm::vec4 m_pointerState = {};
     bool m_pointerWasDown = false;
     glm::vec2 m_mousePositionNormalized = {};
