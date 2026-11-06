@@ -2,6 +2,7 @@
 #include "VectorBuilder.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <format>
 #include <glm/glm.hpp>
 #include <glm/vec3.hpp>
@@ -30,6 +31,30 @@ WallpaperEngine::Data::Builders::ColorBuilder::parseProperty (const std::string&
     }
 
     return parse (value);
+}
+
+WallpaperEngine::Data::Model::Color
+WallpaperEngine::Data::Builders::ColorBuilder::parseObject (const std::string& value) {
+    if (value.find ('#') == 0) {
+	return parse (value);
+    }
+
+    // GH 0x1401d0bc0: atof at the start, then at the first non-space after each run of spaces, three times
+    float components[3] = { 0.0f, 0.0f, 0.0f };
+    const char* cursor = value.c_str ();
+
+    for (int i = 0; i < 3 && *cursor != '\0'; i++) {
+	components[i] = static_cast<float> (std::atof (cursor));
+
+	while (*cursor != '\0' && *cursor != ' ') {
+	    cursor++;
+	}
+	while (*cursor == ' ') {
+	    cursor++;
+	}
+    }
+
+    return { components[0], components[1], components[2], 1.0f };
 }
 
 WallpaperEngine::Data::Model::Color

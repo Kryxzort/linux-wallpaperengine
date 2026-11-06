@@ -198,7 +198,9 @@ PropertyAnimationSharedPtr DynamicValueParser::parseAnimation (const JSON& anima
 }
 
 DynamicValueUniquePtr
-DynamicValueParser::parse (const JSON& data, const Properties& properties, bool expectColor, bool expectString) {
+DynamicValueParser::parse (
+    const JSON& data, const Properties& properties, bool expectColor, bool expectString, bool wholeColorBytes
+) {
     auto value = std::make_unique<DynamicValue> ();
     auto valueIt = data;
     std::optional<std::string> scriptSource = std::nullopt;
@@ -220,7 +222,11 @@ DynamicValueParser::parse (const JSON& data, const Properties& properties, bool 
 	if (expectString) {
 	    value->update (valueIt.get<std::string> (), DynamicValue::UpdateSource::Initialization);
 	} else if (expectColor) {
-	    value->update (Builders::ColorBuilder::parse (valueIt), DynamicValue::UpdateSource::Initialization);
+	    value->update (
+		wholeColorBytes ? Builders::ColorBuilder::parse (valueIt)
+				: Builders::ColorBuilder::parseObject (valueIt.get<std::string> ()),
+		DynamicValue::UpdateSource::Initialization
+	    );
 	} else {
 	    std::string str = valueIt;
 	    int size = Builders::VectorBuilder::preparseSize (str);
@@ -247,6 +253,10 @@ DynamicValueParser::parse (const JSON& data, const Properties& properties, bool 
 		value->update (static_cast<glm::vec4> (valueIt), DynamicValue::UpdateSource::Initialization);
 	    }
 	}
+    } else if (expectColor && !wholeColorBytes && valueIt.is_number ()) {
+	// GH 0x1401d0bc0: a number in a colour field is all three components
+	const float v = valueIt.get<float> ();
+	value->update (Model::Color (v, v, v, 1.0f), DynamicValue::UpdateSource::Initialization);
     } else if (valueIt.is_number_integer ()) {
 	value->update (valueIt.get<int> (), DynamicValue::UpdateSource::Initialization);
     } else if (valueIt.is_number_float ()) {

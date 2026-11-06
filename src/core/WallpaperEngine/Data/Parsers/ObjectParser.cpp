@@ -874,8 +874,8 @@ ParticleInitializerUniquePtr ObjectParser::parseParticleInitializer (const JSON&
 
     if (name == "colorrandom") {
 	return std::make_unique<ColorRandomInitializer> (
-	    it.color ("min", properties, Builders::ColorBuilder::Black),
-	    it.color ("max", properties, Builders::ColorBuilder::White), it.user ("exponent", properties, 1.0f)
+	    it.colorBytes ("min", properties, Builders::ColorBuilder::Black),
+	    it.colorBytes ("max", properties, Builders::ColorBuilder::White), it.user ("exponent", properties, 1.0f)
 	);
     } else if (name == "sizerandom") {
 	return std::make_unique<SizeRandomInitializer> (

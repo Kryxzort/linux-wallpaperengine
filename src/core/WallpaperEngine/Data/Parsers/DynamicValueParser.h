@@ -13,9 +13,15 @@ using namespace WallpaperEngine::Data::Model;
 
 class DynamicValueParser {
 public:
-    /** `expectString`: a string value stays a string (a text object's text), never a number or a vector */
-    static Model::DynamicValueUniquePtr
-    parse (const JSON& data, const Properties& properties, bool expectColor, bool expectString = false);
+    /**
+     * `expectString`: a string value stays a string (a text object's text), never a number or a vector.
+     * `expectColor`: an object's colour field, read as WE does (ColorBuilder::parseObject: floats, a number is all
+     * three); with `wholeColorBytes` LWE's older rule instead (no decimal point = 0..255, a particle colorrandom's)
+     */
+    static Model::DynamicValueUniquePtr parse (
+	const JSON& data, const Properties& properties, bool expectColor, bool expectString = false,
+	bool wholeColorBytes = false
+    );
     /**
      * Parses a property's `animation` object (G01/G02 of docs/player/spikes/we-lwe-gap-audit.md) the way
      * Wallpaper Engine 2.8 does: `options` needs `fps` > 0 and `length` > 0 or there is no animation; curves

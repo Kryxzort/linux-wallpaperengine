@@ -140,7 +140,20 @@ public:
 	// this resolving the include loop
 	return this->user (key, properties);
     }
+    /** An object's colour field, read as WE reads it (ColorBuilder::parseObject) */
     [[nodiscard]] UserSettingUniquePtr color (const std::string& key, const Properties& properties) const;
+    /** A colour whose whole numbers are 0..255 (ColorBuilder::parse: a particle colorrandom's min / max) */
+    [[nodiscard]] UserSettingUniquePtr colorBytes (const std::string& key, const Properties& properties) const;
+    [[nodiscard]] UserSettingUniquePtr
+    colorBytes (const std::string& key, const Properties& properties, Color defaultValue) const {
+	const auto value = this->optional (key);
+
+	if (!value.has_value ()) {
+	    return UserSettingBuilder::fromValue<Color> (defaultValue);
+	}
+
+	return this->colorBytes (key, properties);
+    }
     /** A text value: a string stays a string ("Sinner #8" or "HHH HHH HHH" isn't a vector) */
     [[nodiscard]] UserSettingUniquePtr text (const std::string& key, const Properties& properties) const;
     [[nodiscard]] UserSettingUniquePtr

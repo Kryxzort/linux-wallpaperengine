@@ -24,5 +24,12 @@ public:
      * properties in the owner's 96 scenes, none with a component above 1). A component above 1 still reads as 0..255
      */
     static WallpaperEngine::Data::Model::Color parseProperty (const std::string& value);
+    /**
+     * An object's colour field (an image, text or light layer's `color`): WE's vec3 field parser (GH 0x1401d0bc0)
+     * reads up to three space-separated components with atof, missing ones 0, alpha 1 — whole numbers are no
+     * different, so "1 1 1" is white (not 1/255) and "255 0 0" is 255 times red. A "#rrggbb" string keeps LWE's hex
+     * reading (WE's atof gives 0 there; no scene writes one)
+     */
+    static WallpaperEngine::Data::Model::Color parseObject (const std::string& value);
 };
 }
