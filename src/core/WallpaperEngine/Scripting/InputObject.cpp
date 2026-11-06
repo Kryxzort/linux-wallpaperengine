@@ -2,7 +2,10 @@
 
 #include "EngineObject.h"
 #include "ScriptEngine.h"
+#include "WallpaperEngine/Render/Camera.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
+
+#include <glm/glm.hpp>
 
 using namespace WallpaperEngine::Scripting;
 
@@ -10,9 +13,22 @@ JSValue get_cursor_world_position (JSContext* ctx, JSValueConst this_val, int ar
     JSClassID classId;
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
 
-    // the cursor in WE's world: scene pixels, x right, y up
+    // WE (wallpaper64 GH 0x1401bcb00, the script host's vtable +0xa8 that scenescript64's getter calls with flag 0):
+    // glm-style unProject of (x, 1 − y, 0.5) through the frame's view and projection, viewport (0, 0, 1, 1), so NDC z 0.
+    // Its 3D projection is DirectXMath's PerspectiveFovRH with nearz and farz swapped (GH 0x14009afd0: a reversed
+    // depth), where NDC z 0 is the far plane: in a 3D scene the cursor is the point on its ray at the view depth farz
+    // (3477054430's head turns toward it, 3509243656 divides it by 8000 / 9000 at farz 10000). An orthographic
+    // scene's unProject is scene pixels, x right, y up, z 0 (ctx flag 0x400 zeroes z).
     const auto& scene = input->getScene ();
     const glm::vec2 position = *scene.getMousePositionNormalized ();
+    const auto& camera = scene.getCamera ();
+    if (camera.isPerspective ()) {
+	// ours: GL clip space, far at z +1, clip y flipped (the scene FBO is read top-down)
+	const glm::dmat4 inverse = glm::inverse (glm::dmat4 (camera.getWorldViewProjection ()));
+	const glm::dvec4 world = inverse
+	    * glm::dvec4 (2.0 * position.x - 1.0, 2.0 * position.y - 1.0, 1.0, 1.0);
+	return scene.getScriptEngine ().newVec (glm::vec3 (glm::dvec3 (world) / world.w));
+    }
     return scene.getScriptEngine ().newVec (glm::vec3 (
 	position.x * static_cast<float> (scene.getWidth ()), (1.0f - position.y) * static_cast<float> (scene.getHeight ()),
 	0.0f
