@@ -21,6 +21,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <set>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -923,7 +924,7 @@ void ScriptEngine::destroyLayer (ScriptLayerHandle handle) {
 
 void ScriptEngine::queueScript (
     const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect,
-    int animationLayer
+    int animationLayer, const ImageEffect* material
 ) {
     const auto source = currentValue.getScriptSource ();
 
@@ -940,6 +941,7 @@ void ScriptEngine::queueScript (
 			   .object = object,
 			   .effect = effect,
 			   .animationLayer = animationLayer,
+			   .material = material,
 			   .scriptScale = scriptScaleOf (key.substr (0, key.rfind ('_'))) }
     );
     this->m_pendingModules = true;
@@ -1020,6 +1022,36 @@ void ScriptEngine::runPendingJobs () {
     }
 }
 
+namespace {
+// a material's constant, an accessor of the IMaterial a shader-constant script's thisObject is: data[0] the engine,
+// data[1] the constant's name, data[2] the effect (the constant lives in each of its passes that sets it)
+JSValue material_constant (JSContext* ctx, JSValueConst, int argc, JSValueConst* argv, int magic, JSValue* data) {
+    int64_t engine = 0, effect = 0;
+    JS_ToInt64 (ctx, &engine, data[0]);
+    JS_ToInt64 (ctx, &effect, data[2]);
+    const char* name = JS_ToCString (ctx, data[1]);
+    if (name == nullptr) {
+	return JS_UNDEFINED;
+    }
+    const std::string key = name;
+    JS_FreeCString (ctx, name);
+    auto* self = reinterpret_cast<ScriptEngine*> (engine);
+    const auto* owner = reinterpret_cast<const ImageEffect*> (effect);
+    JSValue result = JS_UNDEFINED;
+    for (const auto& pass : owner->passOverrides) {
+	const auto it = pass->constants.find (key);
+	if (it == pass->constants.end () || it->second == nullptr || it->second->value == nullptr) {
+	    continue;
+	}
+	if (magic == 0) {
+	    return self->dynamicToJs (*it->second->value);
+	}
+	self->jsToDynamic (argv[0], *it->second->value);
+    }
+    return result;
+}
+} // namespace
+
 void ScriptEngine::evaluateModule (LoadedModule& module) {
     JSContext* ctx = this->m_context;
     module.evaluated = true;
@@ -1057,6 +1089,43 @@ void ScriptEngine::evaluateModule (LoadedModule& module) {
 	    }
 	}
 	JS_FreeValue (ctx, of);
+    }
+    // a script on an effect's shader constant: thisObject is the effect's material (WE: not the layer — 3163060610's
+    // waterripple `scale` script sets `thisObject.scale` to 0.22, and WE's cloud keeps its size), its properties the
+    // effect's constants; getAnimation () still reaches the running constant's own keyframe animation
+    if (module.material != nullptr && module.effect == nullptr && module.animationLayer < 0) {
+	JSValue layer = thisObject;
+	thisObject = JS_NewObject (ctx);
+	std::set<std::string> names;
+	for (const auto& pass : module.material->passOverrides) {
+	    for (const auto& [name, constant] : pass->constants) {
+		if (!names.insert (name).second) {
+		    continue;
+		}
+		JSValue data[] = { JS_NewInt64 (ctx, reinterpret_cast<int64_t> (this)), JS_NewString (ctx, name.c_str ()),
+				   JS_NewInt64 (ctx, reinterpret_cast<int64_t> (module.material)) };
+		JSValue getter = JS_NewCFunctionData (ctx, material_constant, 0, 0, 3, data);
+		JSValue setter = JS_NewCFunctionData (ctx, material_constant, 1, 1, 3, data);
+		for (auto& d : data) {
+		    JS_FreeValue (ctx, d);
+		}
+		JSAtom atom = JS_NewAtom (ctx, name.c_str ());
+		JS_DefinePropertyGetSet (ctx, thisObject, atom, getter, setter, JS_PROP_ENUMERABLE | JS_PROP_CONFIGURABLE);
+		JS_FreeAtom (ctx, atom);
+	    }
+	}
+	// the layer's getAnimation, bound to the layer (it reads the running script's property)
+	JSValue getAnimation = JS_GetPropertyStr (ctx, layer, "getAnimation");
+	JSValue bind = JS_GetPropertyStr (ctx, getAnimation, "bind");
+	JSValue bound = JS_IsFunction (ctx, bind) ? JS_Call (ctx, bind, getAnimation, 1, &layer) : JS_UNDEFINED;
+	if (JS_IsException (bound)) {
+	    JS_FreeValue (ctx, JS_GetException (ctx));
+	    bound = JS_UNDEFINED;
+	}
+	JS_SetPropertyStr (ctx, thisObject, "getAnimation", bound);
+	JS_FreeValue (ctx, bind);
+	JS_FreeValue (ctx, getAnimation);
+	JS_FreeValue (ctx, layer);
     }
     JS_SetPropertyStr (ctx, this->m_globalThis, "__thisObjectBinding", JS_DupValue (ctx, thisObject));
     JS_FreeValue (ctx, module.binding);

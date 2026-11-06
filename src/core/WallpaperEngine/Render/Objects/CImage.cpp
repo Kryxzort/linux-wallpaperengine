@@ -1071,8 +1071,9 @@ void CImage::setup () {
 		);
 	    }
 
-	    // scripts on the effect's shader constants (a fade, an audio pulse) run like a layer property's; their
-	    // thisObject is this image, and getAnimation () reaches the constant's own keyframe animation
+	    // scripts on the effect's shader constants (a fade, an audio pulse) run like a layer property's (thisLayer =
+	    // this image); their thisObject is the effect's material (its constants), and getAnimation () reaches the
+	    // constant's own keyframe animation
 	    int passIndex = 0;
 	    for (const auto& pass : cur->passOverrides) {
 		for (const auto& [name, constant] : pass->constants) {
@@ -1080,7 +1081,7 @@ void CImage::setup () {
 			this->getScene ().getScriptEngine ().queueScript (
 			    "effect_" + std::to_string (cur->id) + "_" + std::to_string (effectIndex) + "_pass_"
 				+ std::to_string (passIndex) + "_" + name + "_" + std::to_string (this->getId ()),
-			    *constant->value, *this
+			    *constant->value, *this, nullptr, -1, cur.get ()
 			);
 		    }
 		}

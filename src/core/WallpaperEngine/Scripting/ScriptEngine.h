@@ -62,6 +62,9 @@ public:
 	const ImageEffect* effect = nullptr;
 	/** a script on a puppet animation layer's value: thisObject is that IAnimationLayer (its key), else -1 */
 	int animationLayer = -1;
+	/** a script on an effect's shader constant: thisObject is that effect's material, whose properties are the
+	 *  effect's constants by their material names (3163060610: `thisObject.scale = …` in a waterripple `scale`) */
+	const ImageEffect* material = nullptr;
 	/** animation events its value's timeline passed before the script started (sent after its init) */
 	std::vector<std::pair<std::string, int>> pendingAnimationEvents = {};
 	/** the script's unit per stored unit: a script sees `angles` in degrees, the layer keeps radians */
@@ -124,7 +127,7 @@ public:
      */
     void queueScript (
 	const std::string& key, DynamicValue& currentValue, ScriptableObject& object, const ImageEffect* effect = nullptr,
-	int animationLayer = -1
+	int animationLayer = -1, const ImageEffect* material = nullptr
     );
 
     /**
