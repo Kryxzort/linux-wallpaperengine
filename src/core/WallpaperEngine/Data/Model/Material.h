@@ -14,6 +14,12 @@ enum BlendingMode {
     BlendingMode_Normal = 1,
     BlendingMode_Translucent = 2,
     BlendingMode_Additive = 3,
+    /**
+     * `alphatocoverage` (WE's blending 3, GH 0x140182410): no blending, the pixel shader's alpha gives the sample
+     * coverage (D3D11_BLEND_DESC.AlphaToCoverageEnable, GH 0x14009ac30). Drawn here as WE draws it at MSAA: the
+     * covered fraction of a pixel is its alpha, so the colour is blended by alpha (CPass::setupRenderFramebuffer)
+     */
+    BlendingMode_AlphaToCoverage = 4,
 };
 
 enum CullingMode { CullingMode_Unknown = 0, CullingMode_Normal = 1, CullingMode_Disable = 2 };

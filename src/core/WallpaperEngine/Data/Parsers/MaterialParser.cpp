@@ -102,9 +102,10 @@ BlendingMode MaterialParser::parseBlendMode (const std::string& mode) {
 	return BlendingMode_Translucent;
     }
 
-    // alpha to coverage: no blending, the pass's ALPHATOCOVERAGE combo cuts the alpha (parsePass)
+    // alpha to coverage: no blending, the alpha gives the coverage (the pass's ALPHATOCOVERAGE combo also sharpens
+    // it, parsePass). Its own mode: a layer with effects hands it to its last pass, whose shader has no combo
     if (mode == "alphatocoverage") {
-	return BlendingMode_Normal;
+	return BlendingMode_AlphaToCoverage;
     }
 
     sLog.error ("Unknown blending mode: ", mode, " defaulting to normal");

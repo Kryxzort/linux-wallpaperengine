@@ -179,6 +179,15 @@ void CPass::setupRenderFramebuffer () const {
 	    glEnable (GL_BLEND);
 	    glBlendFuncSeparate (GL_ONE, GL_ZERO, GL_ONE, GL_ZERO);
 	    break;
+	case BlendingMode_AlphaToCoverage:
+	    // WE: no blending, AlphaToCoverageEnable (its blend states, GH 0x14009ac30), into an MSAA target (the
+	    // owner's x8): a pixel keeps its alpha's share of the samples. Our targets have one sample, so that share
+	    // is an alpha blend. A shader with the ALPHATOCOVERAGE combo has already sharpened (or, on GLSL, cut) the
+	    // alpha; an effect's last pass that took the layer's blending hasn't, so its transparent pixels stay
+	    // transparent (3354740764's dog: before, drawn unblended, the layer's box was opaque black)
+	    glEnable (GL_BLEND);
+	    glBlendFuncSeparate (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	    break;
 	default:
 	    glDisable (GL_BLEND);
 	    break;
