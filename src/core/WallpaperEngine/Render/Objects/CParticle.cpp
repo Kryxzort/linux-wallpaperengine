@@ -2539,9 +2539,11 @@ void CParticle::updateOrientation () {
     //                perpendicular to F
     //   upright (1): U = world y (bit 0) or the system's `axis` in the world; R = view forward × U; F = R × U
     //   fixed (2):   F = `axis`, U = its in-plane up — as given (bit 0) or the system's own, in the world
-    // LWE's particle space is WE's with y flipped (M_lwe = Fy·M_we·Fy, `updateMatrices`), and its sprites take
-    // (1,0,0)/(0,1,0)/(0,0,1) for WE's identity: R and F go across with Fy, U with −Fy, so with no rotation every
-    // mode is the identity LWE always drew
+    // LWE's particle space is WE's with y flipped (M_lwe = Fy·M_we·Fy, `updateMatrices`): R, U and F all go across
+    // with Fy, so WE's identity is (1,0,0)/(0,−1,0)/(0,0,1) here. The sprite's v = 0 (the texture's first row) is at
+    // +U (common_particles.h ComputeParticlePosition), so it sits at the top on screen, as in WE, and a sprite's
+    // own z rotation turns the way WE's does. (LWE drew U = (0,1,0): every sprite upside down, its rotation
+    // mirrored — 3354740764's and 1726902114's light shafts lit from below, tilted the other way)
     if (m_particle.renderers.empty () || m_particle.renderers[0].name != "sprite") {
 	// the trail and rope renderers have parsers of their own (not read): LWE's identity, as before
 	m_orientationRight = glm::vec3 (1.0f, 0.0f, 0.0f);
@@ -2592,7 +2594,7 @@ void CParticle::updateOrientation () {
     right = unit (right, glm::vec3 (1.0f, 0.0f, 0.0f));
 
     m_orientationRight = fy * right;
-    m_orientationUp = -(fy * up);
+    m_orientationUp = fy * up;
     m_orientationForward = fy * forward;
 }
 
