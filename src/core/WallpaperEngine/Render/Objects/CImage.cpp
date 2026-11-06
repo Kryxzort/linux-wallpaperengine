@@ -1255,7 +1255,8 @@ void CImage::setup () {
     // (genericimage2/3); the renderer then adds FOG_DIST / FOG_HEIGHT to a draw whose FOG combo is on, from the scene's
     // fog. 3477054430's moon, 180 units out with fog from 6.5 to 500, is 12 % darker that way in WE. Ours: only the
     // layers that end up fogged (world-placed, material FOG on) take the extra pass; the blend-mode-only one stays
-    // genericimage3's (no library scene with fog has a layer whose material turns FOG off)
+    // genericimage3's (no library scene with fog has a layer whose material turns FOG off). Either way the base pass
+    // draws with the colour (1, 1, 1, 1), below
     const int colorBlendMode = this->m_image.colorBlendMode->value->getInt ();
     const bool blendPass = colorBlendMode > 0 && colorBlendMode != 31;
     const auto& fog = this->getScene ().getScene ().fog;
@@ -1305,8 +1306,9 @@ void CImage::setup () {
 
 	// WE draws a flag-0x10 layer's base and effects with the context colour (1, 1, 1, 1) and sets the layer's colour
 	// and alpha (GH 0x1402321d0) for this last draw only (GH 0x140214b50), so they apply once. 3276522107's lit train
-	// (alpha keyframed 0 … 0.3 … 1) flickers as in WE that way; with both draws taking them its 0.3 frames were 0.09
-	if (fogPass && !this->m_hasPuppetMesh) {
+	// (alpha keyframed 0 … 0.3 … 1) flickers as in WE that way; with both draws taking them its 0.3 frames were 0.09.
+	// The same for a colour blend mode's draw: 2371103399's two blend-mode-7 layers at alpha 0.3 came out at 128 where WE has 143
+	if (!this->m_hasPuppetMesh) {
 	    this->m_passes.front ()->addUniform ("g_Color4", &UNIT_COLOR4);
 	}
 
