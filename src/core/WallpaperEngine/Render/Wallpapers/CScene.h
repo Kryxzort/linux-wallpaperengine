@@ -8,6 +8,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <random>
 
 namespace WallpaperEngine::Scripting {
@@ -97,6 +98,13 @@ public:
     [[nodiscard]] std::optional<int> drawingOwnerOf (const Object& object) const;
     /** Whether a passthrough layer draws objects of its own (it has a descendant whose compose owner it is) */
     [[nodiscard]] bool composesChildren (const Object& image) const;
+    /**
+     * Whether some object names this one in its `dependencies` (itself included): the scene load (GH 0x1401b7xxx, in
+     * the loader after the parents are linked) gathers every object's dependency ids and sets image flags 0x1010 on
+     * each image or text among them, so it draws through its composite with a last draw and
+     * `_rt_imageLayerComposite_<id>_a` holds its picture for the layer that reads it
+     */
+    [[nodiscard]] bool isDependency (int id) const;
     /** The FBO an object draws its last pass into: its compose layer's group target, or the scene's */
     [[nodiscard]] std::shared_ptr<const CFBO> getTargetFor (const Object& object) const;
     /**
@@ -285,6 +293,8 @@ private:
     int m_healthFrames = 0;
     /** composeOwnerOf, by object id (built on first use from the scene data) */
     mutable std::map<int, std::optional<int>> m_composeOwners = {};
+    /** isDependency's ids, gathered on first use */
+    mutable std::optional<std::set<int>> m_dependencyIds = std::nullopt;
     mutable bool m_composeOwnersBuilt = false;
     std::map<int, std::shared_ptr<CFBO>> m_composeTargets = {};
     glm::vec2 m_mousePosition = {};

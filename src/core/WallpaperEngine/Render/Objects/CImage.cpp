@@ -1275,7 +1275,12 @@ void CImage::setup () {
 	}
 	fogPass = fogCombo != 0;
     }
-    if (!debug.baseOnly && !isShape && (blendPass || fogPass)) {
+    // a layer another object names in its `dependencies` takes flag 0x10 too (CScene::isDependency), so its
+    // `_rt_imageLayerComposite_<id>_a` holds its picture: 3354740764's clouds (procedural_noise LAYERED) read the
+    // white 4 x 4 solid layer 51 that way. Ours drew it straight to the screen and the clouds read an empty composite
+    // (0 0 0 0), which set their noise's alpha a quarter lower: the dark clouds covered the bottom of the grass
+    const bool dependencyPass = !this->m_image.model->passthrough && this->getScene ().isDependency (this->getId ());
+    if (!debug.baseOnly && !isShape && (blendPass || fogPass || dependencyPass)) {
 	this->m_materials.colorBlending.material = MaterialParser::load (
 	    this->getScene ().getScene ().project,
 	    fogPass ? "materials/util/effectpassthrough_4.json" : "materials/util/effectpassthrough.json"

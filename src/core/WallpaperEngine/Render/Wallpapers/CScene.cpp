@@ -1014,6 +1014,18 @@ bool CScene::composesChildren (const Object& image) const {
     });
 }
 
+bool CScene::isDependency (int id) const {
+    if (!this->m_dependencyIds.has_value ()) {
+	std::set<int> ids;
+	for (const auto& object : this->getScene ().objects) {
+	    ids.insert (object->dependencies.begin (), object->dependencies.end ());
+	}
+	this->m_dependencyIds = std::move (ids);
+    }
+
+    return this->m_dependencyIds->contains (id);
+}
+
 std::optional<int> CScene::drawingOwnerOf (const Object& object) const {
     const auto owner = this->composeOwnerOf (object);
 
