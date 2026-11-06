@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 
 #include "Directory.h"
 
@@ -9,12 +10,30 @@
 using namespace WallpaperEngine::FileSystem;
 using namespace WallpaperEngine::FileSystem::Adapters;
 
-ReadStreamSharedPtr DirectoryAdapter::open (const std::filesystem::path& path) const {
-    auto finalpath = std::filesystem::canonical (this->basepath / path);
+namespace {
+// a path inside the mount by its name: no `..` out of it. Its files may be symlinks to anywhere (a farm of links, as
+// a private copy of a Workshop item is built), and open where they point, as WE's do on Windows; resolving them
+// first (std::filesystem::canonical) and then asking whether that is under the mount refused every linked file
+std::optional<std::filesystem::path> inside (const std::filesystem::path& base, const std::filesystem::path& path) {
+    const auto full = (base / path).lexically_normal ();
+    const auto relative = full.lexically_relative (base);
 
-    if (finalpath.string ().find (this->basepath.string ()) != 0) {
+    if (relative.empty () || *relative.begin () == "..") {
+	return std::nullopt;
+    }
+
+    return full;
+}
+} // namespace
+
+ReadStreamSharedPtr DirectoryAdapter::open (const std::filesystem::path& path) const {
+    const auto named = inside (this->basepath, path);
+
+    if (!named.has_value ()) {
 	throw std::filesystem::filesystem_error ("Cannot find file", path, std::error_code ());
     }
+
+    const auto finalpath = std::filesystem::canonical (*named);
 
     const auto status = std::filesystem::status (finalpath);
 
@@ -31,11 +50,13 @@ ReadStreamSharedPtr DirectoryAdapter::open (const std::filesystem::path& path) c
 
 bool DirectoryAdapter::exists (const std::filesystem::path& path) const {
     try {
-	const auto finalpath = std::filesystem::canonical (this->basepath / path);
+	const auto named = inside (this->basepath, path);
 
-	if (finalpath.string ().find (this->basepath.string ()) != 0) {
+	if (!named.has_value ()) {
 	    return false;
 	}
+
+	const auto finalpath = std::filesystem::canonical (*named);
 
 	const auto status = std::filesystem::status (finalpath);
 
@@ -103,13 +124,13 @@ std::optional<std::filesystem::path> DirectoryAdapter::findIgnoringCase (const s
 }
 
 std::filesystem::path DirectoryAdapter::physicalPath (const std::filesystem::path& path) const {
-    auto finalpath = std::filesystem::canonical (this->basepath / path);
+    const auto named = inside (this->basepath, path);
 
-    if (finalpath.string ().find (this->basepath.string ()) != 0) {
+    if (!named.has_value ()) {
 	throw std::filesystem::filesystem_error ("Cannot find file", path, std::error_code ());
     }
 
-    return finalpath;
+    return std::filesystem::canonical (*named);
 }
 
 bool DirectoryFactory::handlesMountpoint (const std::filesystem::path& path) const {
