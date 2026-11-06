@@ -523,7 +523,14 @@ const glm::vec3& CModelMesh::getCompositeColor () const { return this->m_white; 
 
 // a script reaches a model layer (thisScene.getLayer, createLayer's result) as any layer: its object's transform
 CModel::CModel (Wallpapers::CScene& scene, const MeshObject& object) :
-    CObject (scene, object), Scripting::ScriptableObject (scene, object), m_object (object) { }
+    CObject (scene, object), Scripting::ScriptableObject (scene, object), m_object (object) {
+    // a model's scale / angles / visible are the values it draws with (CScene::localMatrixOf, isEffectivelyVisible):
+    // scripts on them run as an image's do (3477054430's head turns by an angles script, 3509243656's stars spin and
+    // size by angles / scale scripts; both stood still)
+    this->registerProperty ("scale", *object.groupScale->value);
+    this->registerProperty ("angles", *object.groupAngles->value);
+    this->registerProperty ("visible", *object.groupVisible->value);
+}
 
 CModel::~CModel () = default;
 
