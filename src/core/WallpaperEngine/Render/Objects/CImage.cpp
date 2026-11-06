@@ -5,6 +5,7 @@
 #undef GLM_ENABLE_EXPERIMENTAL
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 
 #include "CRenderable.h"
@@ -29,6 +30,52 @@ using namespace WallpaperEngine::Data::Builders;
 using namespace WallpaperEngine::Data::Utils;
 
 namespace {
+/**
+ * The passes of `effect` that carry a simulation from frame to frame (CImage::m_simulation): the passes that write one
+ * of the effect's own FBOs, when some pass reads one of those FBOs before this frame wrote it (last frame's state — a
+ * ping-pong across frames, not within one) and none of them reads the layer's picture (`previous`, or texture 0 left
+ * unbound, which is the picture so far). cursorripple's apply_force and simulate_force are; its combine, which draws,
+ * is not. motionblur's accumulation reads `previous`, so it runs every frame as before
+ */
+std::set<const WallpaperEngine::Data::Model::EffectPass*> simulationPassesOf (const WallpaperEngine::Data::Model::Effect& effect) {
+    std::set<std::string> own;
+    for (const auto& fbo : effect.fbos) {
+	own.insert (fbo->name);
+    }
+    std::set<std::string> written;
+    std::set<const WallpaperEngine::Data::Model::EffectPass*> writers;
+    bool carries = false;
+    bool readsPicture = false;
+
+    for (const auto& pass : effect.passes) {
+	std::vector<std::string> reads;
+	for (const auto& [index, name] : pass->binds) {
+	    reads.push_back (name);
+	}
+	if (!pass->material.has_value () && pass->source.has_value ()) {
+	    reads.push_back (*pass->source);
+	}
+	for (const auto& name : reads) {
+	    if (own.contains (name) && !written.contains (name)) {
+		carries = true;
+	    }
+	}
+	if (!pass->target.has_value () || !own.contains (*pass->target)) {
+	    continue;
+	}
+	writers.insert (pass.get ());
+	written.insert (*pass->target);
+	const bool picture = std::ranges::any_of (reads, [] (const std::string& name) { return name == "previous"; })
+	    || (pass->material.has_value () && !pass->binds.contains (0));
+	readsPicture = readsPicture || picture;
+    }
+
+    if (!carries || readsPicture) {
+	return {};
+    }
+    return writers;
+}
+
 bool isMagentaNeonTint (const glm::vec3& color) { return color.r > 0.55f && color.g < 0.25f && color.b > 0.45f; }
 
 std::optional<glm::vec3> findMagentaCompositeTint (const Image& image, const std::vector<int>& skippedEffectIds) {
@@ -1048,6 +1095,12 @@ void CImage::setup () {
 		});
 	    }
 
+	    // a simulation (cursorripple): the effect's passes that write its own FBOs, when one of them reads an FBO of
+	    // the effect before this frame writes it (last frame's state) and none reads the layer's picture, run on
+	    // WE's frame rate (m_simulation)
+	    const auto simulation = simulationPassesOf (*cur->effect);
+	    std::vector<const CPass*> simulationPasses;
+
 	    // TODO: MAKE USE OF ZIP OPERATOR IN BOOST? WAY OVERKILL JUST FOR THIS...
 
 	    auto curEffect = cur->effect->passes.begin ();
@@ -1100,6 +1153,9 @@ void CImage::setup () {
 		    if ((*curEffect)->command == Command_Swap) {
 			this->m_passes.back ()->setSwap (*(*curEffect)->source, (*curEffect)->target.value ());
 		    }
+		    if (simulation.contains (curEffect->get ())) {
+			simulationPasses.push_back (this->m_passes.back ());
+		    }
 		} else {
 		    for (auto& pass : (*curEffect)->material.value ()->passes) {
 			const auto override = curOverride != endOverride
@@ -1112,6 +1168,9 @@ void CImage::setup () {
 			this->m_passes.push_back (
 			    new CPass (*this, fboProvider, *pass, override, (*curEffect)->binds, target)
 			);
+			if (simulation.contains (curEffect->get ())) {
+			    simulationPasses.push_back (this->m_passes.back ());
+			}
 		    }
 
 		    if (curOverride != endOverride) {
@@ -1134,6 +1193,17 @@ void CImage::setup () {
 		    delete this->m_passes.back ();
 		    this->m_passes.pop_back ();
 		}
+		simulationPasses.clear ();
+	    }
+
+	    // the simulation's passes read their clock's frame time and pointer (WE's, sampled when it steps)
+	    for (const auto* pass : simulationPasses) {
+		auto* writable = const_cast<CPass*> (pass);
+		writable->addUniform ("g_Frametime", &this->m_simulation.frametime);
+		writable->addUniform ("g_PointerPosition", &this->m_simulation.pointer);
+		writable->addUniform ("g_PointerPositionLast", &this->m_simulation.pointerLast);
+		writable->addUniform ("g_PointerState", &this->m_simulation.pointerState);
+		this->m_simulationPasses.push_back (pass);
 	    }
 
 	    // the passes just added are this effect's: they run only while it is visible
@@ -1578,6 +1648,9 @@ void CImage::render () {
     glPushDebugGroup (GL_DEBUG_SOURCE_APPLICATION, 0, -1, str.c_str ());
 #endif /* DEBUG */
 
+    // a simulation steps at WE's frame rate: between its steps its passes keep last step's state
+    this->advanceSimulationClock ();
+
     auto cur = this->m_activePasses.begin ();
 
     // the last draw keeps the scene's alpha (a compose layer that starts transparent takes this layer's as coverage)
@@ -1588,16 +1661,115 @@ void CImage::render () {
 	    glColorMask (true, true, true, !keepAlpha);
 	}
 
+	// a simulation's passes in a row run once per step of its clock (none on a frame between steps)
+	if (this->isSimulationPass (*cur)) {
+	    auto run = cur;
+	    while (std::next (run) != end && this->isSimulationPass (*std::next (run))) {
+		++run;
+	    }
+	    for (int step = 0; step < this->m_simulation.steps; step++) {
+		this->enterSimulationStep (step);
+		for (auto pass = cur; pass != std::next (run); ++pass) {
+		    (*pass)->render ();
+		}
+	    }
+	    cur = run;
+	    continue;
+	}
+
 	(*cur)->render ();
     }
 
     for (auto* swap : this->m_trailingSwaps) {
-	swap->render ();
+	if (!this->isSimulationPass (swap) || this->m_simulation.steps > 0) {
+	    swap->render ();
+	}
     }
 
 #if !NDEBUG
     glPopDebugGroup ();
 #endif /* DEBUG */
+}
+
+namespace {
+/** The most steps a simulation runs in one frame (a frame 1/8 s late at 240 Hz); a longer stall drops the rest */
+constexpr int kMaxSimulationSteps = 32;
+} // namespace
+
+void CImage::advanceSimulationClock () {
+    if (this->m_simulationPasses.empty ()) {
+	return;
+    }
+
+    auto& clock = this->m_simulation;
+    const auto& scene = this->getScene ();
+    const auto& context = scene.getContext ().getContext ();
+    const float now = context.renderTime;
+    const float rate = scene.getFrameRate ();
+    const glm::vec2 pointer = *scene.getMousePosition ();
+    const glm::vec4 state = *scene.getPointerState ();
+    const bool first = clock.seenTime < 0.0f;
+
+    // the same time again (paused, or drawn twice): nothing steps
+    if (!first && now == clock.seenTime) {
+	clock.steps = 0;
+	return;
+    }
+
+    const float dt = first ? context.frameTime : std::max (0.0f, now - clock.seenTime);
+    clock.seenTime = now;
+    clock.pressed = clock.pressed || state.z > 0.5f;
+
+    if (first) {
+	// WE's first frame: its last pointer is 0 0 (GH 0x1401acb91)
+	clock.from = *scene.getMousePositionLast ();
+    }
+    clock.to = pointer;
+
+    if (rate <= 0.0f) {
+	// no rate: a step per frame drawn, as every other pass
+	clock.steps = 1;
+	clock.frametime = dt;
+	return;
+    }
+
+    const float period = 1.0f / rate;
+    clock.phase += dt;
+    // a little slack: 8 frames of 1/240 s add up to 1/30 s give or take a float's rounding
+    clock.steps = std::min (kMaxSimulationSteps, static_cast<int> (std::floor ((clock.phase + 1e-4f) / period)));
+    clock.phase = std::max (0.0f, clock.phase - static_cast<float> (clock.steps) * period);
+    if (clock.phase >= period) {
+	clock.phase = 0.0f;
+    }
+    // the first frame always steps (WE draws it)
+    if (first && clock.steps == 0) {
+	clock.steps = 1;
+	clock.phase = 0.0f;
+    }
+    clock.frametime = period;
+}
+
+void CImage::enterSimulationStep (int step) {
+    auto& clock = this->m_simulation;
+    const auto& scene = this->getScene ();
+    const glm::vec4 state = *scene.getPointerState ();
+    const float n = static_cast<float> (std::max (1, clock.steps));
+
+    // WE samples the pointer once per frame and its g_PointerPositionLast is the pointer of its frame before (the scene
+    // tick copies ctx+0x8c to ctx+0x94 after drawing, GH 0x1401b1c0b): steps between this frame's and the last step's
+    // pointer move along the line between them
+    clock.pointerLast = glm::mix (clock.from, clock.to, static_cast<float> (step) / n);
+    clock.pointer = glm::mix (clock.from, clock.to, static_cast<float> (step + 1) / n);
+    clock.pointerState = glm::vec4 (state.x, state.y, clock.pressed && step == 0 ? 1.0f : 0.0f, state.w);
+
+    if (step + 1 == clock.steps) {
+	clock.from = clock.to;
+	clock.pressed = false;
+    }
+}
+
+bool CImage::isSimulationPass (const CPass* pass) const {
+    return std::find (this->m_simulationPasses.begin (), this->m_simulationPasses.end (), pass) != this->m_simulationPasses.end ();
 }
 
 const float& CImage::getBrightness () const { return this->m_image.brightness->value->getFloat (); }

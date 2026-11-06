@@ -202,6 +202,12 @@ WPENGINE_API void wp_project_set_mouse_input (wp_project* project, wp_mouse_inpu
     WPENGINE_PROJECT_API_END ();
 }
 
+WPENGINE_API void wp_project_set_frame_rate (wp_project* project, float hz) {
+    WPENGINE_PROJECT_API_BEGIN
+    static_cast<WallpaperEngine::Project*> (project)->setFrameRate (hz);
+    WPENGINE_PROJECT_API_END ();
+}
+
 WPENGINE_API void wp_project_describe (wp_project* project, wp_describe_callback* callback) {
     WPENGINE_PROJECT_API_BEGIN
     static_cast<WallpaperEngine::Project*> (project)->describe (callback);

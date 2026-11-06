@@ -37,6 +37,7 @@ public:
     int getHeight () const;
     void setOutputFramebuffer (GLuint newFramebuffer);
     void setMouseInput (wp_mouse_input* newMouseInput);
+    void setFrameRate (float hz);
     void hintSize (int width, int height);
     void render ();
 
@@ -82,6 +83,8 @@ protected:
     std::unique_ptr<CWallpaper> wallpaper;
     std::unique_ptr<RenderContext> renderContext;
     wp_mouse_input* mouse_input;
+    /** wp_project_set_frame_rate's, 0 until the host says */
+    float frameRate = 0.0f;
     Context& context;
     Properties::const_iterator property_it;
     wp_project_property* current_property;

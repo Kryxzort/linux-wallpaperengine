@@ -11,6 +11,8 @@
 #include "Render/Wallpapers/CWeb.h"
 #include "Scripting/ScriptEngine.h"
 
+#include <cmath>
+
 using namespace WallpaperEngine;
 
 Context* active_context = nullptr;
@@ -259,6 +261,14 @@ void WallpaperEngine::Project::setMouseInput (wp_mouse_input* newMouseInput) {
     }
 }
 
+void WallpaperEngine::Project::setFrameRate (float hz) {
+    this->frameRate = std::isfinite (hz) && hz > 0.0f ? hz : 0.0f;
+
+    if (this->wallpaper != nullptr) {
+	this->wallpaper->setFrameRate (this->frameRate);
+    }
+}
+
 void WallpaperEngine::Project::hintSize (int width, int height) {
     this->hintedWidth = width;
     this->hintedHeight = height;
@@ -290,6 +300,7 @@ void WallpaperEngine::Project::render () {
 	    throw;
 	}
 	this->wallpaper->setDestinationFramebuffer (this->framebuffer);
+	this->wallpaper->setFrameRate (this->frameRate);
 	// give hint about size to the wallpaper only if web
 	if (this->wallpaper->is<Wallpapers::CWeb> ()) {
 	    this->wallpaper->as<Wallpapers::CWeb> ()->setSize (this->hintedWidth, this->hintedHeight);

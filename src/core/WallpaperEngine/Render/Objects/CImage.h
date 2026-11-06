@@ -288,6 +288,42 @@ private:
     int m_visibleEffects = 0;
     std::vector<MaterialPassUniquePtr> m_virtualPassess = {};
 
+    /**
+     * A simulation effect's clock (cursorripple): the passes that carry its state from frame to frame (they read one
+     * of the effect's FBOs before this frame writes it, and never the layer's picture) step at the frame rate the host
+     * means to draw at (wp_project_set_frame_rate: WE's fps setting), not once per frame actually drawn. Their shaders
+     * count per frame — a force per frame from the pointer's move that frame, scaled by the frame's time; a decay of at
+     * least 1/255 per frame in an rgba8888 buffer — so in WE the water's strength depends on its fps, and a frame that
+     * came late (a throttled scene) pushed several frames' worth of force at once. A late frame runs several steps, an
+     * early one none; the passes that draw the effect's picture run every frame. No rate set: one step per frame
+     */
+    struct SimulationClock {
+	/** the host's renderTime the clock last saw (a frame drawn twice at one time steps once) */
+	float seenTime = -1.0f;
+	/** time towards the next step */
+	float phase = 0.0f;
+	/** steps this frame */
+	int steps = 0;
+	/** where the pointer was at the last step, and the frame's, for the steps between */
+	glm::vec2 from = {};
+	glm::vec2 to = {};
+	/** a press seen on a frame without a step (WE's z marks the press on the frame that reads it) */
+	bool pressed = false;
+	/** the stepping passes' g_Frametime, g_PointerPosition, g_PointerPositionLast, g_PointerState for the step */
+	float frametime = 0.0f;
+	glm::vec2 pointer = {};
+	glm::vec2 pointerLast = {};
+	glm::vec4 pointerState = {};
+    };
+    SimulationClock m_simulation;
+    /** The m_passes on m_simulation's clock */
+    std::vector<const Effects::CPass*> m_simulationPasses = {};
+    /** Brings m_simulation to this frame: how many steps the stepping passes run */
+    void advanceSimulationClock ();
+    /** Sets the stepping passes' uniforms for step `step` (0-based) of this frame's m_simulation.steps */
+    void enterSimulationStep (int step);
+    [[nodiscard]] bool isSimulationPass (const Effects::CPass* pass) const;
+
     glm::vec4 m_pos = {};
     glm::vec3 m_sceneCenter = {};
     glm::vec3 m_scenePivot = {};

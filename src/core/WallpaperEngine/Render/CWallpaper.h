@@ -97,6 +97,9 @@ public:
      * @param newMouseInput The new mouse input to use for this wallpaper
      */
     void setMouseInputHandler (wp_mouse_input* newMouseInput);
+    /** The rate the host means to draw at (wp_project_set_frame_rate; 0: unknown): a simulation effect steps at it */
+    void setFrameRate (float hz) { this->m_frameRate = hz; }
+    [[nodiscard]] float getFrameRate () const { return this->m_frameRate; }
 
     /**
      * Updates the destination framebuffer for this wallpaper
@@ -188,5 +191,6 @@ private:
     AudioContext& m_audioContext;
     /** Current Wallpaper state */
     wp_mouse_input* m_mouseInput;
+    float m_frameRate = 0.0f;
 };
 } // namespace WallpaperEngine::Render

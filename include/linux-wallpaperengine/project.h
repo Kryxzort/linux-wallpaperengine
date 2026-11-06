@@ -436,6 +436,18 @@ WPENGINE_API void wp_project_set_output_framebuffer (wp_project* project, unsign
 WPENGINE_API void wp_project_set_mouse_input (wp_project* project, wp_mouse_input* mouse_input);
 
 /**
+ * The frame rate the host means to draw the project at (Wallpaper Engine's fps setting; the rate before any
+ * throttling). A simulation effect — passes that carry state in the effect's own FBOs from frame to frame, as
+ * cursorripple's — steps at it: a frame that comes late runs several steps, one that comes early none, so the
+ * simulation behaves as in WE at that fps whatever rate the frames actually arrive at. 0 (the default) steps once
+ * per frame drawn. Can be called before or after the first frame, and again when the rate changes
+ *
+ * @param project The project
+ * @param hz The rate in frames per second, 0 for none
+ */
+WPENGINE_API void wp_project_set_frame_rate (wp_project* project, float hz);
+
+/**
  * Provides a textual representation of the project and it's elements, useful for debugging
  *
  * @param project
