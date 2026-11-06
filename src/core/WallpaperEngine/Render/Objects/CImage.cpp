@@ -30,6 +30,11 @@ using namespace WallpaperEngine::Data::Builders;
 using namespace WallpaperEngine::Data::Utils;
 
 namespace {
+/** the context colour WE draws a flag-0x10 layer's base with (GH 0x140214b50) */
+const glm::vec4 UNIT_COLOR4 (1.0f);
+} // namespace
+
+namespace {
 /**
  * The passes of `effect` that carry a simulation from frame to frame (CImage::m_simulation): the passes that write one
  * of the effect's own FBOs, when some pass reads one of those FBOs before this frame wrote it (last frame's state — a
@@ -1241,23 +1246,86 @@ void CImage::setup () {
     // extra render pass if there's any blending to be done. Mode 31 (A + B·opacity) is plain additive blending in WE:
     // no BLENDMODE pass, and the layer's last draw blends additively (GH 0x140214b50, 0x1402321d0; the BLENDMODE combo
     // is 0 for modes 0 and 31, GH 0x140211f90)
+    //
+    // Fog on a 3D scene's layers (GH 0x140230ec0, 0x1401d2a20): in a scene with distance or height fog every layer
+    // gets image flag 0x10 (GH 0x140212f90 sets it for a colour blend mode, flag 0x100 or the scene's fog bits
+    // 0x1800000), so its base and all its effects draw off screen and a last `effectpassthrough_4` (genericimage4)
+    // draw puts it into the world, its material override carrying BLENDMODE, FOG_COMPUTED and the layer material's
+    // depth test and write. FOG_COMPUTED is dropped when the layer's own material shader has FOG off or none
+    // (genericimage2/3); the renderer then adds FOG_DIST / FOG_HEIGHT to a draw whose FOG combo is on, from the scene's
+    // fog. 3477054430's moon, 180 units out with fog from 6.5 to 500, is 12 % darker that way in WE. Ours: only the
+    // layers that end up fogged (world-placed, material FOG on) take the extra pass; the blend-mode-only one stays
+    // genericimage3's (no library scene with fog has a layer whose material turns FOG off)
     const int colorBlendMode = this->m_image.colorBlendMode->value->getInt ();
-    if (!debug.baseOnly && !isShape && colorBlendMode > 0 && colorBlendMode != 31) {
-	this->m_materials.colorBlending.material
-	    = MaterialParser::load (this->getScene ().getScene ().project, "materials/util/effectpassthrough.json");
+    const bool blendPass = colorBlendMode > 0 && colorBlendMode != 31;
+    const auto& fog = this->getScene ().getScene ().fog;
+    bool fogPass = false;
+    if (!debug.baseOnly && !isShape && (fog.distance || fog.height) && this->isWorldPlaced () && !this->m_passes.empty ()
+	&& this->m_passes.front ()->getShader () != nullptr) {
+	// the layer's material shader's FOG: its pass combos, else the [COMBO] default the shader declares
+	const auto* shader = this->m_passes.front ()->getShader ();
+	int fogCombo = 0;
+	if (const auto it = shader->getCombos ().find ("FOG"); it != shader->getCombos ().end ()) {
+	    fogCombo = it->second;
+	} else if (const auto& f = shader->getFragment ().getDiscoveredCombos (); f.contains ("FOG")) {
+	    fogCombo = f.at ("FOG");
+	} else if (const auto& v = shader->getVertex ().getDiscoveredCombos (); v.contains ("FOG")) {
+	    fogCombo = v.at ("FOG");
+	}
+	fogPass = fogCombo != 0;
+    }
+    if (!debug.baseOnly && !isShape && (blendPass || fogPass)) {
+	this->m_materials.colorBlending.material = MaterialParser::load (
+	    this->getScene ().getScene ().project,
+	    fogPass ? "materials/util/effectpassthrough_4.json" : "materials/util/effectpassthrough.json"
+	);
 	this->m_materials.colorBlending.override = std::make_unique<ImageEffectPassOverride> (ImageEffectPassOverride {
             .id = -1,
             .combos = {
-                {"BLENDMODE", this->m_image.colorBlendMode->value->getInt()},
+                {"BLENDMODE", blendPass ? colorBlendMode : 0},
             },
             .constants = {},
             .textures = {},
         });
 
+	auto& passthrough = **this->m_materials.colorBlending.material->passes.begin ();
+	if (fogPass) {
+	    auto& combos = this->m_materials.colorBlending.override->combos;
+	    combos.insert_or_assign ("FOG_COMPUTED", 1);
+	    if (fog.distance) {
+		combos.insert_or_assign ("FOG_DIST", 1);
+	    }
+	    if (fog.height) {
+		combos.insert_or_assign ("FOG_HEIGHT", 1);
+	    }
+	    const auto& base = *this->getImage ().model->material->passes.front ();
+	    passthrough.depthtest = base.depthtest;
+	    passthrough.depthwrite = base.depthwrite;
+	}
+
+	// WE draws a flag-0x10 layer's base and effects with the context colour (1, 1, 1, 1) and sets the layer's colour
+	// and alpha (GH 0x1402321d0) for this last draw only (GH 0x140214b50), so they apply once. 3276522107's lit train
+	// (alpha keyframed 0 … 0.3 … 1) flickers as in WE that way; with both draws taking them its 0.3 frames were 0.09
+	if (fogPass && !this->m_hasPuppetMesh) {
+	    this->m_passes.front ()->addUniform ("g_Color4", &UNIT_COLOR4);
+	}
+
 	this->m_passes.push_back (new CPass (
-	    *this, std::make_shared<FBOProvider> (this), **this->m_materials.colorBlending.material->passes.begin (),
-	    *this->m_materials.colorBlending.override, std::nullopt, std::nullopt
+	    *this, std::make_shared<FBOProvider> (this), passthrough, *this->m_materials.colorBlending.override,
+	    std::nullopt, std::nullopt
 	));
+
+	if (fogPass) {
+	    // genericimage4.vert: v_ViewDir = g_EyePosition − (the quad · g_ModelMatrix), the quad in the layer's own
+	    // pixels and g_ModelMatrix its world matrix (setupPasses), both in WE's world
+	    auto* pass = this->m_passes.back ();
+	    this->m_fogPass = pass;
+	    pass->addUniform ("g_EyePosition", &this->getScene ().getCamera ().getWorldEye ());
+	    pass->addUniform ("g_FogDistanceParams", &fog.distanceParams);
+	    pass->addUniform ("g_FogHeightParams", &fog.heightParams);
+	    pass->addUniform ("g_FogDistanceColor", &fog.distanceColor);
+	    pass->addUniform ("g_FogHeightColor", &fog.heightColor);
+	}
     }
 
     // passes not added by an effect (the base material, the tint and colour-blend passes) always run
@@ -1405,7 +1473,7 @@ void CImage::setupPasses () {
 	first = false;
 
 
-	pass->setModelMatrix (&this->m_modelMatrix);
+	pass->setModelMatrix (pass == this->m_fogPass ? &this->m_layerModelMatrix : &this->m_modelMatrix);
 	pass->setLayerModelMatrix (&this->m_layerModelMatrix);
 	pass->setViewProjectionMatrix (&this->m_viewProjectionMatrix);
 

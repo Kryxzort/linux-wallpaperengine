@@ -283,6 +283,8 @@ private:
     /** the `command: swap` passes after the last draw (the fluid simulation's ping-pong): run after it, so the draw
      *  before them is the one that reaches the scene */
     std::vector<Effects::CPass*> m_trailingSwaps = {};
+    /** the last draw that puts a fogged layer into a 3D scene (effectpassthrough_4 with FOG_COMPUTED), or null */
+    Effects::CPass* m_fogPass = nullptr;
     /** Per built effect, its `visible` when m_activePasses was set up */
     std::vector<bool> m_effectVisibility = {};
     int m_visibleEffects = 0;
