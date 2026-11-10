@@ -55,6 +55,11 @@ public:
     void setViewProjectionMatrix (const glm::mat4* viewProjection);
     void setBlendingMode (BlendingMode blendingmode);
     [[nodiscard]] BlendingMode getBlendingMode () const;
+    /** The depth test and write this pass draws with instead of its material's (a world-placed layer's last effect
+     *  draw takes the layer material's); nullopt = the material's */
+    void setDepthModes (std::optional<DepthtestMode> depthtest, std::optional<DepthwriteMode> depthwrite);
+    [[nodiscard]] DepthtestMode getDepthtest () const;
+    [[nodiscard]] DepthwriteMode getDepthwrite () const;
     [[nodiscard]] std::shared_ptr<const CFBO> resolveFBO (const std::string& name) const;
     /** A usertexture's texture: the value of the scenetexture property it names (none picked: nullopt), else itself */
     [[nodiscard]] std::optional<std::string> userTextureName (const std::string& name) const;
@@ -197,6 +202,8 @@ private:
     CRenderable& m_renderable;
     std::shared_ptr<const FBOProvider> m_fboProvider;
     const MaterialPass& m_pass;
+    std::optional<DepthtestMode> m_depthtestOverride;
+    std::optional<DepthwriteMode> m_depthwriteOverride;
     const TextureMap& m_binds;
     const ImageEffectPassOverride& m_override;
     std::optional<std::reference_wrapper<std::string>> m_target;

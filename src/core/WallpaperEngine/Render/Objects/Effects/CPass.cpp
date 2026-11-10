@@ -193,7 +193,7 @@ void CPass::setupRenderFramebuffer () const {
 	    break;
     }
 
-    switch (this->m_pass.depthtest) {
+    switch (this->getDepthtest ()) {
 	case DepthtestMode_Enabled:
 	    glEnable (GL_DEPTH_TEST);
 	    glDepthFunc (GL_LEQUAL);
@@ -215,7 +215,7 @@ void CPass::setupRenderFramebuffer () const {
 	    break;
     }
 
-    switch (this->m_pass.depthwrite) {
+    switch (this->getDepthwrite ()) {
 	case DepthwriteMode_Enabled:
 	    glDepthMask (true);
 	    break;
@@ -659,6 +659,15 @@ void CPass::setViewProjectionMatrix (const glm::mat4* viewProjection) { this->m_
 void CPass::setBlendingMode (BlendingMode blendingmode) { this->m_blendingmode = blendingmode; }
 
 BlendingMode CPass::getBlendingMode () const { return this->m_blendingmode; }
+
+void CPass::setDepthModes (std::optional<DepthtestMode> depthtest, std::optional<DepthwriteMode> depthwrite) {
+    this->m_depthtestOverride = depthtest;
+    this->m_depthwriteOverride = depthwrite;
+}
+
+DepthtestMode CPass::getDepthtest () const { return this->m_depthtestOverride.value_or (this->m_pass.depthtest); }
+
+DepthwriteMode CPass::getDepthwrite () const { return this->m_depthwriteOverride.value_or (this->m_pass.depthwrite); }
 
 void CPass::setTexCoord (GLuint texcoord) { this->a_TexCoord = texcoord; }
 

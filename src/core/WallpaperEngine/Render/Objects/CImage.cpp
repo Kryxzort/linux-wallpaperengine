@@ -1413,8 +1413,9 @@ void CImage::updateActivePasses () {
 	    this->m_visibleEffects += visible ? 1 : 0;
 	}
 
-	// every pass back to the blending it was built with
+	// every pass back to the blending it was built with, and to its material's depth test and write
 	this->m_passes[i]->setBlendingMode (this->m_passBlending[i]);
+	this->m_passes[i]->setDepthModes (std::nullopt, std::nullopt);
 
 	if (visible) {
 	    this->m_activePasses.push_back (this->m_passes[i]);
@@ -1472,6 +1473,17 @@ void CImage::updateActivePasses () {
 
 	last->setBlendingMode (first->getBlendingMode ());
 	first->setBlendingMode (BlendingMode_Normal);
+
+	// a layer placed in a 3D world draws its effects' output into the world with the layer material's depth test
+	// and write, as the material would itself (an effect's material has both disabled: it draws into an FBO). As
+	// WE's own last draw of a fogged layer takes them (GH 0x140230ec0, the passthrough above); measured on
+	// 3509243656, whose star spikes (`sa3`: translucent, depth tested, a pulse effect) sit at each star's centre: in
+	// WE the star sphere hides the spikes' middle (its core 185 159 128 without bloom, a private seeded copy); ours
+	// drew the pulse's output over the sphere (112 91 87), and with the effect taken off (the material's own depth
+	// test) 183 156 131
+	if (this->isWorldPlaced ()) {
+	    last->setDepthModes (first->getDepthtest (), first->getDepthwrite ());
+	}
     }
 
     // a shape's last pass draws additively (GH 0x1402176a0 calls the shape's vtable +0x108, GH 0x1402866d0, which sets
