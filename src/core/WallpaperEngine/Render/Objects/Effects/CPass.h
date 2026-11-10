@@ -38,6 +38,9 @@ public:
 
     void setDestination (std::shared_ptr<const CFBO> drawTo);
     void setInput (std::shared_ptr<const TextureProvider> input);
+    /** g_Texture0 is the input even where the material names a texture (a puppet's material drawing its mesh from
+     *  the effects' output, CImage::m_puppetEffectsOnImage) */
+    void setInputIsTexture0 (bool inputIsTexture0);
     void setPreviousInput (std::shared_ptr<const TextureProvider> input);
     /** Replaces what texture unit `index` samples (a compose layer's base pass reads its group target) */
     void setTexture (int index, std::shared_ptr<const TextureProvider> texture);
@@ -225,6 +228,7 @@ private:
     /** samplerIsUsed, by unit */
     mutable std::map<int, bool> m_samplerUsed = {};
     std::shared_ptr<const TextureProvider> m_input = nullptr;
+    bool m_inputIsTexture0 = false;
     std::shared_ptr<const TextureProvider> m_previousInput = nullptr;
     glm::vec4 m_texture0Resolution = {};
     /** g_Texture<n>Texel per bound texture (std::map: the uniforms point at its nodes) */

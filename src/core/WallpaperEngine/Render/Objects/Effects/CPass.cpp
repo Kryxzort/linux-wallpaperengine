@@ -259,7 +259,7 @@ std::shared_ptr<const TextureProvider> CPass::resolveTexture0 () {
     auto texture0 = this->resolveTexture (this->m_input, 0, this->m_input);
     const auto it = this->m_textures.find (0);
 
-    if (it == this->m_textures.end ()) {
+    if (it == this->m_textures.end () || (this->m_inputIsTexture0 && texture0 != nullptr)) {
 	return texture0;
     }
 
@@ -365,6 +365,9 @@ void CPass::bindTextureUnit (int index, const std::shared_ptr<const TextureProvi
 
 void CPass::bindTextureOverrides (uint32_t currentTexture, std::shared_ptr<const TextureProvider>& texture0) const {
     for (auto [index, chain] : this->m_textures) {
+	if (index == 0 && this->m_inputIsTexture0 && texture0 != nullptr) {
+	    continue;
+	}
 	// find the expected texture
 	auto expectedTexture = chain->texture;
 
@@ -632,6 +635,8 @@ const CRenderable& CPass::getRenderable () const { return this->m_renderable; }
 void CPass::setDestination (std::shared_ptr<const CFBO> drawTo) { this->m_drawTo = std::move (drawTo); }
 
 void CPass::setInput (std::shared_ptr<const TextureProvider> input) { this->m_input = std::move (input); }
+
+void CPass::setInputIsTexture0 (bool inputIsTexture0) { this->m_inputIsTexture0 = inputIsTexture0; }
 
 void CPass::setPreviousInput (std::shared_ptr<const TextureProvider> input) {
     this->m_previousInput = std::move (input);

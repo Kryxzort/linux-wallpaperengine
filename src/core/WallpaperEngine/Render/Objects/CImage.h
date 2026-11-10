@@ -176,8 +176,9 @@ private:
     void updatePuppetPose ();
     /** autosize: the canvas grown (symmetrically) to hold the mesh in every frame of every animation */
     [[nodiscard]] glm::vec2 puppetCanvasSize (const glm::vec2& size) const;
-    /** `toScene`: the pass draws to the scene (no effects), with the mesh in the layer's scene rectangle */
-    void setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene) const;
+    /** `toScene`: the pass draws to the scene, with the mesh in the layer's scene rectangle; `fromComposite`: it reads
+     *  the layer's composite (the effects' output, the image over the whole FBO), not the texture */
+    void setupPuppetGeometryCallback (Effects::CPass* pass, bool toScene, bool fromComposite = false) const;
     void updatePuppetScenePositionBuffer ();
     /**
      * A shape (ImageData::shape): its quad's corners in the scene, this frame — the first effect's point0..point3
@@ -208,6 +209,12 @@ private:
     GLuint m_puppetSpacePosition = GL_NONE;
     GLuint m_puppetScenePosition = GL_NONE;
     GLuint m_puppetTexCoord = GL_NONE;
+    /** the mesh's texture coordinates on the layer's composite: the texture's over its copy limits (the image fills the
+     *  FBO) */
+    GLuint m_puppetCompositeTexCoord = GL_NONE;
+    /** a puppet with effects: the effects run on the image (texture space, as for a plain image), and the base pass
+     *  (the material, the only one that skins) draws the mesh last, from their output, into the scene */
+    bool m_puppetEffectsOnImage = false;
     GLuint m_puppetIndices = GL_NONE;
     GLsizei m_puppetIndexCount = 0;
     bool m_hasPuppetMesh = false;
