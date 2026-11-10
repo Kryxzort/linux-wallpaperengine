@@ -1206,15 +1206,65 @@ template <typename T> void CPass::addUniform (const std::string& name, UniformTy
     );
 }
 
+namespace {
+/** The GL type a ShaderVariable uploads as (0: none of the uniform types) */
+GLenum glTypeOf (const ShaderVariable* variable) {
+    if (variable->is<ShaderVariableFloat> ()) {
+	return GL_FLOAT;
+    }
+    if (variable->is<ShaderVariableInteger> ()) {
+	return GL_INT;
+    }
+    if (variable->is<ShaderVariableVector2> ()) {
+	return GL_FLOAT_VEC2;
+    }
+    if (variable->is<ShaderVariableVector3> ()) {
+	return GL_FLOAT_VEC3;
+    }
+    if (variable->is<ShaderVariableVector4> ()) {
+	return GL_FLOAT_VEC4;
+    }
+    return 0;
+}
+} // namespace
+
 void CPass::setupShaderVariables () {
+    // the types the linked program gives its uniforms. A shader's parameters are read from its source with every #if
+    // branch: the vertex and fragment shaders may declare one material constant with different types in opposite
+    // branches (stock clouds: `vec2 g_CloudSpeeds` in the vertex shader under PERSPECTIVE 0, `vec4` in the fragment
+    // shader under PERSPECTIVE 1). WE reads the declarations of the source it compiles; here the one whose type the
+    // program has is that one. The vertex one, found first, was uploaded as a vec2 into the vec4 (GL refused it: the
+    // speed stayed 0 and 2290002190's clouds stood still)
+    std::map<std::string, GLenum> types;
+    GLint count = 0;
+    glGetProgramiv (this->m_programID, GL_ACTIVE_UNIFORMS, &count);
+    for (GLint i = 0; i < count; i++) {
+	GLchar name[256];
+	GLsizei length = 0;
+	GLint size = 0;
+	GLenum type = 0;
+	glGetActiveUniform (this->m_programID, static_cast<GLuint> (i), sizeof (name), &length, &size, &type, name);
+	types.emplace (std::string (name, static_cast<size_t> (length)), type);
+    }
+    const auto compiled = [&types] (const ShaderVariable* variable) {
+	const auto it = types.find (variable->getName ());
+	return it == types.end () || glTypeOf (variable) == 0 || it->second == glTypeOf (variable);
+    };
+    const auto pick = [&compiled] (ShaderVariable* vertex, ShaderVariable* fragment) {
+	if (vertex != nullptr && fragment != nullptr && !compiled (vertex) && compiled (fragment)) {
+	    return fragment;
+	}
+	return vertex == nullptr ? fragment : vertex;
+    };
+
     for (const auto& cur : this->m_shader->getVertex ().getParameters ()) {
-	if (!this->m_uniforms.contains (cur->getName ())) {
+	if (!this->m_uniforms.contains (cur->getName ()) && compiled (cur)) {
 	    this->addUniform (cur);
 	}
     }
 
     for (const auto& cur : this->m_shader->getFragment ().getParameters ()) {
-	if (!this->m_uniforms.contains (cur->getName ())) {
+	if (!this->m_uniforms.contains (cur->getName ()) && compiled (cur)) {
 	    this->addUniform (cur);
 	}
     }
@@ -1227,8 +1277,7 @@ void CPass::setupShaderVariables () {
 	    continue;
 	}
 
-	ShaderVariable* var = vertex == nullptr ? fragment : vertex;
-	this->addUniform (var, value->value.get ());
+	this->addUniform (pick (vertex, fragment), value->value.get ());
     }
 
     // apply override constants (highest priority, overrides both defaults and pass constants)
@@ -1239,8 +1288,7 @@ void CPass::setupShaderVariables () {
 	    continue;
 	}
 
-	ShaderVariable* var = vertex == nullptr ? fragment : vertex;
-	this->addUniform (var, value->value.get ());
+	this->addUniform (pick (vertex, fragment), value->value.get ());
     }
 }
 
