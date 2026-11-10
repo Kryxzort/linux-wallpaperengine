@@ -799,6 +799,22 @@ void CScene::renderFrame () {
     glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // a text layer's script runs as it renders. Under transparentsorting the draw order isn't the scene's: the text
+    // scripts run first, in the scene's object order (3509243656's `userset` reads shared.xntime, which its `time`
+    // layer sets: listed first, drawn later). Inferred: WE runs a text's script in its update, not in the renderer's
+    // sorted passes
+    if (this->m_camera->isPerspective () && this->getScene ().transparentSorting) {
+	const std::vector<CObject*> objects = this->m_objectsByRenderOrder;
+	for (auto* cur : objects) {
+	    if (!this->m_destroyed.empty () && std::ranges::find (this->m_destroyed, cur) != this->m_destroyed.end ()) {
+		continue;
+	    }
+	    if (cur->is<Objects::CText> ()) {
+		cur->as<Objects::CText> ()->tickScript ();
+	    }
+	}
+    }
+
     // a copy: a text layer's script runs as it renders, and may create, destroy or sort layers
     const std::vector<DrawEntry> order = this->drawOrder ();
     for (const auto& [cur, pass] : order) {

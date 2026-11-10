@@ -159,7 +159,19 @@ void CText::initScriptLayer () {
     }
 }
 
+void CText::tickScript () {
+    if (this->m_layerHandle != Scripting::kInvalidLayerHandle) {
+	this->m_tickedText.reset ();
+	this->m_tickedText = this->currentText ();
+    }
+}
+
 std::string CText::currentText () {
+    if (this->m_tickedText.has_value ()) {
+	std::string text = std::move (*this->m_tickedText);
+	this->m_tickedText.reset ();
+	return text;
+    }
     if (this->m_layerHandle != Scripting::kInvalidLayerHandle) {
 	auto& se = this->getScene ().getScriptEngine ();
 	se.tickLayer (

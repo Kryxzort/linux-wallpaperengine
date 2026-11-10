@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,9 @@ public:
     [[nodiscard]] const std::string& getVerticalAlign () const;
     void setHorizontalAlign (const std::string& value);
     void setVerticalAlign (const std::string& value);
+    /** Runs the layer's text script now (a sorted 3D scene runs its scripts in the scene's object order before it
+     *  draws in the sorted order); the text is what render () then shows */
+    void tickScript ();
 
 private:
     /** Lays the text out again when it, its size or its layout settings changed; true when it did */
@@ -65,6 +69,8 @@ private:
 	glm::vec3 colour = glm::vec3 (-1.0f);
     } m_laidOut;
     Scripting::ScriptLayerHandle m_layerHandle = Scripting::kInvalidLayerHandle;
+    /** The text tickScript () got this frame, taken by the next render () */
+    std::optional<std::string> m_tickedText;
     bool m_hasFont = false;
     std::string m_horizontalAlign;
     std::string m_verticalAlign;
