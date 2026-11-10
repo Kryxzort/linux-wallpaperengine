@@ -1428,6 +1428,7 @@ void CImage::updateActivePasses () {
 	// every pass back to the blending it was built with, and to its material's depth test and write
 	this->m_passes[i]->setBlendingMode (this->m_passBlending[i]);
 	this->m_passes[i]->setDepthModes (std::nullopt, std::nullopt);
+	this->m_passes[i]->setTranslucentOverEmpty (false);
 
 	if (visible) {
 	    this->m_activePasses.push_back (this->m_passes[i]);
@@ -1496,6 +1497,16 @@ void CImage::updateActivePasses () {
 	if (this->isWorldPlaced ()) {
 	    last->setDepthModes (first->getDepthtest (), first->getDepthwrite ());
 	}
+    }
+
+    // a text layer with effects: WE's font pass draws the glyphs (colour, coverage × alpha) into the layer's cleared
+    // picture translucently, so the picture is colour × coverage·alpha with alpha (coverage·alpha)², and the effects'
+    // output is drawn with that alpha. Measured in WE (3042492564's clock, alpha 0.75, a pulse that keeps 0.84 of the
+    // colour without audio; private copies with the clock's text fixed): its brightest pixels sit at 0.36 of the way
+    // from the sea to the text's colour, α³ · 0.84 = 0.35; ours drew α · 0.84 = 0.63. At alpha 1, or without effects
+    // (the glyphs straight into the scene), WE and ours matched already. The base pass stands in for the font pass
+    if (this->m_image.is<Text> () && this->m_activePasses.size () > 1 && this->m_image.shape.empty ()) {
+	this->m_activePasses.front ()->setTranslucentOverEmpty (true);
     }
 
     // a shape's last pass draws additively (GH 0x1402176a0 calls the shape's vtable +0x108, GH 0x1402866d0, which sets

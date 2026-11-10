@@ -41,6 +41,9 @@ public:
     /** g_Texture0 is the input even where the material names a texture (a puppet's material drawing its mesh from
      *  the effects' output, CImage::m_puppetEffectsOnImage) */
     void setInputIsTexture0 (bool inputIsTexture0);
+    /** Draws as translucent blending over a cleared (transparent black) target: colour × alpha and alpha², whatever
+     *  was there (a text layer's base pass into its picture, as WE's font pass draws, CImage::updateActivePasses) */
+    void setTranslucentOverEmpty (bool overEmpty);
     void setPreviousInput (std::shared_ptr<const TextureProvider> input);
     /** Replaces what texture unit `index` samples (a compose layer's base pass reads its group target) */
     void setTexture (int index, std::shared_ptr<const TextureProvider> texture);
@@ -236,6 +239,7 @@ private:
     mutable std::map<int, bool> m_samplerUsed = {};
     std::shared_ptr<const TextureProvider> m_input = nullptr;
     bool m_inputIsTexture0 = false;
+    bool m_translucentOverEmpty = false;
     std::shared_ptr<const TextureProvider> m_previousInput = nullptr;
     glm::vec4 m_texture0Resolution = {};
     /** g_Texture<n>Texel per bound texture (std::map: the uniforms point at its nodes) */

@@ -166,7 +166,11 @@ void CPass::setupRenderFramebuffer () const {
     glViewport (0, 0, this->m_drawTo->getRealWidth (), this->m_drawTo->getRealHeight ());
 
     // set texture blending
-    switch (this->getBlendingMode ()) {
+    if (this->m_translucentOverEmpty) {
+	// translucent over transparent black, without clearing: src · srcA and srcA · srcA
+	glEnable (GL_BLEND);
+	glBlendFuncSeparate (GL_SRC_ALPHA, GL_ZERO, GL_SRC_ALPHA, GL_ZERO);
+    } else switch (this->getBlendingMode ()) {
 	case BlendingMode_Translucent:
 	    glEnable (GL_BLEND);
 	    glBlendFuncSeparate (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -637,6 +641,8 @@ void CPass::setDestination (std::shared_ptr<const CFBO> drawTo) { this->m_drawTo
 void CPass::setInput (std::shared_ptr<const TextureProvider> input) { this->m_input = std::move (input); }
 
 void CPass::setInputIsTexture0 (bool inputIsTexture0) { this->m_inputIsTexture0 = inputIsTexture0; }
+
+void CPass::setTranslucentOverEmpty (bool overEmpty) { this->m_translucentOverEmpty = overEmpty; }
 
 void CPass::setPreviousInput (std::shared_ptr<const TextureProvider> input) {
     this->m_previousInput = std::move (input);
