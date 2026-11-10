@@ -2278,9 +2278,57 @@ nlohmann::json CImage::healthLayer () const {
 }
 
 bool CImage::hitTest (const glm::vec2& world, glm::vec2& local) const {
-    // a layer in a 3D scene's world isn't hit-tested (the cursor would have to be cast into the world)
+    // a layer in a 3D scene's world: WE casts the cursor's ray into it (the hit test, GH 0x1401afbf0, calls
+    // GH 0x1401cb5d0): the layer's quad in the world (its world matrix · (±w/2, ±h/2)), and a ray–parallelogram test
+    // (GH 0x1401cafc0) from the corner (−w/2, −h/2) along x (u) and y (v): a hit has u and v in 0 … 1 and the ray's
+    // t ≥ 0, and the local position is (u · w, (1 − v) · h). Ours casts the ray through the frame's camera as
+    // input.cursorWorldPosition does (the near plane to the far one)
     if (this->isWorldPlaced ()) {
-	return false;
+	const auto& scene = this->getScene ();
+	const float sceneWidth = static_cast<float> (scene.getWidth ());
+	const float sceneHeight = static_cast<float> (scene.getHeight ());
+	if (sceneWidth <= 0.0f || sceneHeight <= 0.0f) {
+	    return false;
+	}
+	// the cursor normalised, y down (the scene's target is read top-down: GL clip y is flipped, as in InputObject)
+	const double nx = 2.0 * (world.x / sceneWidth) - 1.0;
+	const double ny = 2.0 * (1.0 - world.y / sceneHeight) - 1.0;
+	const glm::dmat4 inverse = glm::inverse (glm::dmat4 (scene.getCamera ().getWorldViewProjection ()));
+	const glm::dvec4 nearPoint = inverse * glm::dvec4 (nx, ny, -1.0, 1.0);
+	const glm::dvec4 farPoint = inverse * glm::dvec4 (nx, ny, 1.0, 1.0);
+	if (nearPoint.w == 0.0 || farPoint.w == 0.0) {
+	    return false;
+	}
+	const glm::dvec3 origin = glm::dvec3 (nearPoint) / nearPoint.w;
+	const glm::dvec3 direction = glm::dvec3 (farPoint) / farPoint.w - origin;
+
+	const glm::vec2 size = this->getSize ();
+	glm::vec2 centre (0.0f);
+	if (this->m_localOffset.has_value ()) {
+	    centre = *this->m_localOffset;
+	}
+	const glm::dmat4 model = glm::dmat4 (scene.worldMatrixOf (this->getImage ()));
+	const auto at = [&model] (float x, float y) { return glm::dvec3 (model * glm::dvec4 (x, y, 0.0, 1.0)); };
+	const glm::dvec3 corner = at (centre.x - size.x / 2.0f, centre.y - size.y / 2.0f);
+	const glm::dvec3 edgeU = at (centre.x + size.x / 2.0f, centre.y - size.y / 2.0f) - corner;
+	const glm::dvec3 edgeV = at (centre.x - size.x / 2.0f, centre.y + size.y / 2.0f) - corner;
+
+	// Möller–Trumbore over the parallelogram (GH 0x1401cafc0's determinant, u, v and t)
+	const glm::dvec3 p = glm::cross (direction, edgeV);
+	const double det = glm::dot (edgeU, p);
+	if (std::abs (det) < 1e-12) {
+	    return false;
+	}
+	const glm::dvec3 s = origin - corner;
+	const double u = glm::dot (s, p) / det;
+	const glm::dvec3 q = glm::cross (s, edgeU);
+	const double v = glm::dot (direction, q) / det;
+	const double t = glm::dot (edgeV, q) / det;
+	if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0 || t < 0.0) {
+	    return false;
+	}
+	local = glm::vec2 (static_cast<float> (u) * size.x, static_cast<float> (1.0 - v) * size.y);
+	return true;
     }
 
     const float sceneWidth = static_cast<float> (this->getScene ().getWidth ());
