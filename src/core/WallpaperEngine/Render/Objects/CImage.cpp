@@ -472,6 +472,17 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	this->m_puppetVertexMesh.clear ();
 	this->m_puppetShapes.clear ();
 	this->m_puppetShapeWeights.clear ();
+	// the mesh's uvs are the image's (0 - 1 over its width and height, as the puppet editor drew them on it), not
+	// the texture's: a texture padded past its image (3463520581's face: 852 x 726 in 896 x 768) takes them scaled
+	// to the image's part of it, as the layer's own quad does (uploadGeometryBuffers). Measured: the face's mesh
+	// covers every painted pixel with image uvs, 99.5 % with texture uvs, and WE's posed face sits 28, 16 px from
+	// ours drawn with texture uvs (the content shifted by uv · (texture - image) inside each piece)
+	glm::vec2 uvScale (1.0f);
+	if (const auto texture = this->getTexture (); texture != nullptr && texture->getTextureWidth (0) > 0
+	    && texture->getTextureHeight (0) > 0) {
+	    uvScale = { static_cast<float> (texture->getRealWidth ()) / static_cast<float> (texture->getTextureWidth (0)),
+			static_cast<float> (texture->getRealHeight ()) / static_cast<float> (texture->getTextureHeight (0)) };
+	}
 	for (size_t m = 0; m < this->m_puppet.meshes.size (); m++) {
 	    const auto& mesh = this->m_puppet.meshes[m];
 	    const auto base = static_cast<GLuint> (this->m_puppetVertices.size ());
@@ -479,7 +490,8 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 		this->m_puppetShapes.emplace_back (m, t);
 	    }
 	    this->m_puppetShapeWeights.emplace_back (mesh.morphs.size (), 0.0f);
-	    for (const auto& vertex : mesh.vertices) {
+	    for (auto vertex : mesh.vertices) {
+		vertex.uv *= uvScale;
 		this->m_puppetVertices.push_back (vertex);
 		this->m_puppetVertexMesh.push_back (static_cast<uint16_t> (m));
 		texcoords.push_back (vertex.uv.x);
