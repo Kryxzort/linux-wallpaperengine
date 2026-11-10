@@ -54,6 +54,9 @@ public:
     [[nodiscard]] const glm::mat4& getProjection () const;
     /** The view: the lookAt with the frame's adjustment (zoom, camera shake) applied in world space */
     [[nodiscard]] const glm::mat4& getLookAt () const;
+    /** The view without the frame's adjustment: where a full-screen layer draws (it covers the screen whatever the
+     *  zoom, shake or camera position) */
+    [[nodiscard]] const glm::mat4& getUnadjustedLookAt () const;
     /** Sets the frame's world-space view adjustment (CScene::updateCamera) */
     void setViewAdjust (const glm::mat4& adjust);
     /**

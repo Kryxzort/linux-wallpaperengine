@@ -29,6 +29,8 @@ const glm::mat4& Camera::getProjection () const { return this->m_projection; }
 
 const glm::mat4& Camera::getLookAt () const { return this->m_view; }
 
+const glm::mat4& Camera::getUnadjustedLookAt () const { return this->m_lookat; }
+
 void Camera::setViewAdjust (const glm::mat4& adjust) {
     this->m_adjust = adjust;
     this->m_view = this->m_lookat * adjust;

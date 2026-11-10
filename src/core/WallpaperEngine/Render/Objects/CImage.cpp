@@ -2132,8 +2132,15 @@ bool CImage::isPerspectiveLayer () const {
 glm::mat4 CImage::screenViewProjection () const {
     const auto& camera = this->getScene ().getCamera ();
 
-    // a 3D scene's screen layers keep the 2D layout over the scene's target
-    return camera.isPerspective () ? camera.getScreenProjection () : camera.getProjection () * camera.getLookAt ();
+    // a 3D scene's screen layers keep the 2D layout over the scene's target. A full-screen layer covers the target
+    // whatever the camera's zoom, shake and position: measured in WE on 3042492564 (its camera's zoom 0.73, a private
+    // copy with its `localcontrast` layer at strength 3), the effect changes pixels across the whole frame and at
+    // strength 0 none; ours drew its output into the zoomed 73 % rectangle, the frame shrunk into it
+    if (camera.isPerspective ()) {
+	return camera.getScreenProjection ();
+    }
+    return camera.getProjection ()
+	* (this->getImage ().model->fullscreen ? camera.getUnadjustedLookAt () : camera.getLookAt ());
 }
 
 void CImage::updateWorldPosition () {
