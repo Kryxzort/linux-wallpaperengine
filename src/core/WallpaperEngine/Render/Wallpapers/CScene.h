@@ -125,6 +125,17 @@ public:
     [[nodiscard]] glm::mat4 worldMatrixOf (const Object& object) const;
     /** Placed in a 3D scene's world (a model, a particle system, an image that isn't full-screen) */
     [[nodiscard]] bool drawsInWorld (const CObject& object) const;
+    /**
+     * Which of WE's two `transparentsorting` passes an object draws in (GH 0x1401b9b50, the renderer's +0x1414): All
+     * outside them, Opaque (the opaque objects in the render order), Translucent (the translucent ones sorted)
+     */
+    enum class DrawPass { All = 0, Opaque = 1, Translucent = 2 };
+    struct DrawEntry {
+	CObject* object;
+	DrawPass pass;
+    };
+    /** The pass being drawn (a model draws only its meshes of that pass: opaque or translucent materials) */
+    [[nodiscard]] DrawPass currentDrawPass () const;
 
     /**
      * A 3D scene's lights this frame, packed as the generated PerformLighting_V1 reads them (GH 0x1401bf270): the
@@ -238,8 +249,11 @@ protected:
     void updateLights ();
     /** WE's shadow pass (GH 0x1401c4f30): the casters into each shadow viewport of the atlas */
     void renderShadows ();
-    /** The order objects draw in this frame: the render order, a 3D scene's world objects sorted by `transparentsorting` */
-    const std::vector<CObject*>& drawOrder ();
+    /**
+     * The order objects draw in this frame: the render order, or a 3D scene's two `transparentsorting` passes (every
+     * opaque object in the render order, then every translucent one sorted far to near)
+     */
+    const std::vector<DrawEntry>& drawOrder ();
 
     friend class CWallpaper;
 
@@ -277,8 +291,13 @@ private:
     int m_nextScriptModel = 1;
     /** layers a script destroyed: out of the lists, freed with the scene */
     std::vector<CObject*> m_destroyed = {};
-    /** drawOrder's sorted copy of the render order */
-    std::vector<CObject*> m_sortedOrder = {};
+    /** drawOrder's entries for this frame */
+    std::vector<DrawEntry> m_sortedOrder = {};
+    /** the pass renderFrame is drawing (currentDrawPass) */
+    DrawPass m_drawPass = DrawPass::All;
+    /** WE's object flags 0x200 (drawn in the opaque pass) and 0x100 (in the translucent list), GH 0x1401be650 */
+    [[nodiscard]] bool drawsInOpaquePass (const CObject& object) const;
+    [[nodiscard]] bool drawsInTranslucentPass (const CObject& object) const;
     SceneLights m_lights = {};
     std::vector<ShadowView> m_shadowViews = {};
     bool m_castsShadows = false;

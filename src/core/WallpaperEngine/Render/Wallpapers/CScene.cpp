@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <string_view>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -799,8 +800,9 @@ void CScene::renderFrame () {
     glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // a copy: a text layer's script runs as it renders, and may create, destroy or sort layers
-    const std::vector<CObject*> order = this->drawOrder ();
-    for (const auto& cur : order) {
+    const std::vector<DrawEntry> order = this->drawOrder ();
+    for (const auto& [cur, pass] : order) {
+	this->m_drawPass = pass;
 	if (!this->m_destroyed.empty () && std::ranges::find (this->m_destroyed, cur) != this->m_destroyed.end ()) {
 	    continue;
 	}
@@ -824,6 +826,7 @@ void CScene::renderFrame () {
 
 	cur->render ();
     }
+    this->m_drawPass = DrawPass::All;
 
     // WE's volumetrics pass (GH 0x1401c56e0) over what was drawn. Inferred: where WE runs it in the frame wasn't traced
     // (it's reached through a vtable); here after the objects, before the fade
@@ -1212,46 +1215,97 @@ bool CScene::drawsInWorld (const CObject& object) const {
     return object.is<Objects::CImage> () && object.as<Objects::CImage> ()->isWorldPlaced ();
 }
 
-const std::vector<CObject*>& CScene::drawOrder () {
+namespace {
+/** WE's opaque blendings (GH 0x14024b830, GH 0x140225660: the material's blending 0 normal or 3 alphatocoverage) */
+bool opaqueBlending (const Data::Model::Material* material) {
+    if (material == nullptr || material->passes.empty () || material->passes.front () == nullptr) {
+	return true;
+    }
+    const auto blending = material->passes.front ()->blending;
+    return blending == BlendingMode_Unknown || blending == BlendingMode_Normal
+	|| blending == BlendingMode_AlphaToCoverage;
+}
+} // namespace
+
+bool CScene::drawsInOpaquePass (const CObject& object) const {
+    // the object's flag 0x200, set by default (GH 0x14020b5d0: 0x4201) and cleared for translucent images, particles
+    // and text (GH 0x1401be650, GH 0x140225660, GH 0x14027c1b0). A model keeps it whatever its materials: its draw
+    // then takes only its opaque meshes (GH 0x140249320 reads the pass)
+    if (object.is<Objects::CText> () || object.is<Objects::CParticle> ()) {
+	return false;
+    }
+    if (object.is<Objects::CImage> ()) {
+	const auto& image = object.as<Objects::CImage> ()->getImage ();
+	return !image.model->passthrough && opaqueBlending (image.model->material.get ());
+    }
+    return true;
+}
+
+bool CScene::drawsInTranslucentPass (const CObject& object) const {
+    // the object's flag 0x100: the scene puts it in its translucent list (GH 0x1401be650). A model has it when one of
+    // its materials isn't opaque, or none was read (GH 0x14024b830)
+    if (object.is<Objects::CText> () || object.is<Objects::CParticle> ()) {
+	return true;
+    }
+    if (object.is<Objects::CImage> ()) {
+	return !this->drawsInOpaquePass (object);
+    }
+    if (object.is<Objects::CModel> ()) {
+	return object.as<Objects::CModel> ()->hasTranslucentMeshes ();
+    }
+    return false;
+}
+
+const std::vector<CScene::DrawEntry>& CScene::drawOrder () {
+    this->m_sortedOrder.clear ();
+
     if (!this->m_camera->isPerspective () || !this->getScene ().transparentSorting) {
-	return this->m_objectsByRenderOrder;
+	for (auto* object : this->m_objectsByRenderOrder) {
+	    this->m_sortedOrder.push_back ({ object, DrawPass::All });
+	}
+	return this->m_sortedOrder;
     }
 
-    // transparentsorting: every run of objects placed in the world is drawn sorted (the order of what draws flat over
-    // the screen — full-screen layers, the bloom — stays). WE's key (GH 0x1401b6660, stable sort, comparator
-    // GH 0x1401cc550): `sortorder` ascending, then the depth along the view direction, farthest first
-    // (dot (origin, forward), descending). Ours: the runs, and the forward as the eye's line of sight
-    this->m_sortedOrder = this->m_objectsByRenderOrder;
+    // transparentsorting in a 3D scene (GH 0x1401b9b50 when (flags & 0x1008) == 0x1000): first every object of the
+    // render order whose flags have 0x200 and not 0x2 (the opaque ones), in that order, with the renderer's pass at 1;
+    // then the translucent list (flag 0x100) sorted (GH 0x1401b6660, stable, comparator GH 0x1401cc550): `sortorder`
+    // ascending, then dot (origin, the view direction) descending, farthest first; an object with flag 0x400 (a
+    // full-screen or project layer) has the key −∞, so it draws last. The pass is 2 for those. LWE's own bloom image
+    // isn't one of WE's objects: it stays last
+    for (auto* object : this->m_objectsByRenderOrder) {
+	if (object != this->m_bloomObject && this->drawsInOpaquePass (*object)) {
+	    this->m_sortedOrder.push_back ({ object, DrawPass::Opaque });
+	}
+    }
+
     const glm::vec3 eye = this->m_camera->getWorldEye ();
     const glm::vec3 forward = this->m_camera->getWorldForward ();
-    auto distance = [this, &eye, &forward] (const CObject* object) {
-	return glm::dot (glm::vec3 (this->worldMatrixOf (object->getObject ())[3]) - eye, forward);
-    };
-
-    auto begin = this->m_sortedOrder.begin ();
-    while (begin != this->m_sortedOrder.end ()) {
-	if (!this->drawsInWorld (**begin)) {
-	    ++begin;
+    std::vector<std::pair<float, CObject*>> translucent;
+    for (auto* object : this->m_objectsByRenderOrder) {
+	if (object == this->m_bloomObject || !this->drawsInTranslucentPass (*object)) {
 	    continue;
 	}
-	auto end = begin;
-	std::vector<std::pair<float, CObject*>> run;
-	while (end != this->m_sortedOrder.end () && this->drawsInWorld (**end)) {
-	    run.emplace_back (distance (*end), *end);
-	    ++end;
-	}
-	std::stable_sort (run.begin (), run.end (), [] (const auto& a, const auto& b) {
-	    const int sa = a.second->getObject ().sortOrder, sb = b.second->getObject ().sortOrder;
-	    return sa != sb ? sa < sb : a.first > b.first;
-	});
-	for (auto& [d, object] : run) {
-	    *begin++ = object;
-	}
-	begin = end;
+	const bool flat = object->is<Objects::CImage> () && object->as<Objects::CImage> ()->getImage ().model->fullscreen;
+	const float key = flat ? -std::numeric_limits<float>::infinity ()
+			       : glm::dot (glm::vec3 (this->worldMatrixOf (object->getObject ())[3]) - eye, forward);
+	translucent.emplace_back (key, object);
+    }
+    std::stable_sort (translucent.begin (), translucent.end (), [] (const auto& a, const auto& b) {
+	const int sa = a.second->getObject ().sortOrder, sb = b.second->getObject ().sortOrder;
+	return sa != sb ? sa < sb : a.first > b.first;
+    });
+    for (auto& [key, object] : translucent) {
+	this->m_sortedOrder.push_back ({ object, DrawPass::Translucent });
+    }
+
+    if (this->m_bloomObject != nullptr) {
+	this->m_sortedOrder.push_back ({ this->m_bloomObject, DrawPass::All });
     }
 
     return this->m_sortedOrder;
 }
+
+CScene::DrawPass CScene::currentDrawPass () const { return this->m_drawPass; }
 
 namespace {
 /** A light's tile at CScene::ShadowQuality (WE's "shadows" setting: disabled 0, low 1, medium 2 — the default, high 3,

@@ -788,7 +788,14 @@ void CModel::render () {
     const auto target = this->getScene ().getTargetFor (this->m_object);
     const bool keepAlpha = this->getScene ().targetKeepsAlpha (this->m_object);
 
+    // transparentsorting's passes (GH 0x140249320, the renderer's +0x1414): the opaque pass draws the meshes whose
+    // material is opaque, the translucent pass the others
+    const auto pass = this->getScene ().currentDrawPass ();
     for (const auto& mesh : this->m_meshes) {
+	if ((pass == Wallpapers::CScene::DrawPass::Opaque && !mesh->isOpaque ())
+	    || (pass == Wallpapers::CScene::DrawPass::Translucent && mesh->isOpaque ())) {
+	    continue;
+	}
 	mesh->draw (target, world, keepAlpha);
     }
 }
@@ -809,3 +816,20 @@ void CModel::renderShadow (const std::shared_ptr<const CFBO>& atlas, const std::
 const MeshObject& CModel::getMeshObject () const { return this->m_object; }
 
 size_t CModel::getMeshCount () const { return this->m_meshes.size (); }
+
+bool CModel::hasTranslucentMeshes () const {
+    // GH 0x14024b830: a model none of whose materials was read is translucent too
+    if (this->m_meshes.empty ()) {
+	return true;
+    }
+    return std::ranges::any_of (this->m_meshes, [] (const auto& mesh) { return !mesh->isOpaque (); });
+}
+
+bool CModelMesh::isOpaque () const {
+    if (this->m_meshMaterial.passes.empty () || this->m_meshMaterial.passes.front () == nullptr) {
+	return true;
+    }
+    const auto blending = this->m_meshMaterial.passes.front ()->blending;
+    return blending == Data::Model::BlendingMode_Unknown || blending == Data::Model::BlendingMode_Normal
+	|| blending == Data::Model::BlendingMode_AlphaToCoverage;
+}

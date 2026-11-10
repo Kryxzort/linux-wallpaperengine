@@ -32,6 +32,8 @@ public:
 	const std::vector<Wallpapers::CScene::ShadowView>& views
     );
     [[nodiscard]] bool isReady () const;
+    /** Its material's blending is WE's opaque one: normal or alphatocoverage (GH 0x14024b830) */
+    [[nodiscard]] bool isOpaque () const;
     /**
      * The model's animation for this mesh (before setup): `bones` the skinning matrices (g_Bones, SKINNING with
      * BONECOUNT), `weights` its blend-shape weights (MORPHING over g_Texture5's morph map); either may be null
@@ -105,6 +107,8 @@ public:
     [[nodiscard]] const MeshObject& getMeshObject () const;
     /** The meshes that could be built (tests) */
     [[nodiscard]] size_t getMeshCount () const;
+    /** One of its meshes has a translucent material (WE's flag 0x100: the scene's translucent list) */
+    [[nodiscard]] bool hasTranslucentMeshes () const;
 
 private:
     const MeshObject& m_object;
