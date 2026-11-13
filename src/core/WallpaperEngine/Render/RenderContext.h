@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "TextureCache.h"
 namespace WallpaperEngine {
@@ -14,6 +15,7 @@ namespace Assets {
 class Context;
 namespace Render {
     class AlbumTexture;
+    class CTexture;
     class TextureCache;
 
     class RenderContext {
@@ -26,6 +28,14 @@ namespace Render {
 
 	void albumArtUrlChange (std::optional<std::string>& url);
 
+	/**
+	 * From now until finishTextureUploads, a new JPEG / PNG / … texture decodes on a pool thread while the caller
+	 * goes on building: decoded one at a time on the GL thread, they are the largest part of a big scene's build
+	 */
+	void deferTextureUploads ();
+	/** Uploads every texture deferred since deferTextureUploads, in order, and stops deferring */
+	void finishTextureUploads ();
+
     private:
 	/** The previous album thumbnail texture */
 	std::shared_ptr<const AlbumTexture> m_previousThumbnail = nullptr;
@@ -37,6 +47,10 @@ namespace Render {
 	Context& m_context;
 	/** The asset locator used for this render context */
 	Assets::AssetLocator& m_locator;
+	/** New textures defer their upload (deferTextureUploads) */
+	bool m_deferTextureUploads = false;
+	/** The textures created while deferring */
+	std::vector<std::shared_ptr<const CTexture>> m_deferredTextures;
     };
 } // namespace Render
 } // namespace WallpaperEngine

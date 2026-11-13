@@ -297,14 +297,18 @@ void WallpaperEngine::Project::render () {
     if (this->renderContext == nullptr) {
 	// initialize render if not available
 	this->renderContext = std::make_unique<RenderContext> (this->context, *this->ref->assetLocator);
+	// its JPEG / PNG / … textures decode on other threads while the wallpaper builds and upload once it's built
+	this->renderContext->deferTextureUploads ();
 	try {
 	    this->wallpaper = CWallpaper::fromWallpaper (
 		*this->ref->wallpaper, *this->renderContext, *this->context.audio, this->mouse_input
 	    );
 	} catch (const std::exception& e) {
+	    this->renderContext->finishTextureUploads ();
 	    WPENGINE_HEALTH ("renderer_failed", { { "message", WallpaperEngine::Health::brief (e.what ()) } });
 	    throw;
 	}
+	this->renderContext->finishTextureUploads ();
 	this->wallpaper->setDestinationFramebuffer (this->framebuffer);
 	this->wallpaper->setFrameRate (this->frameRate);
 	// give hint about size to the wallpaper only if web

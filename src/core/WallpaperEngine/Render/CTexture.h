@@ -6,6 +6,8 @@
 #include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
 
 #include <glad/glad.h>
+#include <cstdlib>
+#include <future>
 #include <glm/vec4.hpp>
 #include <memory>
 #include <mpv/client.h>
@@ -17,13 +19,29 @@ namespace WallpaperEngine::Render {
 class RenderContext;
 using namespace WallpaperEngine::Data::Assets;
 using namespace WallpaperEngine::VideoPlayback::MPV;
+/** A JPEG / PNG / … mipmap decoded to RGBA8 by stb_image (null: it refused the file), freed as stbi_image_free does */
+struct DecodedTextureImage {
+    std::unique_ptr<unsigned char, void (*) (void*)> pixels { nullptr, std::free };
+    int width = 0;
+    int height = 0;
+};
 /**
  * A normal texture file in WallpaperEngine's format
  */
 class CTexture final : public TextureProvider, public Helpers::ContextAware {
 public:
-    explicit CTexture (RenderContext& context, TextureUniquePtr header);
+    /**
+     * @param deferUpload decode a JPEG / PNG / … texture on a pool thread and upload it in finishUpload instead of
+     * here (the texture names and parameters are still set up here)
+     */
+    explicit CTexture (RenderContext& context, TextureUniquePtr header, bool deferUpload = false);
     ~CTexture () override;
+
+    /**
+     * Uploads the mipmaps still decoding (waits for them), leaving the GL bindings as they were; a no-op once done.
+     * getTextureID calls it, so nothing can sample a texture before its pixels are in
+     */
+    void finishUpload () const;
 
     [[nodiscard]] GLuint getTextureID (uint32_t imageIndex) const override;
     [[nodiscard]] uint32_t getTextureWidth (uint32_t imageIndex) const override;
@@ -90,5 +108,13 @@ private:
     glm::vec4 m_resolution {};
     /** The video player in use */
     GLPlayerUniquePtr m_player;
+
+    struct PendingUpload {
+	uint32_t image;
+	GLint level;
+	std::future<DecodedTextureImage> decoded;
+    };
+    /** Deferred mipmaps, in the order the constructor would have uploaded them */
+    mutable std::vector<PendingUpload> m_pendingUploads;
 };
 } // namespace WallpaperEngine::Assets

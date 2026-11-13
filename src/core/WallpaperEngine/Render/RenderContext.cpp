@@ -48,12 +48,25 @@ std::shared_ptr<const TextureProvider> RenderContext::resolveTexture (const std:
 	};
 
 	auto parsedTexture = Data::Parsers::TextureParser::parse (stream, name, metadataLoader);
-	auto texture = std::make_shared<CTexture> (*this, std::move (parsedTexture));
+	auto texture = std::make_shared<CTexture> (*this, std::move (parsedTexture), this->m_deferTextureUploads);
 
 	this->m_textureCache.store (name, texture);
+	if (this->m_deferTextureUploads) {
+	    this->m_deferredTextures.push_back (texture);
+	}
 
 	return texture;
     }
+}
+
+void RenderContext::deferTextureUploads () { this->m_deferTextureUploads = true; }
+
+void RenderContext::finishTextureUploads () {
+    this->m_deferTextureUploads = false;
+    for (const auto& texture : this->m_deferredTextures) {
+	texture->finishUpload ();
+    }
+    this->m_deferredTextures.clear ();
 }
 
 const Assets::AssetLocator& RenderContext::getAssetLocator () const { return this->m_locator; }

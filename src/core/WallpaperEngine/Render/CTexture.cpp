@@ -8,9 +8,94 @@
 
 #include <stb_image.h>
 
+#include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <pthread.h>
+#include <system_error>
+#include <thread>
+
 using namespace WallpaperEngine::Render;
 
-CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
+namespace {
+DecodedTextureImage decodeImage (const MipmapSharedPtr& mipmap) {
+    DecodedTextureImage image;
+    image.width = mipmap->width;
+    image.height = mipmap->height;
+    int fileChannels;
+    image.pixels.reset (stbi_load_from_memory (
+	reinterpret_cast<unsigned char*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize, &image.width,
+	&image.height, &fileChannels, 4
+    ));
+    return image;
+}
+
+/**
+ * The threads deferred textures decode on: started as needed, at most half the cores and never more than 4 (a scene
+ * loading next to a playing one leaves the rest of the machine alone). Never destroyed: a thread may still be
+ * decoding when the process exits, and each job owns the mipmap it reads.
+ */
+class DecodePool {
+public:
+    static DecodePool& get () {
+	static auto* pool = new DecodePool ();
+	return *pool;
+    }
+
+    std::future<DecodedTextureImage> submit (std::packaged_task<DecodedTextureImage ()> job) {
+	auto future = job.get_future ();
+	{
+	    std::lock_guard lock (this->m_mutex);
+	    // more queued jobs than threads waiting for one: another thread, while there is room
+	    if (static_cast<int> (this->m_jobs.size ()) >= this->m_idle && this->m_threads < this->m_maxThreads) {
+		try {
+		    std::thread (&DecodePool::run, this).detach ();
+		    this->m_threads++;
+		} catch (const std::system_error&) {
+		    // no thread to be had: with none running, nothing would ever run the job
+		}
+	    }
+	    if (this->m_threads == 0) {
+		job ();
+		return future;
+	    }
+	    this->m_jobs.push_back (std::move (job));
+	}
+	this->m_wake.notify_one ();
+	return future;
+    }
+
+private:
+    DecodePool () :
+	m_maxThreads (std::clamp (static_cast<int> (std::thread::hardware_concurrency ()) / 2, 1, 4)) { }
+
+    void run () {
+	pthread_setname_np (pthread_self (), "wp-tex-decode");
+	for (;;) {
+	    std::packaged_task<DecodedTextureImage ()> job;
+	    {
+		std::unique_lock lock (this->m_mutex);
+		this->m_idle++;
+		this->m_wake.wait (lock, [this] { return !this->m_jobs.empty (); });
+		this->m_idle--;
+		job = std::move (this->m_jobs.front ());
+		this->m_jobs.pop_front ();
+	    }
+	    job ();
+	}
+    }
+
+    const int m_maxThreads;
+    int m_threads = 0;
+    int m_idle = 0;
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    std::deque<std::packaged_task<DecodedTextureImage ()>> m_jobs;
+};
+} // namespace
+
+CTexture::CTexture (RenderContext& context, TextureUniquePtr header, const bool deferUpload) :
     Helpers::ContextAware (context), m_header (std::move (header)) {
     // ensure the header is parsed
     this->setupResolution ();
@@ -53,7 +138,18 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
 	int level = 0;
 
 	for (const auto& mipmap : mipmaps) {
-	    stbi_uc* handle = nullptr;
+	    if (this->m_header->freeImageFormat != FIF_UNKNOWN && deferUpload) {
+		this->m_pendingUploads.push_back (
+		    { index, level,
+		      DecodePool::get ().submit (std::packaged_task<DecodedTextureImage ()> ([mipmap] {
+			  return decodeImage (mipmap);
+		      })) }
+		);
+		level++;
+		continue;
+	    }
+
+	    DecodedTextureImage decoded;
 	    const void* dataptr = mipmap->uncompressedData.get ();
 	    int width = mipmap->width;
 	    int height = mipmap->height;
@@ -61,12 +157,10 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
 	    GLenum textureFormat = GL_RGBA;
 
 	    if (this->m_header->freeImageFormat != FIF_UNKNOWN) {
-		int fileChannels;
-
-		dataptr = handle = stbi_load_from_memory (
-		    reinterpret_cast<unsigned char*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize,
-		    &width, &height, &fileChannels, 4
-		);
+		decoded = decodeImage (mipmap);
+		dataptr = decoded.pixels.get ();
+		width = decoded.width;
+		height = decoded.height;
 	    } else {
 		if (this->m_header->format == TextureFormat_R8) {
 		    // red textures are 1-byte-per-pixel, so it's alignment has to be set manually
@@ -96,14 +190,39 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
 		    sLog.exception ("Cannot load texture, unknown format", this->m_header->format);
 	    }
 
-	    // stbi_image buffer won't be used anymore, so free memory
-	    if (this->m_header->freeImageFormat != FIF_UNKNOWN) {
-		stbi_image_free (handle);
-	    }
-
 	    level++;
 	}
     }
+}
+
+void CTexture::finishUpload () const {
+    if (this->m_pendingUploads.empty ()) {
+	return;
+    }
+
+    // this may run in the middle of a frame (getTextureID): upload from client memory and put the bindings back
+    GLint boundTexture = 0, unpackBuffer = 0;
+    glGetIntegerv (GL_TEXTURE_BINDING_2D, &boundTexture);
+    glGetIntegerv (GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+    if (unpackBuffer != 0) {
+	glBindBuffer (GL_PIXEL_UNPACK_BUFFER, 0);
+    }
+
+    // JPEG / PNG / … rows are RGBA8, so whatever GL_UNPACK_ALIGNMENT another texture left reads them the same
+    for (auto& pending : this->m_pendingUploads) {
+	const DecodedTextureImage image = pending.decoded.get ();
+	glBindTexture (GL_TEXTURE_2D, this->m_textureID[pending.image]);
+	glTexImage2D (
+	    GL_TEXTURE_2D, pending.level, GL_RGBA8, image.width, image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+	    image.pixels.get ()
+	);
+    }
+    this->m_pendingUploads.clear ();
+
+    if (unpackBuffer != 0) {
+	glBindBuffer (GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
+    }
+    glBindTexture (GL_TEXTURE_2D, boundTexture);
 }
 
 CTexture::~CTexture () {
@@ -194,6 +313,8 @@ void CTexture::setupOpenGLParameters (const uint32_t textureID) const {
 }
 
 GLuint CTexture::getTextureID (const uint32_t imageIndex) const {
+    this->finishUpload ();
+
     // ensure we do not go out of bounds
     if (imageIndex >= this->m_header->imageCount) {
 	return this->m_textureID[0];
