@@ -3,6 +3,7 @@
 #include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <regex>
 #include <sstream>
@@ -103,6 +104,69 @@
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::Data::Builders;
 using namespace WallpaperEngine::Render::Shaders;
+
+namespace {
+namespace Scan = WallpaperEngine::Render::Shaders::WERules::Scan;
+
+/**
+ * Whether applyWritableFragmentVaryings' `assigned` regex can match `name` in `source` (WERules::Scan): a whole-word
+ * `name`, then `\s*`, an optional `.swizzle\s*` and an assignment (`=`, `+=`, … not `==`) or `++` / `--`; or `++` /
+ * `--` and `\s*` before it. A plain read (`name * x`, `name == y`) fails it, so the regex runs only for a unit that
+ * writes to one of its inputs
+ */
+bool mayAssign (const std::string& source, const std::string& name) {
+    const auto charAt = [&] (size_t i) { return i < source.size () ? source[i] : '\0'; };
+    return Scan::anyWord (source, name, [&] (size_t at, size_t end) {
+	size_t k = Scan::skipSpace (source, end);
+	if (charAt (k) == '.') {
+	    k = Scan::skipSpace (source, k + 1);
+	    while (k < source.size () && std::isalpha (static_cast<unsigned char> (source[k]))) {
+		k++;
+	    }
+	    k = Scan::skipSpace (source, k);
+	}
+	const char op = charAt (k);
+	const bool arithmetic = op == '-' || op == '+' || op == '*' || op == '/';
+	// `[-+*/]?=(?!=)`
+	if ((op == '=' && charAt (k + 1) != '=') || (arithmetic && charAt (k + 1) == '=' && charAt (k + 2) != '=')) {
+	    return true;
+	}
+	// `\+\+|--`
+	if ((op == '+' || op == '-') && charAt (k + 1) == op) {
+	    return true;
+	}
+	size_t b = at;
+	while (b > 0 && Scan::isSpace (source[b - 1])) {
+	    b--;
+	}
+	return b >= 2 && source[b - 1] == source[b - 2] && (source[b - 1] == '+' || source[b - 1] == '-');
+    });
+}
+
+/**
+ * Whether applyBuiltinDeclarations' `declaration` regex can match (WERules::Scan): a `gl_<word>` after `\s`, then
+ * `\s*;`
+ */
+bool mayDeclareBuiltin (const std::string& source) {
+    for (size_t at = source.find ("gl_"); at != std::string::npos; at = source.find ("gl_", at + 1)) {
+	if (at == 0 || !Scan::isSpace (source[at - 1])) {
+	    continue;
+	}
+	size_t k = at + 3;
+	if (k >= source.size () || !Scan::isWord (source[k])) {
+	    continue;
+	}
+	while (k < source.size () && Scan::isWord (source[k])) {
+	    k++;
+	}
+	k = Scan::skipSpace (source, k);
+	if (k < source.size () && source[k] == ';') {
+	    return true;
+	}
+    }
+    return false;
+}
+} // namespace
 
 ShaderUnit::ShaderUnit (
     const GLSLContext::UnitType type, std::string file, std::string content, const AssetLocator& assetLocator,
@@ -366,15 +430,20 @@ std::string ShaderUnit::applyLinkedVaryingCompatibility (std::string source) con
 	return source;
     }
 
-    std::regex fragmentVec4Varying (R"(\bvarying\s+vec4\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)");
-    std::smatch varyingMatch;
-    std::string linked = this->m_link->m_preprocessed;
-    size_t linkedOffset = 0;
+    static const std::regex fragmentVec4Varying (R"(\bvarying\s+vec4\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)");
+    std::vector<std::string> names;
+    Scan::eachMatch (this->m_link->m_preprocessed, fragmentVec4Varying, "varying", [&] (const std::smatch& m, size_t) {
+	names.push_back (m[1].str ());
+	return false;
+    });
 
-    while (std::regex_search (linked.cbegin () + linkedOffset, linked.cend (), varyingMatch, fragmentVec4Varying)) {
-	const std::string name = varyingMatch[1].str ();
-	linkedOffset += varyingMatch.position () + varyingMatch.length ();
-
+    for (const auto& name : names) {
+	const bool mayBeVec2 = Scan::anyWord (source, name, [&] (size_t at, size_t end) {
+	    return Scan::declaresAt (source, at, end) && Scan::wordBefore (source, at) == "vec2";
+	});
+	if (!mayBeVec2) {
+	    continue;
+	}
 	const std::regex vertexVec2Decl ("\\bvarying\\s+vec2\\s+" + name + "\\s*;");
 	if (!std::regex_search (source, vertexVec2Decl)) {
 	    continue;
@@ -417,29 +486,31 @@ std::string ShaderUnit::applyFragmentVaryingDeclarations (std::string source) co
     std::string missing;
     bool retyped = false;
 
-    for (auto it = std::sregex_iterator (vertex.begin (), vertex.end (), vertexVarying); it != std::sregex_iterator ();
-	 ++it) {
-	const std::string type = (*it)[1].str ();
-	const std::string name = (*it)[2].str ();
-	const std::regex declared ("\\bvarying\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\s+)*?)([A-Za-z_][A-Za-z0-9_]*)\\s+" + name + "\\s*;");
-	const std::regex used ("\\b" + name + "\\b");
-	std::smatch own;
-
-	if (std::regex_search (source, own, declared)) {
-	    const std::string ownType = own[2].str ();
-	    const auto v = width.find (type), f = width.find (ownType);
-	    if (v != width.end () && f != width.end () && v->second > f->second) {
-		source = std::regex_replace (source, declared, "varying $1" + type + " " + name + ";");
-		retyped = true;
+    Scan::eachMatch (vertex, vertexVarying, "varying", [&] (const std::smatch& m, size_t) {
+	const std::string type = m[1].str ();
+	const std::string name = m[2].str ();
+	const bool mayDeclare = Scan::anyWord (source, name, [&] (size_t at, size_t end) {
+	    return Scan::declaresAt (source, at, end);
+	});
+	if (mayDeclare) {
+	    const std::regex declared ("\\bvarying\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\s+)*?)([A-Za-z_][A-Za-z0-9_]*)\\s+" + name + "\\s*;");
+	    std::smatch own;
+	    if (std::regex_search (source, own, declared)) {
+		const std::string ownType = own[2].str ();
+		const auto v = width.find (type), f = width.find (ownType);
+		if (v != width.end () && f != width.end () && v->second > f->second) {
+		    source = std::regex_replace (source, declared, "varying $1" + type + " " + name + ";");
+		    retyped = true;
+		}
+		return false;
 	    }
-	    continue;
 	}
-	if (!std::regex_search (source, used) || missing.find (" " + name + ";") != std::string::npos) {
-	    continue;
+	// `\bname\b`
+	if (Scan::hasWord (source, name) && missing.find (" " + name + ";") == std::string::npos) {
+	    missing += "varying " + type + " " + name + ";\n";
 	}
-
-	missing += "varying " + type + " " + name + ";\n";
-    }
+	return false;
+    });
 
     if (retyped) {
 	WPENGINE_HEALTH ("compat", { { "what", "WE: a fragment varying takes the vertex unit's type" } });
@@ -458,12 +529,34 @@ std::string ShaderUnit::applyFragmentTexCoordCompatibility (std::string source) 
 	return source;
     }
 
+    // wideTexCoordDecl needs `vec3|vec4\s+v_TexCoord\s*;`; texCoordBeforeCast2 `v_TexCoord\s*<op>\s*CAST2`,
+    // cast2BeforeTexCoord `<op>\s*v_TexCoord`
+    const auto isOperator = [] (char c) { return c == '-' || c == '+' || c == '*' || c == '/'; };
+    const bool mayBeWide = Scan::anyWord (source, "v_TexCoord", [&] (size_t at, size_t end) {
+	const std::string_view type = Scan::wordBefore (source, at);
+	return Scan::declaresAt (source, at, end) && (type == "vec3" || type == "vec4");
+    });
+    const bool mayMeetCast2 = Scan::anyWord (source, "v_TexCoord", [&] (size_t at, size_t end) {
+	const size_t k = Scan::skipSpace (source, end);
+	if (k < source.size () && isOperator (source[k]) && source.compare (Scan::skipSpace (source, k + 1), 5, "CAST2") == 0) {
+	    return true;
+	}
+	size_t b = at;
+	while (b > 0 && Scan::isSpace (source[b - 1])) {
+	    b--;
+	}
+	return b > 0 && isOperator (source[b - 1]);
+    });
+    if (!mayBeWide || !mayMeetCast2) {
+	return source;
+    }
+
     const std::regex texCoordBeforeCast2 (R"(\bv_TexCoord\b(\s*[-+*/]\s*CAST2\s*\())");
     const std::regex cast2BeforeTexCoord (R"((CAST2\s*\([^)]+\)\s*[-+*/]\s*)\bv_TexCoord\b)");
 
     const std::regex wideTexCoordDecl (R"(\bvarying\s+vec[34]\s+v_TexCoord\s*;)");
-    if (!std::regex_search (source, wideTexCoordDecl)
-	|| (!std::regex_search (source, texCoordBeforeCast2) && !std::regex_search (source, cast2BeforeTexCoord))) {
+    const bool wide = Scan::eachMatch (source, wideTexCoordDecl, "varying", [] (const std::smatch&, size_t) { return true; });
+    if (!wide || (!std::regex_search (source, texCoordBeforeCast2) && !std::regex_search (source, cast2BeforeTexCoord))) {
 	return source;
     }
 
@@ -493,19 +586,22 @@ std::string ShaderUnit::applyWritableFragmentVaryings (std::string source) const
     static const std::regex mainOpen (R"(\bvoid\s+main\s*\(\s*(?:void)?\s*\)\s*\{)");
     std::vector<std::pair<std::string, std::string>> written; // (type, name)
 
-    for (auto it = std::sregex_iterator (source.begin (), source.end (), declaration); it != std::sregex_iterator ();
-	 ++it) {
-	const std::string name = (*it)[2].str ();
+    Scan::eachMatch (source, declaration, fragment ? "varying" : "attribute", [&] (const std::smatch& m, size_t) {
+	const std::string name = m[2].str ();
+	const bool listed = std::any_of (written.begin (), written.end (), [&] (const auto& w) { return w.second == name; });
+	if (listed || !mayAssign (source, name)) {
+	    return false;
+	}
 	// `name = …`, `name += …`, `name.xy *= …` (not `==`), or `name++` / `++name`
 	const std::regex assigned ("\\b" + name + "\\b(?:\\s*\\.\\s*[xyzwrgba]+)?\\s*(?:[-+*/]?=(?!=)|\\+\\+|--)|(?:\\+\\+|--)\\s*" + name + "\\b");
-	const bool listed = std::any_of (written.begin (), written.end (), [&] (const auto& w) { return w.second == name; });
-	if (!listed && std::regex_search (source, assigned)) {
+	if (std::regex_search (source, assigned)) {
 	    // the type without its qualifiers
-	    std::string type = (*it)[1].str ();
+	    std::string type = m[1].str ();
 	    type = type.substr (type.find_last_of (" \t") == std::string::npos ? 0 : type.find_last_of (" \t") + 1);
 	    written.emplace_back (type, name);
 	}
-    }
+	return false;
+    });
 
     std::smatch open;
     if (written.empty () || !std::regex_search (source, open, mainOpen)) {
@@ -555,7 +651,7 @@ std::string ShaderUnit::applyBuiltinDeclarations (std::string source) {
     static const std::regex declaration (
 	R"((^|\n)[ \t]*(?:in|out|varying|attribute)\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+)+(gl_[A-Za-z0-9_]+)\s*;[^\n]*)"
     );
-    if (!std::regex_search (source, declaration)) {
+    if (!mayDeclareBuiltin (source) || !std::regex_search (source, declaration)) {
 	return source;
     }
     source = std::regex_replace (source, declaration, "$1// built in: $2");

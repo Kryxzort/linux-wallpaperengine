@@ -46,6 +46,17 @@ const std::regex& directive () {
     static const std::regex re (R"(^\s*#\s*([a-z]+)\b\s*([^\n]*)$)");
     return re;
 }
+
+/** Whether the line's first word is a storage keyword: `^\s*(?:uniform|attribute|varying|in|out)\s+` can match it */
+bool startsWithStorage (std::string_view line) {
+    const size_t begin = Scan::skipSpace (line, 0);
+    size_t end = begin;
+    while (end < line.size () && Scan::isWord (line[end])) {
+	end++;
+    }
+    const std::string_view word = line.substr (begin, end - begin);
+    return word == "uniform" || word == "attribute" || word == "varying" || word == "in" || word == "out";
+}
 } // namespace
 
 std::string expandIncludes (const std::string& source, const IncludeLoader& load, std::set<std::string>& seen) {
@@ -107,7 +118,7 @@ std::string hoistDeclarations (const std::string& source) {
 	const std::string& line = lines[i];
 	const bool topLevel = braces == 0 && parens == 0 && !block;
 	std::smatch m;
-	if (!block && std::regex_match (line, m, directive ())) {
+	if (!block && Scan::directiveLine (line) && std::regex_match (line, m, directive ())) {
 	    const std::string kind = m[1].str ();
 	    if (kind == "if" || kind == "ifdef" || kind == "ifndef") {
 		chains.push_back ({ line });
@@ -130,7 +141,7 @@ std::string hoistDeclarations (const std::string& source) {
 	    // the first include: before the outermost #if it is in, so the whole chain stays below
 	    hoistAt = chainStart.empty () ? static_cast<long> (i) : static_cast<long> (chainStart.front ());
 	    // the chains open at that point are above the hoisted block: a declaration in them keeps only the inner ones
-	} else if (hoistAt >= 0 && topLevel && std::regex_match (line, declaration)) {
+	} else if (hoistAt >= 0 && topLevel && startsWithStorage (line) && std::regex_match (line, declaration)) {
 	    // the chains the hoisted copy needs: those opened after the hoist point
 	    std::string open, close;
 	    bool readsLocalDefine = false;
@@ -264,7 +275,12 @@ std::string renameReservedWords (const std::string& source) {
     static const std::regex textureVariable (
 	R"(\b(?:float|int|uint|bool|[biu]?vec[234]|mat[234]|sampler2D|float[234])\s+texture\s*[;=,\[)])"
     );
-    const bool textureIsAVariable = std::regex_search (source, textureVariable);
+    // the regex needs `<type>\s+texture\s*<one of ;=,[)>`
+    const bool textureIsAVariable = Scan::anyWord (source, "texture", [&] (size_t at, size_t end) {
+	const size_t k = Scan::skipSpace (source, end);
+	return !Scan::wordBefore (source, at).empty () && k < source.size ()
+	    && std::string_view (";=,[)").find (source[k]) != std::string_view::npos;
+    }) && std::regex_search (source, textureVariable);
     bool renamed = false;
 
     std::string out = mapIdentifiers (source, [&] (const std::string& word, size_t after) -> std::string {
@@ -308,7 +324,8 @@ std::string falsifyUnreadableIfs (const std::string& source) {
     bool changed = false;
     for (auto& line : lines) {
 	std::smatch m;
-	if (!std::regex_match (line, m, directive ()) || (m[1].str () != "if" && m[1].str () != "elif")) {
+	if (!Scan::directiveLine (line) || !std::regex_match (line, m, directive ())
+	    || (m[1].str () != "if" && m[1].str () != "elif")) {
 	    continue;
 	}
 	const std::string expression = withoutLineComment (m[2].str ());
@@ -340,8 +357,20 @@ std::string intrinsicOverloads (const std::string& source) {
 	{ "ddy", "T ddy (T x) { return dFdy (-x); }" },
     };
     static const char* types[] = { "float", "vec2", "vec3", "vec4" };
+    static const std::regex typeParameter ("\\bT\\b");
     std::string out;
     for (const auto& intrinsic : intrinsics) {
+	// the regex needs `<return type>\s+name\s*(`
+	const bool mayDefine = Scan::anyWord (source, intrinsic.name, [&] (size_t at, size_t end) {
+	    const std::string_view type = Scan::wordBefore (source, at);
+	    const size_t k = Scan::skipSpace (source, end);
+	    return (type == "float" || type == "vec2" || type == "vec3" || type == "vec4" || type == "float2"
+		    || type == "float3" || type == "float4" || type == "int" || type == "void")
+		&& k < source.size () && source[k] == '(';
+	});
+	if (!mayDefine) {
+	    continue;
+	}
 	const std::regex definition (
 	    std::string (R"(\b(?:float|vec[234]|float[234]|int|void)\s+)") + intrinsic.name
 	    + R"(\s*\(\s*(?:(?:in|const)\s+)*([A-Za-z_][A-Za-z0-9_]*))"
@@ -362,7 +391,7 @@ std::string intrinsicOverloads (const std::string& source) {
 	    if (own.contains (type)) {
 		continue;
 	    }
-	    out += std::regex_replace (intrinsic.body, std::regex ("\\bT\\b"), type) + "\n";
+	    out += std::regex_replace (intrinsic.body, typeParameter, type) + "\n";
 	}
     }
     if (!out.empty ()) {
@@ -374,7 +403,11 @@ std::string intrinsicOverloads (const std::string& source) {
 std::string clipFunctions (const std::string& source) {
     static const std::regex call (R"(\bclip\s*\()");
     static const std::regex variable (R"(\b(?:float|vec[234]|float[234]|int|bool)\s+clip\b)");
-    if (!std::regex_search (source, call) || std::regex_search (source, variable)) {
+    const bool calls = Scan::anyWord (source, "clip", [&] (size_t, size_t end) {
+	const size_t k = Scan::skipSpace (source, end);
+	return k < source.size () && source[k] == '(';
+    });
+    if (!calls || !std::regex_search (source, call) || std::regex_search (source, variable)) {
 	return "";
     }
     return "void clip (float x) { if (x < 0.0) discard; }\n"
@@ -395,9 +428,10 @@ std::string dropUnmatchedEndifs (const std::string& source) {
 	size_t end = source.find ('\n', begin);
 	end = end == std::string::npos ? source.size () : end + 1;
 	const std::string line = source.substr (begin, end - begin);
-	if (std::regex_search (line, opens)) {
+	const bool hashLine = Scan::directiveLine (line);
+	if (hashLine && std::regex_search (line, opens)) {
 	    depth++;
-	} else if (std::regex_search (line, closes)) {
+	} else if (hashLine && std::regex_search (line, closes)) {
 	    if (depth == 0) {
 		sLog.out ("Dropping an #endif with no #if: ", line);
 		WPENGINE_HEALTH ("compat", { { "what", "glslang: unmatched #endif dropped" } });
