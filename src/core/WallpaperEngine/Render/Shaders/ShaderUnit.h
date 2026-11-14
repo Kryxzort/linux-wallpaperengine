@@ -1,8 +1,10 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "GLSLContext.h"
@@ -49,6 +51,8 @@ public:
      * @param unit
      */
     void linkToUnit (const ShaderUnit* unit);
+    /** Where compile keeps its result across launches (ShaderCache.h, kind "unit"); none by default */
+    void setCacheDir (const std::optional<std::filesystem::path>& dir);
     /**
      * @return The shader unit linked to this unit (if any)
      */
@@ -83,6 +87,10 @@ protected:
      * and lays the ground for the actual code to be ready
      */
     void preprocess ();
+    /** WE's text passes, into m_final */
+    void runTextPasses ();
+    /** Everything the text passes read: the shader cache's key for their result */
+    [[nodiscard]] std::vector<std::string> cacheKey () const;
 
 private:
     /**
@@ -168,6 +176,7 @@ private:
     std::string m_final;
     /** `#extension` lines the unit needs (after `#version`) */
     std::string m_extensions;
+    std::optional<std::filesystem::path> m_cacheDir;
     /**
      * The parameters the shader needs
      */

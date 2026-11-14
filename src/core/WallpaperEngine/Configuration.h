@@ -53,6 +53,8 @@ public:
     bool disableParallax;
     /** where scripts' localStorage persists (wp_config_set_storage_dir); unset: in memory only */
     std::optional<std::filesystem::path> storageDir;
+    /** where shader text work persists across launches (wp_config_set_shader_cache_dir); unset: not kept */
+    std::optional<std::filesystem::path> shaderCacheDir;
     int web_fps;
 
     bool baseOnly;

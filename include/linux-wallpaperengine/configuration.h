@@ -99,6 +99,19 @@ WPENGINE_API bool wp_config_set_backgrounds_dir (wp_configuration* config, const
 WPENGINE_API bool wp_config_set_storage_dir (wp_configuration* config, const char* dir);
 
 /**
+ * Where shader text work persists across launches: each WE shader unit's text passes and each vertex + fragment
+ * pair's translation to the driver's GLSL (glslang + SPIRV-Cross) are done once and read back from here the next
+ * time (and by the next pass of the same build that asks for the same), one file per result, checked against the
+ * core's build id and every input text. Unset: every load does all of it
+ *
+ * @param config
+ * @param dir An existing, writable directory the host keeps for this cache
+ *
+ * @return true if the directory was set (it exists), false otherwise
+ */
+WPENGINE_API bool wp_config_set_shader_cache_dir (wp_configuration* config, const char* dir);
+
+/**
  * Updates the steam directory for this configuration.
  *
  * This calls wp_config_set_assets_dir with the default directory for you

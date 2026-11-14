@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "GLSLContext.h"
+#include "ShaderCache.h"
 #include "WEShaderRules.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariable.h"
@@ -959,11 +960,55 @@ void ShaderUnit::linkToUnit (const ShaderUnit* unit) { this->m_link = unit; }
 
 const ShaderUnit* ShaderUnit::getLinkedUnit () const { return this->m_link; }
 
+void ShaderUnit::setCacheDir (const std::optional<std::filesystem::path>& dir) { this->m_cacheDir = dir; }
+
+std::vector<std::string> ShaderUnit::cacheKey () const {
+    const auto combos = [] (const ComboMap& map) {
+	std::string out;
+	for (const auto& [name, value] : map) {
+	    out += std::to_string (name.size ()) + ":" + name + "=" + std::to_string (value) + "\n";
+	}
+	return out;
+    };
+    const ShaderUnit* link = this->m_link;
+    return {
+	(this->m_type == GLSLContext::UnitType_Fragment ? "fragment\n" : "vertex\n") + this->m_file,
+	this->m_preprocessed,
+	this->m_extensions,
+	combos (this->m_overrideCombos),
+	combos (this->m_combos),
+	combos (this->m_discoveredCombos),
+	link != nullptr ? "linked\n" + link->m_preprocessed : std::string (),
+	link != nullptr ? combos (link->getCombos ()) : std::string (),
+	link != nullptr ? combos (link->getDiscoveredCombos ()) : std::string (),
+    };
+}
+
 const std::string& ShaderUnit::compile () {
     if (!this->m_final.empty ()) {
 	return this->m_final;
     }
+    // the text passes are a pure function of cacheKey's texts; the health report and the shader sweep's capture read
+    // the records the passes themselves report, which a stored result would skip
+    std::vector<std::string> key;
+    if (this->m_cacheDir.has_value ()) {
+	key = this->cacheKey ();
+	if (!WallpaperEngine::Health::enabled ()) {
+	    if (auto stored = ShaderCache::load (*this->m_cacheDir, "unit", key);
+		stored && stored->size () == 1 && !(*stored)[0].empty ()) {
+		this->m_final = std::move ((*stored)[0]);
+		return this->m_final;
+	    }
+	}
+    }
+    this->runTextPasses ();
+    if (this->m_cacheDir.has_value ()) {
+	ShaderCache::store (*this->m_cacheDir, "unit", key, { this->m_final });
+    }
+    return this->m_final;
+}
 
+void ShaderUnit::runTextPasses () {
     this->m_final = SHADER_HEADER (this->m_file);
 
     if (this->m_type == GLSLContext::UnitType_Fragment) {
@@ -1057,9 +1102,6 @@ const std::string& ShaderUnit::compile () {
     if (!this->m_extensions.empty ()) {
 	this->m_final.insert (this->m_final.find ('\n') + 1, this->m_extensions);
     }
-
-    // the pass itself handles shader compilation, the unit doesn't have enough information for this step
-    return this->m_final;
 }
 
 const std::vector<Variables::ShaderVariable*>& ShaderUnit::getParameters () const { return this->m_parameters; }

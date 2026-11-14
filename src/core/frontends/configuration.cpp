@@ -62,6 +62,16 @@ WPENGINE_API bool wp_config_set_storage_dir (wp_configuration* config, const cha
     WPENGINE_CONFIG_API_END (false);
 }
 
+WPENGINE_API bool wp_config_set_shader_cache_dir (wp_configuration* config, const char* dir) {
+    WPENGINE_CONFIG_API_BEGIN
+    if (dir == nullptr || !std::filesystem::is_directory (dir)) {
+	return false;
+    }
+    static_cast<WallpaperEngine::Configuration*> (config)->shaderCacheDir = std::filesystem::path (dir);
+    return true;
+    WPENGINE_CONFIG_API_END (false);
+}
+
 WPENGINE_API bool wp_config_set_steam_dir (wp_configuration* config, const char* dir) {
     WPENGINE_CONFIG_API_BEGIN
     return static_cast<WallpaperEngine::Configuration*> (config)->setSteamDir (dir);

@@ -1,4 +1,5 @@
 #include "GLSLContext.h"
+#include "ShaderCache.h"
 #include "WEShaderRules.h"
 #include "WallpaperEngine/Health.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -706,9 +707,9 @@ std::unique_ptr<glslang::TShader> parseUnit (EShLanguage stage, std::string& sou
 	}
     }
 }
-} // namespace
 
-std::pair<std::string, std::string> GLSLContext::toGlsl (const std::string& vertexIn, const std::string& fragmentIn) {
+/** toGlsl without its cache */
+std::pair<std::string, std::string> translate (const std::string& vertexIn, const std::string& fragmentIn) {
     std::string vertex = dropUnmatchedEndifs (spliceLines (vertexIn));
     std::string fragment = dropUnmatchedEndifs (spliceLines (fragmentIn));
     if (WallpaperEngine::Health::enabled () && (vertex.size () != vertexIn.size () || fragment.size () != fragmentIn.size ())
@@ -755,6 +756,25 @@ std::pair<std::string, std::string> GLSLContext::toGlsl (const std::string& vert
 
     return { vertexCompiler.compile () + "#if 0\n" + vertex + "\n#endif",
 	     fragmentCompiler.compile () + "#if 0\n" + fragment + "\n#endif" };
+}
+} // namespace
+
+std::pair<std::string, std::string> GLSLContext::toGlsl (
+    const std::string& vertexIn, const std::string& fragmentIn, const std::optional<std::filesystem::path>& cacheDir
+) {
+    // the health report and the shader sweep's capture read what the compile itself reports (its rewrites, its
+    // errors), which a stored result would skip
+    if (cacheDir.has_value () && !WallpaperEngine::Health::enabled ()) {
+	if (auto stored = ShaderCache::load (*cacheDir, "glsl", { vertexIn, fragmentIn }); stored && stored->size () == 2) {
+	    return { std::move ((*stored)[0]), std::move ((*stored)[1]) };
+	}
+    }
+    auto results = translate (vertexIn, fragmentIn);
+    // a failed translation ({"", ""}) is done again: its errors are logged each time
+    if (cacheDir.has_value () && !results.first.empty () && !results.second.empty ()) {
+	ShaderCache::store (*cacheDir, "glsl", { vertexIn, fragmentIn }, { results.first, results.second });
+    }
+    return results;
 }
 
 std::unique_ptr<GLSLContext> GLSLContext::sInstance = nullptr;

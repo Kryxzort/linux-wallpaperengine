@@ -38,6 +38,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Render/Shaders/ShaderUnit.cpp
     WallpaperEngine/Render/Shaders/WEShaderRules.cpp
     WallpaperEngine/Render/Shaders/GLSLContext.cpp
+    WallpaperEngine/Render/Shaders/ShaderCache.cpp
 
     WallpaperEngine/Render/Helpers/ContextAware.cpp
 
@@ -188,9 +189,11 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
 target_compile_definitions(${TARGET_NAME}-object PRIVATE WPENGINE_BUILD)
 target_compile_definitions(${TARGET_NAME} PUBLIC ERRORONLY=${ERRORONLY})
 
+# --build-id: the shader cache keys its entries on it (Render/Shaders/ShaderCache.h); not every toolchain adds one
 target_link_options(${TARGET_NAME} PRIVATE
     "-Wl,--exclude-libs,ALL"
-    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/version.lds")
+    "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/version.lds"
+    "-Wl,--build-id=sha1")
 
 
 set_target_properties(${TARGET_NAME} PROPERTIES

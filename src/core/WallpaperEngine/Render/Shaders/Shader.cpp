@@ -40,6 +40,11 @@ const std::string& Shader::vertex () { return this->m_vertex.compile (); }
 
 const std::string& Shader::fragment () { return this->m_fragment.compile (); }
 
+void Shader::setCacheDir (const std::optional<std::filesystem::path>& dir) {
+    this->m_vertex.setCacheDir (dir);
+    this->m_fragment.setCacheDir (dir);
+}
+
 const ShaderUnit& Shader::getVertex () const { return this->m_vertex; }
 
 const ShaderUnit& Shader::getFragment () const { return this->m_fragment; }

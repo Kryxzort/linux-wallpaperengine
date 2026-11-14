@@ -52,6 +52,8 @@ public:
      * @return The fragment's shader code for OpenGL to use
      */
     const std::string& fragment ();
+    /** Where both units keep their text passes' results across launches (ShaderCache.h); call before vertex/fragment */
+    void setCacheDir (const std::optional<std::filesystem::path>& dir);
     /**
      * @return The vertex shader unit
      */

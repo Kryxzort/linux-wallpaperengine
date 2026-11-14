@@ -828,10 +828,13 @@ void CPass::setupShaders () {
 	[this] (int index, const std::string& defaultName) { return this->shaderFormatOf (index, defaultName); }
     );
 
+    this->m_shader->setCacheDir (this->getContext ().getContext ().config.shaderCacheDir);
+
     // WPENGINE_HEALTH: a compile error names the shader
     const WallpaperEngine::Health::Scope healthShader ("shader", shaderName);
-    const auto [vertex, fragment]
-	= Shaders::GLSLContext::get ().toGlsl (this->m_shader->vertex (), this->m_shader->fragment ());
+    const auto [vertex, fragment] = Shaders::GLSLContext::get ().toGlsl (
+	this->m_shader->vertex (), this->m_shader->fragment (), this->getContext ().getContext ().config.shaderCacheDir
+    );
 
     // compile the shaders
     const GLuint vertexShaderID = compileShader (vertex.c_str (), GL_VERTEX_SHADER);
