@@ -82,6 +82,9 @@ protected:
     GLuint m_fbo = GL_NONE;
     mutable int64_t m_width;
     mutable int64_t m_height;
+    /** mpv's display size as its property-change events report it (render () reads no property: see there) */
+    mutable int64_t m_videoWidth = 0;
+    mutable int64_t m_videoHeight = 0;
     mpv_handle* m_handle = nullptr;
     mpv_render_context* m_renderContext = nullptr;
     double m_volume = 0.0f;

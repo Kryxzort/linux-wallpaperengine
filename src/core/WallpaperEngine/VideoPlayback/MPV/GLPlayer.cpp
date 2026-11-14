@@ -10,6 +10,12 @@
 
 using namespace WallpaperEngine::VideoPlayback::MPV;
 
+namespace {
+// mpv_observe_property's reply_userdata for the display size
+constexpr uint64_t kObserveWidth = 1;
+constexpr uint64_t kObserveHeight = 2;
+} // namespace
+
 void* get_proc_address (void* ctx, const char* name) {
     const auto gl_proc_address = static_cast<GLPlayer*> (ctx)->getContext ().getContext ().gl_proc_address;
 
@@ -98,6 +104,8 @@ void GLPlayer::clearMuted () {
 
     if (this->m_handle) {
 	mpv_set_property_string (this->m_handle, "mute", "no");
+	// a player started muted has no audio track (init); sound needs one
+	mpv_set_property_string (this->m_handle, "aid", "auto");
     }
 }
 
@@ -198,7 +206,9 @@ void GLPlayer::render () const {
 	const_cast<GLPlayer*> (this)->seek (*this->m_pendingSeek);
     }
 
-    // read all the events available
+    // read all the events available. The frame size comes from observed properties, never mpv_get_property: a get
+    // waits for mpv's core thread, which can be busy for seconds (an audio output that won't open), and this is the
+    // render thread
     while (true) {
 	const mpv_event* event = mpv_wait_event (this->m_handle, 0);
 
@@ -206,26 +216,29 @@ void GLPlayer::render () const {
 	    break;
 	}
 
-	if (event->event_id != MPV_EVENT_VIDEO_RECONFIG) {
+	if (event->event_id != MPV_EVENT_PROPERTY_CHANGE) {
 	    continue;
 	}
 
-	int64_t width, height;
+	const auto* property = static_cast<const mpv_event_property*> (event->data);
 
-	if (mpv_get_property (this->m_handle, "dwidth", MPV_FORMAT_INT64, &width) < 0) {
+	if (property->format != MPV_FORMAT_INT64) {
 	    continue;
 	}
 
-	if (mpv_get_property (this->m_handle, "dheight", MPV_FORMAT_INT64, &height) < 0) {
-	    continue;
-	}
+	const int64_t value = *static_cast<const int64_t*> (property->data);
 
-	if (width < 0 || height < 0) {
-	    continue;
+	if (event->reply_userdata == kObserveWidth) {
+	    this->m_videoWidth = value;
+	} else if (event->reply_userdata == kObserveHeight) {
+	    this->m_videoHeight = value;
 	}
+    }
 
-	this->m_width = width;
-	this->m_height = height;
+    if (this->m_videoWidth > 0 && this->m_videoHeight > 0
+	&& (this->m_videoWidth != this->m_width || this->m_videoHeight != this->m_height)) {
+	this->m_width = this->m_videoWidth;
+	this->m_height = this->m_videoHeight;
 	// reconfigure the texture
 	glBindTexture (GL_TEXTURE_2D, this->m_outputTexture);
 	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, this->m_width, this->m_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -300,6 +313,10 @@ void GLPlayer::init () {
     mpv_set_option_string (this->m_handle, "vo", "libmpv");
     mpv_set_option_string (this->m_handle, "profile", "fast");
     mpv_set_option_string (this->m_handle, "untimed", this->m_untimed ? "yes" : "no");
+    // a muted player (every video texture) selects no audio track, so it never opens an audio output: one that can't
+    // connect (no PipeWire) can hold mpv's core thread for 20-30 s in its cleanup, and a muted one makes no sound
+    // anyway. clearMuted selects one
+    mpv_set_option_string (this->m_handle, "aid", this->m_muted ? "no" : "auto");
 
     if (mpv_initialize (this->m_handle) < 0) {
 	sLog.exception ("Could not initialize mpv context");
@@ -312,6 +329,9 @@ void GLPlayer::init () {
     mpv_set_property_string (this->m_handle, "keep-open", "yes");
     mpv_set_property (this->m_handle, "speed", MPV_FORMAT_DOUBLE, &this->m_rate);
     mpv_set_property (this->m_handle, "volume", MPV_FORMAT_DOUBLE, &this->m_volume);
+
+    mpv_observe_property (this->m_handle, kObserveWidth, "dwidth", MPV_FORMAT_INT64);
+    mpv_observe_property (this->m_handle, kObserveHeight, "dheight", MPV_FORMAT_INT64);
 
     // initialize gl context for mpv
     mpv_opengl_init_params gl_init_params { get_proc_address, this };
