@@ -54,6 +54,27 @@ struct wp_time_counter {
 };
 
 /**
+ * A second OpenGL context in the share group of the one the host renders on, for the core's texture upload thread
+ */
+struct wp_gl_upload_context {
+    /**
+     * Pointer to user-defined data that will be passed to the callbacks
+     */
+    void* user_parameter;
+
+    /**
+     * Makes the upload context current on the calling thread (the core's upload thread, once, before its first
+     * upload); false: there is none, and textures upload on the render thread
+     */
+    bool (*make_current) (void* user_parameter);
+
+    /**
+     * Makes no context current on the calling thread (the upload thread, once, as it stops in wp_context_destroy)
+     */
+    void (*release) (void* user_parameter);
+};
+
+/**
  * Provides callbacks to get new audio frames for audio-responsive backgrounds
  */
 struct wp_audio_input_mix {
@@ -102,6 +123,17 @@ WPENGINE_API void wp_context_destroy (wp_context* context);
  * @param address The address to use for opengl function lookups
  */
 WPENGINE_API void wp_context_set_gl_proc_address (wp_context* context, wp_gl_proc_address* address);
+
+/**
+ * Gives the core a context to upload textures on from a thread of its own while a wallpaper builds (its JPEG / PNG
+ * textures: the driver's copy of their pixels otherwise runs on the render thread). Set it before the first
+ * wp_render_frame; it must stay valid until wp_context_destroy returns. Unset (or make_current failing): every
+ * texture uploads on the render thread
+ *
+ * @param context The context to set the upload context for
+ * @param upload The upload context's callbacks, or NULL
+ */
+WPENGINE_API void wp_context_set_gl_upload_context (wp_context* context, wp_gl_upload_context* upload);
 
 /**
  * Updates the time counter handlers

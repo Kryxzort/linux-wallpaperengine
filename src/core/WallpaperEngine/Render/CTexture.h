@@ -24,6 +24,8 @@ struct DecodedTextureImage {
     std::unique_ptr<unsigned char, void (*) (void*)> pixels { nullptr, std::free };
     int width = 0;
     int height = 0;
+    /** uploaded on the upload thread (TextureUploads), `pixels` freed: the fence after it */
+    GLsync uploaded = nullptr;
 };
 /**
  * A normal texture file in WallpaperEngine's format

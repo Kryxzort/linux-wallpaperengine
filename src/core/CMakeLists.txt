@@ -55,6 +55,7 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Render/Camera.cpp
     WallpaperEngine/Render/CObject.cpp
     WallpaperEngine/Render/CTexture.cpp
+    WallpaperEngine/Render/TextureUploads.cpp
     WallpaperEngine/Render/AlbumTexture.cpp
 
     WallpaperEngine/Render/Objects/CRenderable.cpp

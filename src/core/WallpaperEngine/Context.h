@@ -11,14 +11,21 @@
 
 #include "Audio/AudioContext.h"
 #include "Render/RenderContext.h"
+#include "Render/TextureUploads.h"
 
 namespace WallpaperEngine {
 class Context {
 public:
+    /** the upload thread (TextureUploads::of): declared first so it stops after every texture in the cache is gone */
+    mutable std::unique_ptr<Render::TextureUploads> texture_uploads;
+    /** the deferred JPEG / PNG bytes seen so far (TextureUploads::of starts the thread past kStartBytes) */
+    mutable size_t deferred_upload_bytes = 0;
     std::unique_ptr<TextureCache> texture_cache;
     std::unique_ptr<Audio::AudioContext> audio;
     const Configuration& config;
     wp_gl_proc_address* gl_proc_address;
+    /** the host's context for the upload thread (wp_context_set_gl_upload_context), or null */
+    wp_gl_upload_context* gl_upload_context = nullptr;
     wp_time_counter* time_counter;
     wp_audio_input_mix* audio_input_mix;
     std::vector<Data::Model::ProjectSharedPtr> projects;

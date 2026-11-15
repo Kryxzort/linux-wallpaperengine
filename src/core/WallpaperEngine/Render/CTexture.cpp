@@ -5,6 +5,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "RenderContext.h"
+#include "TextureUploads.h"
+#include "WallpaperEngine/Context.h"
 
 #include <stb_image.h>
 
@@ -139,10 +141,23 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header, const bool 
 
 	for (const auto& mipmap : mipmaps) {
 	    if (this->m_header->freeImageFormat != FIF_UNKNOWN && deferUpload) {
+		// asked here, on the render thread, so the thread starts before a pool thread can use it
+		TextureUploads* uploads = TextureUploads::of (
+		    this->getContext ().getContext (), static_cast<size_t> (mipmap->width) * mipmap->height * 4
+		);
+		const GLuint texture = this->m_textureID[index];
 		this->m_pendingUploads.push_back (
 		    { index, level,
-		      DecodePool::get ().submit (std::packaged_task<DecodedTextureImage ()> ([mipmap] {
-			  return decodeImage (mipmap);
+		      DecodePool::get ().submit (std::packaged_task<DecodedTextureImage ()> ([mipmap, uploads, texture, level] {
+			  DecodedTextureImage image = decodeImage (mipmap);
+			  if (uploads != nullptr && image.pixels) {
+			      image.uploaded
+				  = uploads->upload (texture, level, image.width, image.height, image.pixels.get ());
+			      if (image.uploaded != nullptr) {
+				  image.pixels.reset ();
+			      }
+			  }
+			  return image;
 		      })) }
 		);
 		level++;
@@ -212,6 +227,13 @@ void CTexture::finishUpload () const {
     for (auto& pending : this->m_pendingUploads) {
 	const DecodedTextureImage image = pending.decoded.get ();
 	glBindTexture (GL_TEXTURE_2D, this->m_textureID[pending.image]);
+	if (image.uploaded != nullptr) {
+	    // the upload thread's pixels: the GPU waits for them, and the bind above is the re-bind after which this
+	    // context sees them
+	    glWaitSync (image.uploaded, 0, GL_TIMEOUT_IGNORED);
+	    glDeleteSync (image.uploaded);
+	    continue;
+	}
 	glTexImage2D (
 	    GL_TEXTURE_2D, pending.level, GL_RGBA8, image.width, image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
 	    image.pixels.get ()
@@ -228,6 +250,13 @@ void CTexture::finishUpload () const {
 CTexture::~CTexture () {
     // first release the player to prevent using null references
     this->m_player.reset ();
+
+    // never uploaded (finishUpload didn't run): a decode or upload still writing this texture must end first
+    for (auto& pending : this->m_pendingUploads) {
+	if (const DecodedTextureImage image = pending.decoded.get (); image.uploaded != nullptr) {
+	    glDeleteSync (image.uploaded);
+	}
+    }
 
     if (this->m_header->isVideoMp4 || this->m_header->flags & TextureFlags_Video) {
 	glDeleteTextures (1, this->m_textureID);
