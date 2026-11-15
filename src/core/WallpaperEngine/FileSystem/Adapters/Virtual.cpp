@@ -42,6 +42,7 @@ void VirtualAdapter::add (const std::filesystem::path& path, const std::string& 
 
 void VirtualAdapter::add (const std::filesystem::path& path, MemoryStreamSharedPtr stream) {
     this->files.insert_or_assign (path, stream);
+    this->generation++;
 }
 
 bool VirtualFactory::handlesMountpoint (const std::filesystem::path& path) const { return path.string () == "virtual"; }

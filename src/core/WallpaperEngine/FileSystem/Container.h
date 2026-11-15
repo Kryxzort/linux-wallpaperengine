@@ -5,6 +5,9 @@
 
 #include "../Data/Utils/BinaryReader.h"
 #include <filesystem>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace WallpaperEngine::FileSystem {
 using namespace WallpaperEngine::Data::Utils;
@@ -73,6 +76,8 @@ private:
      * @return The adapter handling the file and the path to open on it
      */
     std::pair<Adapter&, std::filesystem::path> resolve (const std::filesystem::path& path) const;
+    /** resolve without m_resolved */
+    std::pair<Adapter&, std::filesystem::path> resolveUncached (const std::filesystem::path& path) const;
     /**
      * @param normalized The normalized path
      * @param ignoreCase Whether to match it ignoring case (findIgnoringCase) instead of exactly (exists)
@@ -86,6 +91,22 @@ private:
     std::vector<std::pair<std::filesystem::path, AdapterSharedPtr>> m_mountpoints;
     /** Virtual file system adapter */
     std::shared_ptr<VirtualAdapter> m_vfs;
+
+    /** what resolve found for a path as asked: the adapter (null: in no mountpoint) and the path to open on it */
+    struct Resolved {
+	Adapter* adapter;
+	std::filesystem::path path;
+    };
+    /**
+     * resolve's answers, so a path asked for again (a scene reads common.h once per shader unit, and probes the same
+     * missing zcompat and texture paths, each a directory scan ignoring case) costs one lookup. Kept while the
+     * mountpoints and the VFS stay as they were (m_resolvedFor); off while the health report is on, which records
+     * every lookup's own outcome. Files are reopened on every read, so a remembered hit reads the file as it is now
+     */
+    mutable std::unordered_map<std::string, Resolved> m_resolved;
+    /** the mountpoint count and VFS generation m_resolved was made for */
+    mutable std::pair<size_t, uint64_t> m_resolvedFor { 0, 0 };
+    mutable std::mutex m_resolvedLock;
 };
 
 using ContainerUniquePtr = std::unique_ptr<Container>;

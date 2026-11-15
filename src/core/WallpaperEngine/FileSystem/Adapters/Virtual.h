@@ -28,5 +28,7 @@ struct VirtualAdapter final : Adapter {
     void add (const std::filesystem::path& path, MemoryStreamSharedPtr stream);
 
     std::map<std::filesystem::path, MemoryStreamSharedPtr> files;
+    /** bumped by every add: a Container's remembered lookups are stale after one */
+    uint64_t generation = 0;
 };
 }

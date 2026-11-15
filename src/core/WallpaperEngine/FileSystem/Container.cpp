@@ -122,6 +122,35 @@ Adapter* Container::findAdapter (const std::string& normalized, bool ignoreCase,
 }
 
 std::pair<Adapter&, std::filesystem::path> Container::resolve (const std::filesystem::path& path) const {
+    if (WallpaperEngine::Health::enabled ()) {
+	return this->resolveUncached (path);
+    }
+    std::lock_guard lock (this->m_resolvedLock);
+    const std::pair<size_t, uint64_t> state { this->m_mountpoints.size (), this->m_vfs->generation };
+    if (state != this->m_resolvedFor) {
+	this->m_resolved.clear ();
+	this->m_resolvedFor = state;
+    }
+    const auto key = path.string ();
+    if (const auto it = this->m_resolved.find (key); it != this->m_resolved.end ()) {
+	if (it->second.adapter == nullptr) {
+	    throw std::filesystem::filesystem_error (
+		"Cannot find requested file in any of the mountpoints", path, std::error_code ()
+	    );
+	}
+	return { *it->second.adapter, it->second.path };
+    }
+    try {
+	auto [adapter, found] = this->resolveUncached (path);
+	this->m_resolved.emplace (key, Resolved { &adapter, found });
+	return { adapter, found };
+    } catch (const std::filesystem::filesystem_error&) {
+	this->m_resolved.emplace (key, Resolved { nullptr, {} });
+	throw;
+    }
+}
+
+std::pair<Adapter&, std::filesystem::path> Container::resolveUncached (const std::filesystem::path& path) const {
     const auto normalized = normalize_path (path).string ();
     const bool rooted = normalized.starts_with ("/");
     std::filesystem::path found;
