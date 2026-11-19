@@ -569,8 +569,8 @@ void CParticle::render () {
     m_time = this->getContext ().getContext ().renderTime;
 
     if (dt > 0.0f) {
-	// Cap dt to prevent simulation instability
-	// Also provides more consistent behavior across different FPS
+	// WE caps a frame's step at 0.1 s too: the measured frame time, then the scene's step (rate and speed applied),
+	// each min (…, 0.1) (2.8.797: 0x1401272c1, 0x14012745e) before the scene and its systems step by it
 	dt = std::min (dt, 0.1f);
 	// the `rate` override is the system's playback speed: it scales the whole step (motion, ageing and
 	// emission alike), at least 0.01 (GH 0x140255d00: dt *= max(rate, 0.01)); read every frame
@@ -789,23 +789,38 @@ void CParticle::update (float dt) {
 	}
     }
 
-    // Update particle age; size, alpha and colour go back to their spawn values for the operators to multiply
-    // (the head of WE's operator interpreter, GH 0x140265800)
+    // Update particle age, once a frame by the whole step (2.8.797: before the interpreter, 0x140209a50)
     for (uint32_t i = 0; i < m_particleCount; i++) {
-	auto& p = m_particles[i];
-	p.age += dt;
-	p.size = p.initial.size;
-	p.alpha = p.initial.alpha;
-	p.color = p.initial.color;
+	m_particles[i].age += dt;
     }
+
+    // WE at an fps setting of 1 to 20 (its default 15) runs the operator interpreter twice a frame, each on half the
+    // step and half the forces' step (2.8.797: 0x14020a7a8, `dec eax; cmp eax, 0x13; ja` on its fps, then the
+    // interpreter 0x1402132b0 twice); the ageing, the emitters, the control points and the children stay once a frame.
+    // The first half's flag (0x4 at system +0x3fe) is read only by `movementpath` (interpreter op 2), which this core
+    // does not run. Halves change what isn't linear in the step: drag, gravity's integration, the forces.
+    // Guard: patches/lwe/tests host_api_test particle_half_steps_below_21_fps
+    const long fps = std::lround (getScene ().getFrameRate ());
+    const int halves = fps >= 1 && fps <= 20 ? 2 : 1;
+    const float stepDt = dt / static_cast<float> (halves);
 
     // the forces' step (the interpreter's third argument, GH 0x14025c2e0): dt · min (0.025 / frame time, 1)^0.7, so
     // drag and the forces weaken below 40 fps; the frame time is inferred to be the real one (WE: host +0x14c)
-    m_forceDt = dt * std::pow (std::min (0.025f / std::max (m_frameTime, 1e-4f), 1.0f), 0.7f);
+    m_forceDt = stepDt * std::pow (std::min (0.025f / std::max (m_frameTime, 1e-4f), 1.0f), 0.7f);
 
-    // Apply operators to living particles (including alphafade)
-    for (auto& op : m_operators) {
-	op (m_particles, m_particleCount, m_opControlPoints, m_simTime, dt);
+    for (int half = 0; half < halves; half++) {
+	// size, alpha and colour go back to their spawn values for the operators to multiply (the head of WE's
+	// operator interpreter, GH 0x140265800), so the second half multiplies them afresh, as WE's does
+	for (uint32_t i = 0; i < m_particleCount; i++) {
+	    auto& p = m_particles[i];
+	    p.size = p.initial.size;
+	    p.alpha = p.initial.alpha;
+	    p.color = p.initial.color;
+	}
+	// Apply operators to living particles (including alphafade)
+	for (auto& op : m_operators) {
+	    op (m_particles, m_particleCount, m_opControlPoints, m_simTime, stepDt);
+	}
     }
     for (int i = 0; i < 8; i++) {
 	m_controlPointLast[i] = m_opControlPoints[i].position;
