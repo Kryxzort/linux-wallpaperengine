@@ -136,6 +136,21 @@ WPENGINE_API void wp_context_set_gl_proc_address (wp_context* context, wp_gl_pro
 WPENGINE_API void wp_context_set_gl_upload_context (wp_context* context, wp_gl_upload_context* upload);
 
 /**
+ * How the video players this context starts (video textures, video wallpapers) decode: libmpv's `hwdec` and
+ * `gpu-hwdec-interop` values. libmpv's render API tries every interop it has when a player's render context is made,
+ * each opening its device where it can (VAAPI's display, CUDA's context, ...), unless `gpu-hwdec-interop` names one. A
+ * host that knows its GPU names the one it decodes with (`cuda`, `vaapi`, ...) or `no` (copy modes only) and an `hwdec`
+ * list that suits it. Set it before the first wp_render_frame;
+ * a player already started keeps what it had. NULL leaves that value at libmpv's default (`hwdec` `auto`,
+ * `gpu-hwdec-interop` `auto`)
+ *
+ * @param context The context to set it for
+ * @param hwdec libmpv's `hwdec` value (e.g. "nvdec,nvdec-copy,auto-copy"), or NULL
+ * @param interop libmpv's `gpu-hwdec-interop` value (e.g. "cuda", "no"), or NULL
+ */
+WPENGINE_API void wp_context_set_video_hwdec (wp_context* context, const char* hwdec, const char* interop);
+
+/**
  * Updates the time counter handlers
  *
  * @param context The context to set the wp_time_counter for

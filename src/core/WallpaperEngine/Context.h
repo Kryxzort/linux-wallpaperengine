@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "linux-wallpaperengine/context.h"
 
@@ -26,6 +28,10 @@ public:
     wp_gl_proc_address* gl_proc_address;
     /** the host's context for the upload thread (wp_context_set_gl_upload_context), or null */
     wp_gl_upload_context* gl_upload_context = nullptr;
+    /** libmpv's `hwdec` for every video player (wp_context_set_video_hwdec); unset: `auto` */
+    std::optional<std::string> video_hwdec;
+    /** libmpv's `gpu-hwdec-interop` for every video player (wp_context_set_video_hwdec); unset: libmpv's (all) */
+    std::optional<std::string> video_hwdec_interop;
     wp_time_counter* time_counter;
     wp_audio_input_mix* audio_input_mix;
     std::vector<Data::Model::ProjectSharedPtr> projects;

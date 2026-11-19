@@ -49,6 +49,14 @@ WPENGINE_API void wp_context_set_gl_upload_context (wp_context* context, wp_gl_u
     WPENGINE_CONTEXT_API_END ();
 }
 
+WPENGINE_API void wp_context_set_video_hwdec (wp_context* context, const char* hwdec, const char* interop) {
+    WPENGINE_CONTEXT_API_BEGIN
+    auto* ctx = static_cast<WallpaperEngine::Context*> (context);
+    ctx->video_hwdec = hwdec ? std::optional<std::string> (hwdec) : std::nullopt;
+    ctx->video_hwdec_interop = interop ? std::optional<std::string> (interop) : std::nullopt;
+    WPENGINE_CONTEXT_API_END ();
+}
+
 WPENGINE_API void wp_context_set_time_counter (wp_context* context, wp_time_counter* counter) {
     WPENGINE_CONTEXT_API_BEGIN
     static_cast<WallpaperEngine::Context*> (context)->time_counter = counter ?: &default_time_counter;

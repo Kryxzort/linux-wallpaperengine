@@ -317,13 +317,19 @@ void GLPlayer::init () {
     // connect (no PipeWire) can hold mpv's core thread for 20-30 s in its cleanup, and a muted one makes no sound
     // anyway. clearMuted selects one
     mpv_set_option_string (this->m_handle, "aid", this->m_muted ? "no" : "auto");
+    // the host's decoder choice (wp_context_set_video_hwdec). Without a gpu-hwdec-interop the render context made below
+    // tries every interop libmpv has, each opening its device where it can, whatever the decoder will be
+    const auto& context = this->getContext ().getContext ();
+    if (context.video_hwdec_interop.has_value ()) {
+	mpv_set_option_string (this->m_handle, "gpu-hwdec-interop", context.video_hwdec_interop->c_str ());
+    }
+    mpv_set_option_string (this->m_handle, "hwdec", context.video_hwdec.value_or ("auto").c_str ());
 
     if (mpv_initialize (this->m_handle) < 0) {
 	sLog.exception ("Could not initialize mpv context");
     }
 
-    // ensure video is muted and plays in a loop
-    mpv_set_property_string (this->m_handle, "hwdec", "auto");
+    // ensure video plays in a loop
     mpv_set_property_string (this->m_handle, "loop", this->m_loop ? "inf" : "no");
     // at the end of a video that doesn't loop, stay on its last frame (IVideoTexture's ended callback)
     mpv_set_property_string (this->m_handle, "keep-open", "yes");
