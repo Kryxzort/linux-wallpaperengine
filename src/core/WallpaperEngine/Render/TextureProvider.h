@@ -9,7 +9,7 @@
 #include "WallpaperEngine/Data/Assets/Texture.h"
 #include "WallpaperEngine/Data/Model/Types.h"
 
-namespace WallpaperEngine::VideoPlayback::MPV {
+namespace WallpaperEngine::VideoPlayback {
 class GLPlayer;
 }
 
@@ -91,14 +91,14 @@ public:
      * Increments the usage count of the texture
      *
      * Directly controls playback for video CTextures, only started when at least one thing is using it
-     * Initializes mpv if needed and starts playback
+     * Starts the video decoder if needed
      */
     virtual void incrementUsageCount () const = 0;
     /**
      * Decrements the usage count of the texture
      *
      * Directly controls playback for video CTextures, only stopped when nothing is using it
-     * De-initializes mpv if needed
+     * Stops the video decoder when nothing uses it
      */
     virtual void decrementUsageCount () const = 0;
     /**
@@ -106,6 +106,6 @@ public:
      */
     virtual void update () const = 0;
     /** A video texture's player (SceneScript's IVideoTexture), nullptr for every other texture */
-    [[nodiscard]] virtual VideoPlayback::MPV::GLPlayer* getVideoPlayer () const { return nullptr; }
+    [[nodiscard]] virtual VideoPlayback::GLPlayer* getVideoPlayer () const { return nullptr; }
 };
 } // namespace WallpaperEngine::Render

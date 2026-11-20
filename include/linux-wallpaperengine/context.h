@@ -136,19 +136,19 @@ WPENGINE_API void wp_context_set_gl_proc_address (wp_context* context, wp_gl_pro
 WPENGINE_API void wp_context_set_gl_upload_context (wp_context* context, wp_gl_upload_context* upload);
 
 /**
- * How the video players this context starts (video textures, video wallpapers) decode: libmpv's `hwdec` and
- * `gpu-hwdec-interop` values. libmpv's render API tries every interop it has when a player's render context is made,
- * each opening its device where it can (VAAPI's display, CUDA's context, ...), unless `gpu-hwdec-interop` names one. A
- * host that knows its GPU names the one it decodes with (`cuda`, `vaapi`, ...) or `no` (copy modes only) and an `hwdec`
- * list that suits it. Set it before the first wp_render_frame;
- * a player already started keeps what it had. NULL leaves that value at libmpv's default (`hwdec` `auto`,
- * `gpu-hwdec-interop` `auto`). Whatever is set, every player also asks libmpv for `cuda-primary-context`, so with the
- * CUDA interop or a CUDA decoder they all share the GPU's primary CUDA context instead of making one each (a libmpv
- * without that option keeps one per player)
+ * How the video players this context starts (video textures, video wallpapers) decode, in the names mpv gives them: an
+ * `hwdec` list tried in order (`nvdec`/`cuda`, `nvdec-copy`, `vaapi[-copy]`, `vulkan[-copy]`, `vdpau[-copy]`, `auto`
+ * = CUDA, VAAPI then Vulkan, `auto-copy*` the same copied, `no` = software; software also when the list runs out or
+ * the hardware can't take a video) and the GL interop frames may take (`cuda`, `all` or NULL: a CUDA frame reaches
+ * GL through the CUDA–GL interop without leaving the GPU; anything else, `no` included: every hardware frame is
+ * copied through memory). Each device type is opened once per process and shared by every video (CUDA's on the GPU's
+ * primary context), and only when a video's codec can decode on it. The CUDA interop needs libcuda in the process
+ * (FFmpeg loads it by soname). Set it before the first wp_render_frame; a player already started keeps what it had.
+ * NULL leaves `hwdec` at `auto`
  *
  * @param context The context to set it for
- * @param hwdec libmpv's `hwdec` value (e.g. "nvdec,nvdec-copy,auto-copy"), or NULL
- * @param interop libmpv's `gpu-hwdec-interop` value (e.g. "cuda", "no"), or NULL
+ * @param hwdec the `hwdec` list (e.g. "nvdec,nvdec-copy,auto-copy"), or NULL
+ * @param interop the interop (e.g. "cuda", "no"), or NULL
  */
 WPENGINE_API void wp_context_set_video_hwdec (wp_context* context, const char* hwdec, const char* interop);
 

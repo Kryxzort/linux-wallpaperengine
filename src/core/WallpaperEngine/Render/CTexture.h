@@ -3,22 +3,19 @@
 #include "Helpers/ContextAware.h"
 #include "TextureProvider.h"
 #include "WallpaperEngine/Data/Assets/Texture.h"
-#include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
+#include "WallpaperEngine/VideoPlayback/GLPlayer.h"
 
 #include <glad/glad.h>
 #include <cstdlib>
 #include <future>
 #include <glm/vec4.hpp>
 #include <memory>
-#include <mpv/client.h>
-#include <mpv/render.h>
-#include <mpv/render_gl.h>
 #include <vector>
 
 namespace WallpaperEngine::Render {
 class RenderContext;
 using namespace WallpaperEngine::Data::Assets;
-using namespace WallpaperEngine::VideoPlayback::MPV;
+using namespace WallpaperEngine::VideoPlayback;
 /** A JPEG / PNG / … mipmap decoded to RGBA8 by stb_image (null: it refused the file), freed as stbi_image_free does */
 struct DecodedTextureImage {
     std::unique_ptr<unsigned char, void (*) (void*)> pixels { nullptr, std::free };
@@ -66,14 +63,14 @@ public:
      * Increments the usage count of the texture
      *
      * Directly controls playback for video CTextures, only started when at least one thing is using it
-     * Initializes mpv if needed and starts playback
+     * Starts the video decoder if needed
      */
     void incrementUsageCount () const override;
     /**
      * Decrements the usage count of the texture
      *
      * Directly controls playback for video CTextures, only stopped when nothing is using it
-     * De-initializes mpv if needed
+     * Stops the video decoder when nothing uses it
      */
     void decrementUsageCount () const override;
     /**

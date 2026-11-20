@@ -28,9 +28,9 @@ public:
     wp_gl_proc_address* gl_proc_address;
     /** the host's context for the upload thread (wp_context_set_gl_upload_context), or null */
     wp_gl_upload_context* gl_upload_context = nullptr;
-    /** libmpv's `hwdec` for every video player (wp_context_set_video_hwdec); unset: `auto` */
+    /** the hardware every video decodes on, as mpv's `hwdec` names it (wp_context_set_video_hwdec, VideoPlayback::HwdecChoice); unset: `auto` */
     std::optional<std::string> video_hwdec;
-    /** libmpv's `gpu-hwdec-interop` for every video player (wp_context_set_video_hwdec); unset: libmpv's (all) */
+    /** the GL interop video frames may take, as mpv's `gpu-hwdec-interop` names it: `cuda` (or unset) lets CUDA frames reach GL without leaving the GPU */
     std::optional<std::string> video_hwdec_interop;
     wp_time_counter* time_counter;
     wp_audio_input_mix* audio_input_mix;

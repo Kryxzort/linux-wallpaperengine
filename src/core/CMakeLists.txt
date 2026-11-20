@@ -95,8 +95,9 @@ set(TARGET_SOURCE_FILES
     WallpaperEngine/Data/Dumpers/StringPrinter.cpp
     WallpaperEngine/Data/JSON.cpp
 
-    WallpaperEngine/VideoPlayback/MPV/GLPlayer.cpp
-    WallpaperEngine/VideoPlayback/MPV/MemoryStreamProtocol.cpp
+    WallpaperEngine/VideoPlayback/CudaGL.cpp
+    WallpaperEngine/VideoPlayback/GLPlayer.cpp
+    WallpaperEngine/VideoPlayback/VideoDecoder.cpp
 
     WallpaperEngine/Scripting/Adapters/ObjectAdapter.cpp
     WallpaperEngine/Scripting/Adapters/ScriptableObjectAdapter.cpp
@@ -120,7 +121,6 @@ set(TARGET_LIBRARIES
     PkgConfig::lz4
     SDL2::SDL2
     PkgConfig::ffmpeg
-    PkgConfig::mpv
     kissfft::kissfft
     Freetype::Freetype
     PkgConfig::fontconfig
@@ -166,7 +166,6 @@ include(RequireQuickJS)
 include(RequireNLOHMANNJson)
 pkg_check_modules(lz4 REQUIRED IMPORTED_TARGET liblz4)
 pkg_check_modules(zlib REQUIRED IMPORTED_TARGET zlib)
-pkg_check_modules(mpv REQUIRED IMPORTED_TARGET mpv)
 pkg_check_modules(ffmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libswresample libswscale libavutil)
 find_package(SDL2 REQUIRED CONFIG REQUIRED COMPONENTS SDL2)
 find_package(Freetype REQUIRED)

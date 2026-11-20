@@ -1,15 +1,14 @@
 #include "CVideo.h"
 
-#include "WallpaperEngine/Audio/AudioPlayingDetector.h"
 #include "WallpaperEngine/Context.h"
 #include "WallpaperEngine/Data/Model/Project.h"
 #include "WallpaperEngine/Data/Model/Wallpaper.h"
-#include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
+#include "WallpaperEngine/VideoPlayback/GLPlayer.h"
 
 using namespace WallpaperEngine;
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::Render::Wallpapers;
-using namespace WallpaperEngine::VideoPlayback::MPV;
+using namespace WallpaperEngine::VideoPlayback;
 
 CVideo::CVideo (const Wallpaper& wallpaper, RenderContext& context, AudioContext& audioContext) :
     CWallpaper (wallpaper, context, audioContext, nullptr) {
@@ -19,16 +18,12 @@ CVideo::CVideo (const Wallpaper& wallpaper, RenderContext& context, AudioContext
     const std::filesystem::path videopath
 	= this->getVideo ().project.assetLocator->physicalPath (this->getVideo ().filename);
 
-    // create a player with a small framebuffer
-    // this will be changed after mpv starts playback and sees the video resolution
+    // create a player with a small framebuffer, resized to the video's at its first frame. The core's video player
+    // decodes no sound: a video wallpaper plays silent
     this->m_player = std::make_unique<GLPlayer> (
 	this->getContext (), this->CWallpaper::getWallpaperTexture (), videopath, 64, 64,
 	this->CWallpaper::getWallpaperFramebuffer ()
     );
-    const auto audioEnabled = this->getContext ().getContext ().config.enableAudio;
-    const auto volume = this->getContext ().getContext ().config.volume;
-
-    this->m_player->setVolume (audioEnabled ? volume * 100.0 / 128.0 : 0.0);
     // make sure the video has at least one usage marked, this ensures the video plays
     this->m_player->incrementUsageCount ();
 }
@@ -36,18 +31,6 @@ CVideo::CVideo (const Wallpaper& wallpaper, RenderContext& context, AudioContext
 CVideo::~CVideo () { this->m_player->decrementUsageCount (); }
 
 void CVideo::renderFrame () {
-    // ensure the video's audio follows audio detection rules
-    if (this->getContext ().getContext ().config.enableAudio
-	&& this->m_muted != this->getContext ().getContext ().audio->getDetector ().anythingPlaying ()) {
-	this->m_muted = !this->m_muted;
-
-	if (this->m_muted) {
-	    this->m_player->setMuted ();
-	} else {
-	    this->m_player->clearMuted ();
-	}
-    }
-
     this->m_player->render ();
 }
 

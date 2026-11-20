@@ -793,7 +793,7 @@ void CScene::renderFrame () {
     glColorMask (true, true, true, true);
     // (a pass leaves depth writes off: the clear needs them)
     glDepthMask (GL_TRUE);
-    // the clear colour every frame: a video texture's player (mpv) leaves its own behind, and a script may change it
+    // the clear colour every frame: a video texture's player may leave its own behind, and a script may change it
     // (IScene.clearcolor)
     const glm::vec3 clearColor = this->getScene ().colors.clear->value->getVec3 ();
     glClearColor (clearColor.r, clearColor.g, clearColor.b, 1.0f);

@@ -116,15 +116,12 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header, const bool 
 
 	const auto mipmap = *this->m_header->images.begin ()->second.begin ();
 
+	// the header keeps the video's bytes for the texture's life; a video texture plays silent, on the scene's clock
 	this->m_player = std::make_unique<GLPlayer> (
-	    this->getContext (), this->m_textureID[0],
-	    std::make_unique<MemoryStreamProtocol> (mipmap->uncompressedData.get (), mipmap->uncompressedSize),
-	    this->m_header->textureWidth, this->m_header->textureHeight
+	    this->getContext (), this->m_textureID[0], reinterpret_cast<const uint8_t*> (mipmap->uncompressedData.get ()),
+	    mipmap->uncompressedSize, this->m_header->textureWidth, this->m_header->textureHeight
 	);
-	// setup texture video player
-	this->m_player->setMuted ();
-	this->m_player->setVolume (0.0f);
-	this->m_player->setUntimed ();
+	this->m_player->prefetch ();
 	// texture is ready, nothing else to do
 	return;
     }

@@ -12,7 +12,7 @@
 #include "WallpaperEngine/Render/Objects/CSound.h"
 #include "WallpaperEngine/Render/Objects/CText.h"
 #include "WallpaperEngine/Logging/Log.h"
-#include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
+#include "WallpaperEngine/VideoPlayback/GLPlayer.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 #include "WallpaperEngine/Scripting/ScriptableObject.h"
 #include "WallpaperEngine/Utils/ScopeGuard.h"
@@ -1065,7 +1065,7 @@ void texture_animation_finalizer (JSRuntime* rt, JSValueConst val) {
 }
 
 namespace {
-using WallpaperEngine::VideoPlayback::MPV::GLPlayer;
+using WallpaperEngine::VideoPlayback::GLPlayer;
 
 GLPlayer* playerOf (JSValueConst value) {
     JSClassID classId = 0;

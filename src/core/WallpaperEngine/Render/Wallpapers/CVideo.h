@@ -2,10 +2,10 @@
 
 #include "WallpaperEngine/Audio/AudioStream.h"
 #include "WallpaperEngine/Render/CWallpaper.h"
-#include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
+#include "WallpaperEngine/VideoPlayback/GLPlayer.h"
 
 namespace WallpaperEngine::Render::Wallpapers {
-using namespace WallpaperEngine::VideoPlayback::MPV;
+using namespace WallpaperEngine::VideoPlayback;
 
 class CVideo final : public CWallpaper {
 public:
@@ -28,6 +28,5 @@ protected:
 private:
     GLPlayerUniquePtr m_player;
 
-    bool m_muted = false;
 };
 } // namespace WallpaperEngine::Render::Wallpapers
