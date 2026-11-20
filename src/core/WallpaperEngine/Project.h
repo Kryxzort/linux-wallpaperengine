@@ -53,6 +53,12 @@ public:
     void propertySet (const std::string& key, float value);
     void propertySet (const std::string& key, glm::vec4 value);
     void propertySet (const std::string& key, bool value);
+    // a C string is a string: without these, a `const char*` converts to bool before std::string and takes the bool
+    // overloads (every text, combo key and texture the host set became `true`)
+    void propertySet (const wp_project_property* property, const char* value) {
+	this->propertySet (property, std::string (value));
+    }
+    void propertySet (const std::string& key, const char* value) { this->propertySet (key, std::string (value)); }
 
     void describe (wp_describe_callback* callback);
 
