@@ -142,7 +142,9 @@ WPENGINE_API void wp_context_set_gl_upload_context (wp_context* context, wp_gl_u
  * host that knows its GPU names the one it decodes with (`cuda`, `vaapi`, ...) or `no` (copy modes only) and an `hwdec`
  * list that suits it. Set it before the first wp_render_frame;
  * a player already started keeps what it had. NULL leaves that value at libmpv's default (`hwdec` `auto`,
- * `gpu-hwdec-interop` `auto`)
+ * `gpu-hwdec-interop` `auto`). Whatever is set, every player also asks libmpv for `cuda-primary-context`, so with the
+ * CUDA interop or a CUDA decoder they all share the GPU's primary CUDA context instead of making one each (a libmpv
+ * without that option keeps one per player)
  *
  * @param context The context to set it for
  * @param hwdec libmpv's `hwdec` value (e.g. "nvdec,nvdec-copy,auto-copy"), or NULL

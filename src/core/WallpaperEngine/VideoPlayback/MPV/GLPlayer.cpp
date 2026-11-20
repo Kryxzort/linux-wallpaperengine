@@ -324,6 +324,10 @@ void GLPlayer::init () {
 	mpv_set_option_string (this->m_handle, "gpu-hwdec-interop", context.video_hwdec_interop->c_str ());
     }
     mpv_set_option_string (this->m_handle, "hwdec", context.video_hwdec.value_or ("auto").c_str ());
+    // every player in the process decodes on the GPU's one primary CUDA context rather than making its own (each costs
+    // device memory: 160 MiB on an RTX 3070 Ti, so a scene with two videos paid twice). A libmpv without the option
+    // (the option comes from a patch to mpv) refuses it and keeps a context per player
+    mpv_set_option_string (this->m_handle, "cuda-primary-context", "yes");
 
     if (mpv_initialize (this->m_handle) < 0) {
 	sLog.exception ("Could not initialize mpv context");
