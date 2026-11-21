@@ -20,10 +20,15 @@
 namespace {
 using namespace WallpaperEngine::Data::Assets;
 
+/** The largest image file read for a texture name that is an image path, and the largest side it may decode to. */
+constexpr std::uintmax_t MAX_IMAGE_FILE_BYTES = std::uintmax_t (64) << 20;
+constexpr int MAX_IMAGE_SIDE = 16384;
+
 /**
  * The image format of a texture name the host set to an image file's absolute path (a scenetexture property set to a
  * preset's `files/<name>`, or to a picked file), FIF_UNKNOWN for any other name. WE's own names are relative
- * (`materials/<name>.tex` inside the scene's folders, which refuse an absolute path), so nothing else takes this route.
+ * (`materials/<name>.tex` inside the scene's folders, which refuse an absolute path); a scene's files can still name an
+ * absolute image path, so `imageFileTexture` caps what it reads and decodes.
  */
 FIF imageFileFormat (const std::string& name) {
     if (name.empty () || name.front () != '/') {
@@ -53,14 +58,21 @@ FIF imageFileFormat (const std::string& name) {
  * The image file as the texture a .tex wrapping a PNG / JPEG is (TEXB0003 with a FreeImage format): one image, one level
  * holding the file's bytes, decoded to RGBA8 by stb_image when it uploads (a GIF's first frame), its size its own (no
  * power-of-two padding, so an image object's UVs stay whole) and clamped at the edges as WE's image textures are. Throws
- * AssetLoadException for a file that can't be read or isn't an image stb_image knows, which every caller reports and
- * survives by keeping the slot's own texture.
+ * AssetLoadException for a file that can't be read, isn't an image stb_image knows, or is past the caps (a file over
+ * MAX_IMAGE_FILE_BYTES is never read, an image over MAX_IMAGE_SIDE a side never decoded: any absolute image path takes
+ * this route, so a size is no promise), which every caller reports and survives by keeping the slot's own texture.
  */
 TextureUniquePtr imageFileTexture (const std::string& path, FIF format) {
     std::ifstream file (path, std::ios::binary);
     if (!std::filesystem::is_regular_file (path) || !file) {
 	throw WallpaperEngine::Assets::AssetLoadException (
 	    "Cannot read image file", path, std::make_error_code (std::errc::no_such_file_or_directory)
+	);
+    }
+    std::error_code sizeError;
+    if (const auto size = std::filesystem::file_size (path, sizeError); sizeError || size > MAX_IMAGE_FILE_BYTES) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Image file over 64 MiB", path, std::make_error_code (std::errc::file_too_large)
 	);
     }
     std::vector<char> bytes ((std::istreambuf_iterator<char> (file)), std::istreambuf_iterator<char> ());
@@ -72,6 +84,11 @@ TextureUniquePtr imageFileTexture (const std::string& path, FIF format) {
 	|| width <= 0 || height <= 0) {
 	throw WallpaperEngine::Assets::AssetLoadException (
 	    "Not an image file", path, std::make_error_code (std::errc::invalid_argument)
+	);
+    }
+    if (width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Image over 16384 px a side", path, std::make_error_code (std::errc::value_too_large)
 	);
     }
 
