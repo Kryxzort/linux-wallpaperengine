@@ -227,6 +227,11 @@ private:
      * Contains the final map of textures to be used
      */
     std::map<int, std::shared_ptr<TextureChainEntry>> m_textures = {};
+    /**
+     * The video textures the slots hold besides the image's own (a usertexture set to a video file, a video a material
+     * names for a slot): used while the pass lives and advanced each time it draws, as the scene plays an image's own
+     */
+    std::vector<std::shared_ptr<const TextureProvider>> m_videoTextures = {};
 
     Render::Shaders::Shader* m_shader = nullptr;
 

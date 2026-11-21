@@ -3,6 +3,8 @@
 
 #include "WallpaperEngine/Context.h"
 
+#include <algorithm>
+#include <ranges>
 #include <sstream>
 #include <utility>
 
@@ -62,6 +64,9 @@ CPass::CPass (
 }
 
 CPass::~CPass () {
+    for (const auto& video : this->m_videoTextures) {
+	video->decrementUsageCount ();
+    }
     glDeleteVertexArrays (1, &m_vao);
     this->m_vao = GL_NONE;
 
@@ -553,6 +558,11 @@ void CPass::render () {
 	    first->swapContents (*second);
 	}
 	return;
+    }
+
+    // the videos in its slots show the frame due now (the scene does this for each image's own texture)
+    for (const auto& video : this->m_videoTextures) {
+	video->update ();
     }
 
     // set the VAO for now
@@ -1076,6 +1086,21 @@ void CPass::setupTextureUniforms () {
     }
 
     this->addUniform ("g_Texture0Resolution", &this->m_texture0Resolution);
+
+    // a video in a slot plays while the pass lives: the scene plays only each image's own texture, so a video anywhere
+    // else would never show a frame
+    for (const auto& chain : this->m_textures | std::views::values) {
+	for (auto entry = chain; entry != nullptr; entry = entry->next) {
+	    const auto& candidate = entry->texture;
+	    if (candidate == nullptr || candidate->getVideoPlayer () == nullptr
+		|| candidate == this->m_renderable.getTexture ()
+		|| std::ranges::find (this->m_videoTextures, candidate) != this->m_videoTextures.end ()) {
+		continue;
+	    }
+	    candidate->incrementUsageCount ();
+	    this->m_videoTextures.push_back (candidate);
+	}
+    }
 }
 
 void CPass::setupUniforms () {

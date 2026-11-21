@@ -6,6 +6,7 @@
 #include "WallpaperEngine/Logging/Log.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 // hwcontext_cuda.h wants cuda.h for two handle types; no build dependency ships cuda.h
@@ -24,6 +25,16 @@ extern "C" {
 using namespace WallpaperEngine::VideoPlayback;
 
 namespace {
+/** a frame's display width: its own, stretched by a non-square sample aspect as mpv's dwidth (INT_MAX at most) */
+int displayWidth (const AVFrame* frame) {
+    const AVRational sar = frame->sample_aspect_ratio;
+    if (sar.num <= 0 || sar.den <= 0 || sar.num == sar.den) {
+	return frame->width;
+    }
+    const double width = std::round (frame->width * av_q2d (sar));
+    return width >= static_cast<double> (INT_MAX) ? INT_MAX : static_cast<int> (width);
+}
+
 /**
  * How long a player's first render waits for its first frame (decoding starts with the scene's build, so it is
  * usually there): a scene's first picture then shows its videos instead of their empty textures
@@ -442,7 +453,30 @@ void GLPlayer::render () {
     }
 }
 
+void GLPlayer::setFrameCaps (const int maxSide, const std::uint64_t maxPixels) {
+    this->m_maxSide = maxSide;
+    this->m_maxPixels = maxPixels;
+}
+
 bool GLPlayer::show (AVFrame* frame) {
+    if (this->m_maxSide > 0) {
+	const int displayed = displayWidth (frame);
+	const auto over = [this] (int width, int height) {
+	    return width > this->m_maxSide || height > this->m_maxSide
+		|| static_cast<std::uint64_t> (width) * static_cast<std::uint64_t> (height) > this->m_maxPixels;
+	};
+	if (over (frame->width, frame->height) || over (displayed, frame->height)) {
+	    if (!this->m_saidOverCaps) {
+		this->m_saidOverCaps = true;
+		sLog.error (
+		    "video: a ", frame->width, "x", frame->height, " frame (", displayed,
+		    " wide as displayed) is over ", this->m_maxSide, " px a side or ", this->m_maxPixels,
+		    " px: not shown"
+		);
+	    }
+	    return false;
+	}
+    }
     const SavedState saved;
     AVFrame* copied = nullptr;
     const AVFrame* source = frame;
@@ -659,14 +693,8 @@ void GLPlayer::sizeOutput (int width, int height) {
 
 void GLPlayer::convert (const AVFrame* frame) {
     const Layout& layout = this->m_layout;
-    // the display size: the frame's, stretched by a non-square sample aspect as mpv's dwidth
-    int width = frame->width;
-    if (frame->sample_aspect_ratio.num > 0 && frame->sample_aspect_ratio.den > 0
-	&& frame->sample_aspect_ratio.num != frame->sample_aspect_ratio.den) {
-	width = static_cast<int> (std::lround (width * av_q2d (frame->sample_aspect_ratio)));
-    }
     glActiveTexture (GL_TEXTURE0);
-    this->sizeOutput (width, frame->height);
+    this->sizeOutput (displayWidth (frame), frame->height);
 
     if (this->m_program == 0) {
 	const GLuint vertex = compile (GL_VERTEX_SHADER, kVertex);

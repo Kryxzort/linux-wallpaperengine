@@ -12,6 +12,10 @@
 
 #include <stb_image.h>
 
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -139,6 +143,87 @@ TextureUniquePtr imageFileTexture (const std::string& path, FIF format) {
     texture->images.emplace (0, MipmapList { mipmap });
     return texture;
 }
+
+/**
+ * A texture name the host set to a video file's absolute path (a WE preset's own `files/<name>.mp4` where its scene has
+ * an image slot: WE plays it there), false for any other name: the containers a preset ships that FFmpeg plays.
+ */
+bool isVideoFile (const std::string& name) {
+    if (name.empty () || name.front () != '/') {
+	return false;
+    }
+    std::string extension = std::filesystem::path (name).extension ().string ();
+    std::ranges::transform (extension, extension.begin (), [] (unsigned char c) { return std::tolower (c); });
+    return extension == ".mp4" || extension == ".m4v" || extension == ".webm" || extension == ".mkv"
+	|| extension == ".mov";
+}
+
+/**
+ * The video file as a video texture of its own size, played from the file silent, looped, on the scene's clock, as a
+ * video texture inside a scene plays. GLPlayer streams the file, so it is never read whole and no byte cap applies (a
+ * preset's video runs to hundreds of MiB); a decoder holds several frames, so its size is capped below an image's:
+ * GLPlayer::kFileMaxSide a side, GLPlayer::kFileMaxPixels (8K UHD). Its container is opened and its video stream's
+ * coded size read here: a file that can't be read, has no video stream or is past a cap throws AssetLoadException,
+ * which every caller reports and survives by keeping the slot's own texture. A frame that grows or stretches past them
+ * later is not shown (GLPlayer::setFrameCaps).
+ */
+TextureUniquePtr videoFileTexture (const std::string& path) {
+    if (!std::filesystem::is_regular_file (path)) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Cannot read video file", path, std::make_error_code (std::errc::no_such_file_or_directory)
+	);
+    }
+    const auto notVideo = [&path] () {
+	return WallpaperEngine::Assets::AssetLoadException (
+	    "Not a video file", path, std::make_error_code (std::errc::invalid_argument)
+	);
+    };
+    AVFormatContext* format = nullptr;
+    if (avformat_open_input (&format, path.c_str (), nullptr, nullptr) < 0) {
+	throw notVideo ();
+    }
+    const std::unique_ptr<AVFormatContext*, void (*) (AVFormatContext**)> close (&format, avformat_close_input);
+    if (avformat_find_stream_info (format, nullptr) < 0) {
+	throw notVideo ();
+    }
+    const int stream = av_find_best_stream (format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (stream < 0) {
+	throw notVideo ();
+    }
+    const int width = format->streams[stream]->codecpar->width;
+    const int height = format->streams[stream]->codecpar->height;
+    if (width <= 0 || height <= 0) {
+	throw notVideo ();
+    }
+    using WallpaperEngine::VideoPlayback::GLPlayer;
+    if (width > GLPlayer::kFileMaxSide || height > GLPlayer::kFileMaxSide) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Video over 8192 px a side", path, std::make_error_code (std::errc::value_too_large)
+	);
+    }
+    if (static_cast<std::uint64_t> (width) * static_cast<std::uint64_t> (height) > GLPlayer::kFileMaxPixels) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Video over 7680 x 4320 px", path, std::make_error_code (std::errc::value_too_large)
+	);
+    }
+
+    auto mipmap = std::make_shared<Mipmap> ();
+    mipmap->width = static_cast<uint32_t> (width);
+    mipmap->height = static_cast<uint32_t> (height);
+
+    auto texture = std::make_unique<Texture> ();
+    texture->containerVersion = ContainerVersion_TEXB0004;
+    texture->format = TextureFormat_ARGB8888;
+    texture->flags = TextureFlags_ClampUVs | TextureFlags_Video;
+    texture->freeImageFormat = FIF_MP4;
+    texture->isVideoMp4 = true;
+    texture->videoFile = path;
+    texture->width = texture->textureWidth = mipmap->width;
+    texture->height = texture->textureHeight = mipmap->height;
+    texture->imageCount = 1;
+    texture->images.emplace (0, MipmapList { mipmap });
+    return texture;
+}
 } // namespace
 
 namespace WallpaperEngine::Render {
@@ -174,6 +259,15 @@ std::shared_ptr<const TextureProvider> RenderContext::resolveTexture (const std:
 	if (const FIF format = imageFileFormat (name); format != FIF_UNKNOWN) {
 	    auto texture = std::make_shared<CTexture> (*this, imageFileTexture (name, format), this->m_deferTextureUploads);
 	    sLog.debug ("Loaded image file ", name, " as a texture");
+	    this->m_textureCache.store (name, texture);
+	    if (this->m_deferTextureUploads) {
+		this->m_deferredTextures.push_back (texture);
+	    }
+	    return texture;
+	}
+	if (isVideoFile (name)) {
+	    auto texture = std::make_shared<CTexture> (*this, videoFileTexture (name), this->m_deferTextureUploads);
+	    sLog.debug ("Playing video file ", name, " as a texture");
 	    this->m_textureCache.store (name, texture);
 	    if (this->m_deferTextureUploads) {
 		this->m_deferredTextures.push_back (texture);

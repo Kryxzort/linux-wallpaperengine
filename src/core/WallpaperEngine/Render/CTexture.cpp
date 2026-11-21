@@ -116,11 +116,22 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header, const bool 
 
 	const auto mipmap = *this->m_header->images.begin ()->second.begin ();
 
-	// the header keeps the video's bytes for the texture's life; a video texture plays silent, on the scene's clock
-	this->m_player = std::make_unique<GLPlayer> (
-	    this->getContext (), this->m_textureID[0], reinterpret_cast<const uint8_t*> (mipmap->uncompressedData.get ()),
-	    mipmap->uncompressedSize, this->m_header->textureWidth, this->m_header->textureHeight
-	);
+	// the header keeps the video's bytes for the texture's life (a video file streams from the file); a video
+	// texture plays silent, looped, on the scene's clock
+	if (!this->m_header->videoFile.empty ()) {
+	    this->m_player = std::make_unique<GLPlayer> (
+		this->getContext (), this->m_textureID[0], std::filesystem::path (this->m_header->videoFile),
+		this->m_header->textureWidth, this->m_header->textureHeight
+	    );
+	    // the header's size was checked (RenderContext), the frames' can still grow or stretch past it
+	    this->m_player->setFrameCaps (GLPlayer::kFileMaxSide, GLPlayer::kFileMaxPixels);
+	} else {
+	    this->m_player = std::make_unique<GLPlayer> (
+		this->getContext (), this->m_textureID[0],
+		reinterpret_cast<const uint8_t*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize,
+		this->m_header->textureWidth, this->m_header->textureHeight
+	    );
+	}
 	this->m_player->prefetch ();
 	// texture is ready, nothing else to do
 	return;

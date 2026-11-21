@@ -5,6 +5,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <glad/glad.h>
 #include <memory>
@@ -22,6 +23,10 @@ namespace WallpaperEngine::VideoPlayback {
  */
 class GLPlayer : public Helpers::ContextAware {
 public:
+    /** the most a host's video file in a texture slot decodes to: 8192 px a side, 8K UHD's pixels */
+    static constexpr int kFileMaxSide = 8192;
+    static constexpr std::uint64_t kFileMaxPixels = std::uint64_t (7680) * 4320;
+
     /** plays `file` */
     GLPlayer (
 	RenderContext& context, GLuint outputTexture, const std::filesystem::path& file, int64_t baseWidth,
@@ -43,6 +48,13 @@ public:
      * video textures start as its build creates them, well before the layers that draw them are set up
      */
     void prefetch ();
+
+    /**
+     * Shows no frame over `maxSide` a side or `maxPixels`, as decoded or as displayed (stretched by its sample aspect):
+     * the last frame within them stays, and the texture stays blank before one. The container's header gives no promise
+     * (a stream can grow mid-way, a sample aspect can stretch it). 0 = no caps
+     */
+    void setFrameCaps (int maxSide, std::uint64_t maxPixels);
 
     void setPaused ();
     void clearPaused ();
@@ -114,6 +126,10 @@ private:
     void convert (const AVFrame* frame);
     void releaseCuda ();
     void sizeOutput (int width, int height);
+
+    int m_maxSide = 0;
+    std::uint64_t m_maxPixels = 0;
+    bool m_saidOverCaps = false;
 
     bool m_doWeOwnFramebuffer;
     GLuint m_outputTexture;

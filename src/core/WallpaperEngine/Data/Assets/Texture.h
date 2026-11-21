@@ -158,6 +158,9 @@ struct Texture {
     FIF freeImageFormat = FIF_UNKNOWN;
     /** Indicates if we have an MP4 video */
     bool isVideoMp4 = false;
+    /** a video played from this file (a host's video file in a slot; its mipmap only gives its size), empty when the
+     * video's bytes are the mipmap's */
+    std::string videoFile {};
     /** The amount of images in the texture file */
     uint32_t imageCount = 0;
     /** List of mipmaps */
