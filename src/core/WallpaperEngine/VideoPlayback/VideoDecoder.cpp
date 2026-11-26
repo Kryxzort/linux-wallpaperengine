@@ -120,8 +120,8 @@ VideoDecoder::VideoDecoder (const uint8_t* data, size_t size, HwdecChoice choice
     this->start ();
 }
 
-VideoDecoder::VideoDecoder (std::filesystem::path file, HwdecChoice choice) :
-    m_file (std::move (file)), m_choice (std::move (choice)) {
+VideoDecoder::VideoDecoder (std::filesystem::path file, HwdecChoice choice, std::string formats) :
+    m_file (std::move (file)), m_formats (std::move (formats)), m_choice (std::move (choice)) {
     this->start ();
 }
 
@@ -229,7 +229,16 @@ bool VideoDecoder::open () {
 	this->m_format->pb = this->m_io;
 	this->m_format->flags |= AVFMT_FLAG_CUSTOM_IO;
     }
-    const int opened = avformat_open_input (&this->m_format, this->m_data ? nullptr : this->m_file.c_str (), nullptr, nullptr);
+    // FFmpeg picks a demuxer by the bytes, whatever the name: a host's file of someone else's opens only as what it
+    // claims to be, never as a playlist that reads other files
+    AVDictionary* options = nullptr;
+    if (this->m_data == nullptr && !this->m_formats.empty ()) {
+	av_dict_set (&options, "format_whitelist", this->m_formats.c_str (), 0);
+	av_dict_set (&options, "protocol_whitelist", "file", 0);
+    }
+    const int opened =
+	avformat_open_input (&this->m_format, this->m_data ? nullptr : this->m_file.c_str (), nullptr, &options);
+    av_dict_free (&options);
     if (opened < 0) {
 	this->say ("video: cannot open the video: " + error (opened));
 	return false;

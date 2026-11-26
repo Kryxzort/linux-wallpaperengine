@@ -125,6 +125,8 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header, const bool 
 	    );
 	    // the header's size was checked (RenderContext), the frames' can still grow or stretch past it
 	    this->m_player->setFrameCaps (GLPlayer::kFileMaxSide, GLPlayer::kFileMaxPixels);
+	    // and it opens only as the container its name says, as RenderContext checked it
+	    this->m_player->setFormats (GLPlayer::kFileFormats);
 	} else {
 	    this->m_player = std::make_unique<GLPlayer> (
 		this->getContext (), this->m_textureID[0],

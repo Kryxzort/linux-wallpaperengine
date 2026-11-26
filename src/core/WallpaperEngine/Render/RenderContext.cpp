@@ -163,9 +163,10 @@ bool isVideoFile (const std::string& name) {
  * video texture inside a scene plays. GLPlayer streams the file, so it is never read whole and no byte cap applies (a
  * preset's video runs to hundreds of MiB); a decoder holds several frames, so its size is capped below an image's:
  * GLPlayer::kFileMaxSide a side, GLPlayer::kFileMaxPixels (8K UHD). Its container is opened and its video stream's
- * coded size read here: a file that can't be read, has no video stream or is past a cap throws AssetLoadException,
- * which every caller reports and survives by keeping the slot's own texture. A frame that grows or stretches past them
- * later is not shown (GLPlayer::setFrameCaps).
+ * coded size read here, only as one of the containers its extension names (GLPlayer::kFileFormats, from this file
+ * alone, as the player opens it too): a file that can't be read, opens as anything else, has no video stream or is
+ * past a cap throws AssetLoadException, which every caller reports and survives by keeping the slot's own texture. A
+ * frame that grows or stretches past them later is not shown (GLPlayer::setFrameCaps).
  */
 TextureUniquePtr videoFileTexture (const std::string& path) {
     if (!std::filesystem::is_regular_file (path)) {
@@ -178,9 +179,19 @@ TextureUniquePtr videoFileTexture (const std::string& path) {
 	    "Not a video file", path, std::make_error_code (std::errc::invalid_argument)
 	);
     };
+    using WallpaperEngine::VideoPlayback::GLPlayer;
+    // FFmpeg picks a demuxer by the bytes, whatever the name: a file named .mp4 opens only as MP4 / QuickTime or
+    // Matroska / WebM (GLPlayer::kFileFormats), from this file alone, never as a playlist that reads other files
+    AVDictionary* options = nullptr;
+    av_dict_set (&options, "format_whitelist", GLPlayer::kFileFormats, 0);
+    av_dict_set (&options, "protocol_whitelist", "file", 0);
     AVFormatContext* format = nullptr;
-    if (avformat_open_input (&format, path.c_str (), nullptr, nullptr) < 0) {
-	throw notVideo ();
+    const int opened = avformat_open_input (&format, path.c_str (), nullptr, &options);
+    av_dict_free (&options);
+    if (opened < 0) {
+	throw WallpaperEngine::Assets::AssetLoadException (
+	    "Not an MP4, QuickTime, Matroska or WebM video file", path, std::make_error_code (std::errc::invalid_argument)
+	);
     }
     const std::unique_ptr<AVFormatContext*, void (*) (AVFormatContext**)> close (&format, avformat_close_input);
     if (avformat_find_stream_info (format, nullptr) < 0) {
@@ -195,7 +206,6 @@ TextureUniquePtr videoFileTexture (const std::string& path) {
     if (width <= 0 || height <= 0) {
 	throw notVideo ();
     }
-    using WallpaperEngine::VideoPlayback::GLPlayer;
     if (width > GLPlayer::kFileMaxSide || height > GLPlayer::kFileMaxSide) {
 	throw WallpaperEngine::Assets::AssetLoadException (
 	    "Video over 8192 px a side", path, std::make_error_code (std::errc::value_too_large)

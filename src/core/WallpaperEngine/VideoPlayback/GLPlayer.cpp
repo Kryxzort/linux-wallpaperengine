@@ -340,7 +340,7 @@ void GLPlayer::startDecoder () {
     const auto& context = this->getContext ().getContext ();
     HwdecChoice choice = HwdecChoice::parse (context.video_hwdec, context.video_hwdec_interop);
     this->m_decoder = this->m_file.has_value ()
-			? std::make_unique<VideoDecoder> (*this->m_file, std::move (choice))
+			? std::make_unique<VideoDecoder> (*this->m_file, std::move (choice), this->m_formats)
 			: std::make_unique<VideoDecoder> (this->m_data, this->m_size, std::move (choice));
     this->m_decoder->setLoop (this->m_loop);
     this->m_playedAt = std::chrono::steady_clock::now ();
@@ -457,6 +457,8 @@ void GLPlayer::setFrameCaps (const int maxSide, const std::uint64_t maxPixels) {
     this->m_maxSide = maxSide;
     this->m_maxPixels = maxPixels;
 }
+
+void GLPlayer::setFormats (std::string formats) { this->m_formats = std::move (formats); }
 
 bool GLPlayer::show (AVFrame* frame) {
     if (this->m_maxSide > 0) {

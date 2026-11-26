@@ -26,6 +26,11 @@ public:
     /** the most a host's video file in a texture slot decodes to: 8192 px a side, 8K UHD's pixels */
     static constexpr int kFileMaxSide = 8192;
     static constexpr std::uint64_t kFileMaxPixels = std::uint64_t (7680) * 4320;
+    /**
+     * the demuxers a host's video file in a texture slot may open with (FFmpeg's names): MP4 / QuickTime and Matroska /
+     * WebM, the containers its extensions name (RenderContext's `isVideoFile`)
+     */
+    static constexpr const char* kFileFormats = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm";
 
     /** plays `file` */
     GLPlayer (
@@ -55,6 +60,11 @@ public:
      * (a stream can grow mid-way, a sample aspect can stretch it). 0 = no caps
      */
     void setFrameCaps (int maxSide, std::uint64_t maxPixels);
+    /**
+     * Opens the file only with the demuxers `formats` names (FFmpeg's names, comma-separated) and the `file` protocol;
+     * call before the decoder starts (prefetch). Empty = any
+     */
+    void setFormats (std::string formats);
 
     void setPaused ();
     void clearPaused ();
@@ -140,6 +150,7 @@ private:
     const uint8_t* m_data = nullptr;
     size_t m_size = 0;
     std::optional<std::filesystem::path> m_file;
+    std::string m_formats;
     std::unique_ptr<VideoDecoder> m_decoder;
     uint32_t m_usageCount = 0;
 

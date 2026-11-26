@@ -44,9 +44,12 @@ struct HwdecChoice {
  */
 class VideoDecoder {
 public:
-    /** decodes `size` bytes at `data` (kept alive by the caller for the decoder's life) or `file` */
+    /**
+     * decodes `size` bytes at `data` (kept alive by the caller for the decoder's life) or `file`; a file opens only with
+     * the demuxers `formats` names (FFmpeg's names, comma-separated) and the `file` protocol when it isn't empty
+     */
     VideoDecoder (const uint8_t* data, size_t size, HwdecChoice choice);
-    VideoDecoder (std::filesystem::path file, HwdecChoice choice);
+    VideoDecoder (std::filesystem::path file, HwdecChoice choice, std::string formats = {});
     ~VideoDecoder ();
 
     VideoDecoder (const VideoDecoder&) = delete;
@@ -95,6 +98,7 @@ private:
     size_t m_size = 0;
     size_t m_position = 0;
     std::filesystem::path m_file;
+    std::string m_formats;
     HwdecChoice m_choice;
 
     AVFormatContext* m_format = nullptr;
