@@ -507,8 +507,8 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	    return false;
 	}
 
-	this->m_puppetBind = Puppet::bindPose (this->m_puppet);
-	this->m_puppetTargetBind = Puppet::targetBindPose (this->m_puppet);
+	this->m_puppetRest = Puppet::restPose (this->m_puppet);
+	this->m_puppetTargetRest = Puppet::targetRestPose (this->m_puppet);
 	Puppet::bindWorldMatrices (this->m_puppet, this->m_puppetBindWorldInverse);
 	for (auto& m : this->m_puppetBindWorldInverse) {
 	    m = glm::inverse (m);
@@ -518,7 +518,11 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	    this->m_puppetLayers.push_back ({ .blendIn = layer->blendIn, .layer = layer.get (),
 					      .key = this->m_nextAnimationLayerKey++, .name = layer->name });
 	}
-	this->m_puppetSkinned = !this->m_puppet.bones.empty () && !this->m_puppet.animations.empty ();
+	// a skeleton whose rest pose isn't its bind (MDLS v2's explicit matrices) poses the mesh with no animation too
+	const bool restMoves = std::ranges::any_of (this->m_puppet.bones, [] (const Puppet::Bone& bone) {
+	    return bone.rest != bone.local;
+	});
+	this->m_puppetSkinned = !this->m_puppet.bones.empty () && (!this->m_puppet.animations.empty () || restMoves);
 	this->m_puppetMorphed = !this->m_puppetShapes.empty ();
 	// a vertex alpha (genericimage4's SKINNING_ALPHA and MORPHING both multiply v_VertexAlpha in): bone alpha tracks
 	// or target alphas below 1
@@ -576,22 +580,27 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 }
 
 glm::vec2 CImage::puppetCanvasSize (const glm::vec2& size) const {
-    // (PR #625's autosize: measure the mesh in every frame of every animation, grow the canvas symmetrically)
+    // (PR #625's autosize: measure the mesh in every frame of every animation, grow the canvas symmetrically; the rest
+    // pose too, which places the parts on its own when it isn't the bind)
     float maxX = size.x / 2.0f, maxY = size.y / 2.0f;
     std::vector<glm::mat4> world, skinning (this->m_puppet.bones.size ());
+    const auto measure = [&] (const std::vector<Puppet::Key>& pose) {
+	Puppet::worldMatrices (this->m_puppet, pose, world);
+	for (size_t b = 0; b < world.size (); b++) {
+	    skinning[b] = world[b] * this->m_puppetBindWorldInverse[b];
+	}
+	for (const auto& vertex : this->m_puppetVertices) {
+	    const glm::vec3 p = Puppet::skin (vertex, skinning);
+	    maxX = std::max (maxX, std::abs (p.x));
+	    maxY = std::max (maxY, std::abs (p.y));
+	}
+    };
+    measure (this->m_puppetRest);
     for (const auto& animation : this->m_puppet.animations) {
 	for (uint32_t frame = 0; frame <= animation.frames; frame++) {
-	    std::vector<Puppet::Key> pose = this->m_puppetBind;
-	    Puppet::mix (pose, this->m_puppetBind, animation, static_cast<float> (frame) / animation.fps, 1.0f, false);
-	    Puppet::worldMatrices (this->m_puppet, pose, world);
-	    for (size_t b = 0; b < world.size (); b++) {
-		skinning[b] = world[b] * this->m_puppetBindWorldInverse[b];
-	    }
-	    for (const auto& vertex : this->m_puppetVertices) {
-		const glm::vec3 p = Puppet::skin (vertex, skinning);
-		maxX = std::max (maxX, std::abs (p.x));
-		maxY = std::max (maxY, std::abs (p.y));
-	    }
+	    std::vector<Puppet::Key> pose = this->m_puppetRest;
+	    Puppet::mix (pose, this->m_puppetRest, animation, static_cast<float> (frame) / animation.fps, 1.0f, false);
+	    measure (pose);
 	}
     }
     return { std::ceil (maxX) * 2.0f, std::ceil (maxY) * 2.0f };
@@ -610,9 +619,9 @@ void CImage::updatePuppetPose () {
     this->m_puppetPoseDirty = false;
 
     // GH 0x140228470: from the bind pose, every visible layer in order; its clock runs at dt · rate
-    std::vector<Puppet::Key> pose = this->m_puppetBind;
+    std::vector<Puppet::Key> pose = this->m_puppetRest;
     // the IK targets move with the animations as the bones do (their MDLA v2 tracks)
-    std::vector<Puppet::Key> targets = this->m_puppetTargetBind;
+    std::vector<Puppet::Key> targets = this->m_puppetTargetRest;
     std::vector<float> boneAlpha (this->m_puppet.bones.size (), 1.0f);
     std::vector<std::vector<float>> shapeWeights = this->m_puppetShapeWeights;
     for (auto& weights : shapeWeights) {
@@ -645,8 +654,8 @@ void CImage::updatePuppetPose () {
 	}
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);
-	Puppet::mix (pose, this->m_puppetBind, *match, state.clock.time, weight, layer.additive);
-	Puppet::mixTargets (targets, this->m_puppetTargetBind, *match, state.clock.time, weight, layer.additive);
+	Puppet::mix (pose, this->m_puppetRest, *match, state.clock.time, weight, layer.additive);
+	Puppet::mixTargets (targets, this->m_puppetTargetRest, *match, state.clock.time, weight, layer.additive);
 	Puppet::mixExtras (boneAlpha, shapeWeights, *match, state.clock.time, weight, layer.additive);
     }
     for (const auto& [index, weight] : this->m_shapeOverrides) {
@@ -809,7 +818,7 @@ void CImage::puppetBonePose (std::vector<glm::mat4>& local, std::vector<glm::mat
 	    local[b] = glm::translate (glm::mat4 (1.0f), key.position) * glm::mat4_cast (key.rotation)
 		* glm::scale (glm::mat4 (1.0f), key.scale);
 	} else {
-	    local[b] = bones[b].local;
+	    local[b] = bones[b].rest;
 	}
     }
     world.assign (bones.size (), glm::mat4 (1.0f));

@@ -232,6 +232,7 @@ void parseSkeleton (Reader& r, int version, Model& out, SkeletonCounts& counts) 
 	float m[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 	std::memcpy (m, r.data + at, std::min<size_t> (length, sizeof (m)));
 	std::memcpy (&bone.local, m, sizeof (m));
+	bone.rest = bone.local;
 	// the simulation settings (JSON, GH 0x14028bbd0): the IK keys
 	const std::string settings = r.str ();
 	if (settings.find ("\"ik\"") != std::string::npos) {
@@ -264,10 +265,21 @@ void parseSkeleton (Reader& r, int version, Model& out, SkeletonCounts& counts) 
 	    out.ikTargets.push_back (std::move (target));
 	}
 	if (r.u8 ()) {
-	    // explicit matrices for the bones and the targets (the inverse binds WE recomputes anyway)
-	    const size_t bytes = size_t (boneCount + counts.targets) * 64;
-	    r.need (bytes);
-	    r.at += bytes;
+	    // The rest matrices: one per bone (relative to its parent), then one per IK target. WE 2.8.797 reads a
+	    // bone's and a target's through one getter each (GH 0x140249ec0 / 0x140249ef0): these when the file has
+	    // them, else the bone's or target's own matrix. Its animator (GH 0x14024d9a0) takes them for the rest pose
+	    // the layers mix from (an additive layer's reference), while the inverse binds still come from the bone
+	    // matrices (GH 0x14024b710). The bone matrices lay the parts out as the puppet's image has them and the
+	    // rest pose puts them together, so the mesh is skinned even at rest: 3071833748's hair and face are apart
+	    // in its image, and its animations are keyed at this pose, up to 960 px from the bone matrices
+	    r.need (size_t (boneCount + counts.targets) * 64);
+	    const size_t firstBone = out.bones.size () - boneCount, firstTarget = out.ikTargets.size () - counts.targets;
+	    for (uint32_t i = 0; i < boneCount; i++, r.at += 64) {
+		out.bones[firstBone + i].rest = r.mat4 (r.at);
+	    }
+	    for (uint32_t i = 0; i < counts.targets; i++, r.at += 64) {
+		out.ikTargets[firstTarget + i].matrix = r.mat4 (r.at);
+	    }
 	}
 	counts.constraints = r.u32 ();
 	for (uint32_t i = 0; i < counts.constraints; i++) {
@@ -677,15 +689,15 @@ float layerWeight (const Animation& animation, const Clock& clock, float blend, 
     return weight;
 }
 
-std::vector<Key> bindPose (const Model& model) {
+std::vector<Key> restPose (const Model& model) {
     std::vector<Key> pose (model.bones.size ());
     for (size_t b = 0; b < model.bones.size (); b++) {
 	glm::vec3 skew;
 	glm::vec4 perspective;
 	glm::quat rotation;
-	if (!glm::decompose (model.bones[b].local, pose[b].scale, rotation, pose[b].position, skew, perspective)) {
+	if (!glm::decompose (model.bones[b].rest, pose[b].scale, rotation, pose[b].position, skew, perspective)) {
 	    pose[b] = Key ();
-	    pose[b].position = glm::vec3 (model.bones[b].local[3]);
+	    pose[b].position = glm::vec3 (model.bones[b].rest[3]);
 	    continue;
 	}
 	pose[b].rotation = rotation;
@@ -703,22 +715,22 @@ glm::quat nlerp (const glm::quat& from, const glm::quat& to, float t) {
 } // namespace
 
 namespace {
-void mixTracks (std::vector<Key>& pose, const std::vector<Key>& bind, const std::vector<Track>& tracks,
+void mixTracks (std::vector<Key>& pose, const std::vector<Key>& rest, const std::vector<Track>& tracks,
 		const Animation& animation, float time, float weight, bool additive);
 }
 
-void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation& animation, float time, float weight,
+void mix (std::vector<Key>& pose, const std::vector<Key>& rest, const Animation& animation, float time, float weight,
 	  bool additive) {
-    mixTracks (pose, bind, animation.tracks, animation, time, weight, additive);
+    mixTracks (pose, rest, animation.tracks, animation, time, weight, additive);
 }
 
-void mixTargets (std::vector<Key>& targets, const std::vector<Key>& bind, const Animation& animation, float time,
+void mixTargets (std::vector<Key>& targets, const std::vector<Key>& rest, const Animation& animation, float time,
 		 float weight, bool additive) {
-    mixTracks (targets, bind, animation.targetTracks, animation, time, weight, additive);
+    mixTracks (targets, rest, animation.targetTracks, animation, time, weight, additive);
 }
 
 namespace {
-void mixTracks (std::vector<Key>& pose, const std::vector<Key>& bind, const std::vector<Track>& tracks,
+void mixTracks (std::vector<Key>& pose, const std::vector<Key>& rest, const std::vector<Track>& tracks,
 		const Animation& animation, float time, float weight, bool additive) {
     // GH 0x1401a00a0: a = clamp (⌊t / frame⌋, 0, frames − 1), b = min (a + 1, frames), the fraction within the frame
     const float frame = 1.0f / animation.fps;
@@ -741,9 +753,9 @@ void mixTracks (std::vector<Key>& pose, const std::vector<Key>& bind, const std:
 
 	Key& out = pose[i];
 	if (additive) {
-	    out.position += (sample.position - bind[i].position) * weight;
-	    out.scale += (sample.scale - bind[i].scale) * weight;
-	    const glm::quat delta = sample.rotation * glm::conjugate (bind[i].rotation);
+	    out.position += (sample.position - rest[i].position) * weight;
+	    out.scale += (sample.scale - rest[i].scale) * weight;
+	    const glm::quat delta = sample.rotation * glm::conjugate (rest[i].rotation);
 	    out.rotation = glm::normalize (nlerp (glm::quat (1.0f, 0.0f, 0.0f, 0.0f), delta, weight) * out.rotation);
 	} else {
 	    out.position = sample.position * weight + out.position * (1.0f - weight);
@@ -766,7 +778,7 @@ void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vecto
     }
 }
 
-std::vector<Key> targetBindPose (const Model& model) {
+std::vector<Key> targetRestPose (const Model& model) {
     std::vector<Key> keys (model.ikTargets.size ());
     for (size_t t = 0; t < model.ikTargets.size (); t++) {
 	glm::vec3 skew;

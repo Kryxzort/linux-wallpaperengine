@@ -72,8 +72,13 @@ struct Bone {
     std::string name;
     uint32_t flags = 0;
     int parent = -1;
-    /** the bind transform relative to the parent */
+    /** the bind transform relative to the parent: the inverse binds' (bindWorldMatrices) */
     glm::mat4 local = glm::mat4 (1.0f);
+    /**
+     * The rest transform relative to the parent, the pose the animation layers mix from (restPose): MDLS v2's
+     * explicit matrix when the file has them, else `local`
+     */
+    glm::mat4 rest = glm::mat4 (1.0f);
     /**
      * The bone's simulation JSON (MDLS, parsed by GH 0x14028bbd0): `ik` (settings flag 0x4000) makes it the end of an
      * IK chain `ikd` bones long (≥ 1, settings +0x5c); `ikr` (flag 0x40) turns it to its target's rotation
@@ -106,6 +111,7 @@ struct IkTarget {
     std::string name;
     int bone = -1;
     uint32_t type = 0;
+    /** its rest matrix (targetRestPose): MDLS v2's explicit one when the file has them, else the target's own */
     glm::mat4 matrix = glm::mat4 (1.0f);
 };
 
@@ -191,28 +197,28 @@ std::vector<std::pair<std::string, int>> passedEvents (const Animation& animatio
 float layerWeight (const Animation& animation, const Clock& clock, float blend, bool& blendIn, bool blendOut,
                    float blendTime);
 
-/** The bind pose: every bone's local bind matrix, decomposed */
-std::vector<Key> bindPose (const Model& model);
+/** The rest pose the layers mix from (GH 0x14024d9a0's rest block): every bone's rest matrix, decomposed */
+std::vector<Key> restPose (const Model& model);
 
 /**
  * Mixes one layer into `pose` (GH 0x140223b90 / 0x140224390). The animation is sampled between frames
  * a = ⌊t · fps⌋ and a + 1 (nlerp), then:
  *  - normal: pose = lerp (pose, sample, weight) (rotation nlerp on the shorter arc);
- *  - additive: position += (sample − bind) · weight; rotation = nlerp (1, sample · bind⁻¹, weight) · rotation;
- *    scale += (sample − bind) · weight.
+ *  - additive: position += (sample − rest) · weight; rotation = nlerp (1, sample · rest⁻¹, weight) · rotation;
+ *    scale += (sample − rest) · weight (`rest` restPose ()'s).
  * A track with flag bit 0 leaves its bone alone
  */
-void mix (std::vector<Key>& pose, const std::vector<Key>& bind, const Animation& animation, float time, float weight,
+void mix (std::vector<Key>& pose, const std::vector<Key>& rest, const Animation& animation, float time, float weight,
           bool additive);
 
 /** World matrices of a pose: world = parent world · local */
 void worldMatrices (const Model& model, const std::vector<Key>& pose, std::vector<glm::mat4>& world);
 
-/** The IK targets' bind keys (their matrices decomposed), in the model's order */
-std::vector<Key> targetBindPose (const Model& model);
+/** The IK targets' rest keys (their matrices decomposed), in the model's order */
+std::vector<Key> targetRestPose (const Model& model);
 
 /** An animation's IK target tracks mixed into `targets` as mix () mixes the bones */
-void mixTargets (std::vector<Key>& targets, const std::vector<Key>& bind, const Animation& animation, float time,
+void mixTargets (std::vector<Key>& targets, const std::vector<Key>& rest, const Animation& animation, float time,
 		 float weight, bool additive);
 
 /**
@@ -222,7 +228,7 @@ void mixTargets (std::vector<Key>& targets, const std::vector<Key>& bind, const 
  */
 void solveIk (const Model& model, std::vector<Key>& pose, const std::vector<Key>& targets);
 
-/** The bind world matrices (GH 0x1402261c0) */
+/** The bind world matrices (GH 0x1402261c0), from the bones' `local`: the inverse binds skin by */
 void bindWorldMatrices (const Model& model, std::vector<glm::mat4>& world);
 
 /** A float track's value at `time` (frames a, b and the fraction as `mix`) */

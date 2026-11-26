@@ -578,7 +578,7 @@ WPENGINE_HEALTH ("missing_asset", { { "kind", "model" }, { "path", file }, { "me
     // bone count: GH 0x140230ec0 sets them for every skinned mesh); blend shapes (MDMP) through MORPHING
     this->m_animated = !this->m_model.bones.empty () && !this->m_model.animations.empty ();
     if (this->m_animated) {
-	this->m_bind = Puppet::bindPose (this->m_model);
+	this->m_rest = Puppet::restPose (this->m_model);
 	Puppet::bindWorldMatrices (this->m_model, this->m_bindWorldInverse);
 	for (auto& m : this->m_bindWorldInverse) {
 	    m = glm::inverse (m);
@@ -724,7 +724,7 @@ void CModel::updatePose () {
     const float dt = this->m_poseTime < 0.0f ? 0.0f : std::max (now - this->m_poseTime, 0.0f);
     this->m_poseTime = now;
 
-    std::vector<Puppet::Key> pose = this->m_bind;
+    std::vector<Puppet::Key> pose = this->m_rest;
     std::vector<float> alpha (this->m_model.bones.size (), 1.0f);
     for (auto& weights : this->m_shapeWeights) {
 	std::fill (weights.begin (), weights.end (), 0.0f);
@@ -739,7 +739,7 @@ void CModel::updatePose () {
 	Puppet::advance (*match, state.clock, dt * layer.rate->value->getFloat ());
 	const float weight = Puppet::layerWeight (*match, state.clock, layer.blend->value->getFloat (), state.blendIn,
 						  layer.blendOut, layer.blendTime);
-	Puppet::mix (pose, this->m_bind, *match, state.clock.time, weight, layer.additive);
+	Puppet::mix (pose, this->m_rest, *match, state.clock.time, weight, layer.additive);
 	Puppet::mixExtras (alpha, this->m_shapeWeights, *match, state.clock.time, weight, layer.additive);
     }
     std::vector<glm::mat4> world;

@@ -132,7 +132,7 @@ private:
     uint32_t m_scriptVersion = 0;
     uint32_t m_scriptRebuilt = 0;
     std::vector<LayerState> m_layers = {};
-    std::vector<Puppet::Key> m_bind = {};
+    std::vector<Puppet::Key> m_rest = {};
     std::vector<glm::mat4> m_bindWorldInverse = {};
     /** world (pose) · bindWorld⁻¹ per bone, as the shaders' mat4x3 */
     std::vector<glm::mat4x3> m_skinning = {};
